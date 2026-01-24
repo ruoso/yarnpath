@@ -10,13 +10,20 @@
 #include "logging.hpp"
 
 void print_usage(const char* program_name) {
-    std::cerr << "Usage: " << program_name << " <input.txt> [output.obj]\n";
+    std::cerr << "Usage: " << program_name << " [options] <input.txt> [output]\n";
     std::cerr << "\n";
-    std::cerr << "Converts a knitting pattern text file to a 3D OBJ file.\n";
+    std::cerr << "Converts a knitting pattern text file to 3D geometry.\n";
+    std::cerr << "\n";
+    std::cerr << "Options:\n";
+    std::cerr << "  --dot       Output yarn path as DOT/Graphviz (skips geometry)\n";
+    std::cerr << "  --help      Show this help message\n";
     std::cerr << "\n";
     std::cerr << "Arguments:\n";
     std::cerr << "  input.txt   - Input pattern file (Shirley Paden notation)\n";
-    std::cerr << "  output.obj  - Output OBJ file (optional, defaults to stdout)\n";
+    std::cerr << "  output      - Output file (.obj or .dot, defaults to stdout)\n";
+    std::cerr << "\n";
+    std::cerr << "Environment:\n";
+    std::cerr << "  YARNPATH_LOG_LEVEL - Set log level (trace, debug, info, warn, error)\n";
 }
 
 std::string read_file(const std::string& path) {
@@ -41,22 +48,36 @@ int main(int argc, char* argv[]) {
     auto log = yarnpath::logging::get_logger();
 
     // 1. Parse command-line arguments
-    if (argc < 2) {
+    bool output_dot = false;
+    std::string input_path;
+    std::string output_path;
+    bool write_to_stdout = true;
+
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--dot") {
+            output_dot = true;
+        } else if (arg == "--help" || arg == "-h") {
+            print_usage(argv[0]);
+            return 0;
+        } else if (input_path.empty()) {
+            input_path = arg;
+        } else if (output_path.empty()) {
+            output_path = arg;
+            write_to_stdout = false;
+        }
+    }
+
+    if (input_path.empty()) {
         print_usage(argv[0]);
         return 1;
     }
 
-    std::string input_path = argv[1];
-    std::string output_path;
-    bool write_to_stdout = true;
-
-    if (argc >= 3) {
-        output_path = argv[2];
-        write_to_stdout = false;
-    }
-
     log->info("Starting yarnpath pipeline");
     log->info("Input file: {}", input_path);
+    if (output_dot) {
+        log->info("Output format: DOT (yarn path visualization)");
+    }
     if (!write_to_stdout) {
         log->info("Output file: {}", output_path);
     }
@@ -119,6 +140,26 @@ int main(int argc, char* argv[]) {
                    yarn_path.anchors().size(),
                    yarn_path.segments().size());
 
+        // If --dot, output DOT format and exit early
+        if (output_dot) {
+            log->debug("Exporting DOT format");
+            std::string dot = yarn_path.to_dot();
+
+            if (write_to_stdout) {
+                std::cout << dot;
+            } else {
+                write_file(output_path, dot);
+                std::cerr << "Wrote " << output_path << " ("
+                          << yarn_path.loops().size() << " loops)\n";
+            }
+
+            log->info("DOT export complete: {} loops, {} anchors, {} segments",
+                      yarn_path.loops().size(),
+                      yarn_path.anchors().size(),
+                      yarn_path.segments().size());
+            return 0;
+        }
+
         // 8. Build GeometryPath with defaults
         log->debug("Stage 7: Building geometry path");
         yarnpath::YarnProperties yarn = yarnpath::YarnProperties::worsted();
@@ -127,9 +168,8 @@ int main(int argc, char* argv[]) {
 
         yarnpath::GeometryPath geometry = yarnpath::GeometryPath::from_yarn_path(
             yarn_path, yarn, gauge, surface);
-        log->debug("Built geometry with {} positioned loops, {} anchor geometries, {} segment geometries",
+        log->debug("Built geometry with {} positioned loops, {} segment geometries",
                    geometry.loop_positions().size(),
-                   geometry.anchors().size(),
                    geometry.segments().size());
 
         // 9. Export OBJ
@@ -144,12 +184,11 @@ int main(int argc, char* argv[]) {
             write_file(output_path, obj);
             std::cerr << "Wrote " << output_path << " ("
                       << geometry.segments().size() << " segments, "
-                      << geometry.anchors().size() << " anchors)\n";
+                      << geometry.loop_positions().size() << " loops)\n";
         }
 
-        log->info("Pipeline complete: {} segments, {} anchors, {} loops",
+        log->info("Pipeline complete: {} segments, {} loops",
                   geometry.segments().size(),
-                  geometry.anchors().size(),
                   geometry.loop_positions().size());
 
         return 0;

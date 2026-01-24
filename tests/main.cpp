@@ -4,6 +4,7 @@
 // Test declarations
 void test_instructions();
 void test_stitch_graph();
+void test_parser();
 
 int main() {
     int failures = 0;
@@ -23,6 +24,15 @@ int main() {
         std::cout << "Stitch graph tests passed.\n";
     } catch (const std::exception& e) {
         std::cerr << "Stitch graph tests failed: " << e.what() << "\n";
+        ++failures;
+    }
+
+    try {
+        std::cout << "Running parser tests...\n";
+        test_parser();
+        std::cout << "Parser tests passed.\n";
+    } catch (const std::exception& e) {
+        std::cerr << "Parser tests failed: " << e.what() << "\n";
         ++failures;
     }
 

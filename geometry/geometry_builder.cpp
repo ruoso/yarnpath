@@ -1,4 +1,5 @@
 #include "geometry_builder.hpp"
+#include "logging.hpp"
 #include <algorithm>
 #include <cmath>
 
@@ -16,28 +17,43 @@ GeometryBuilder::GeometryBuilder(
     , glyph_factory_(yarn, gauge) {}
 
 GeometryPath GeometryBuilder::build() {
+    auto log = yarnpath::logging::get_logger();
     GeometryPath result;
 
     if (yarn_path_.loops().empty()) {
+        log->debug("GeometryBuilder: no loops to process");
         return result;
     }
 
+    log->debug("GeometryBuilder: building geometry for {} loops", yarn_path_.loops().size());
+
     // Phase 1: Initialize cast-on positions
+    log->debug("GeometryBuilder: Phase 1 - initializing cast-on positions");
     initialize_cast_on_positions();
+    log->debug("GeometryBuilder: initialized {} cast-on positions", loop_positions_.size());
 
     // Phase 2: Propagate positions through topology
+    log->debug("GeometryBuilder: Phase 2 - propagating positions");
     propagate_positions();
+    log->debug("GeometryBuilder: propagated {} total loop positions", loop_positions_.size());
 
     // Phase 3: Generate glyph geometry for each loop
+    log->debug("GeometryBuilder: Phase 3 - generating glyph geometries");
     generate_glyph_geometries();
+    log->debug("GeometryBuilder: generated {} loop glyphs", loop_glyphs_.size());
 
     // Phase 4: Create anchor geometries from glyphs
+    log->debug("GeometryBuilder: Phase 4 - creating anchor geometries");
     create_anchor_geometries();
+    log->debug("GeometryBuilder: created {} anchor geometries", anchor_geometries_.size());
 
     // Phase 5: Connect segments between anchors
+    log->debug("GeometryBuilder: Phase 5 - connecting segments");
     auto segments = connect_segments();
+    log->debug("GeometryBuilder: connected {} segments", segments.size());
 
     // Phase 6: Apply constraints
+    log->debug("GeometryBuilder: Phase 6 - applying constraints");
     apply_constraints(segments);
 
     // Build output
@@ -56,6 +72,8 @@ GeometryPath GeometryBuilder::build() {
         result.segments_.push_back(std::move(seg));
     }
 
+    log->debug("GeometryBuilder: build complete - {} loops, {} anchors, {} segments",
+               result.loop_positions_.size(), result.anchors_.size(), result.segments_.size());
     return result;
 }
 
@@ -78,9 +96,11 @@ void GeometryBuilder::initialize_cast_on_positions() {
 }
 
 void GeometryBuilder::propagate_positions() {
+    auto log = yarnpath::logging::get_logger();
     // BFS from positioned loops
     std::queue<LoopId> to_process;
     std::set<LoopId> processed;
+    std::set<LoopId> queued;  // Track what's been queued to avoid duplicates
 
     // Start with all positioned loops (cast-on)
     for (const auto& [loop_id, _] : loop_positions_) {
@@ -89,12 +109,27 @@ void GeometryBuilder::propagate_positions() {
         const Loop* loop = yarn_path_.get_loop(loop_id);
         if (loop) {
             for (LoopId child_id : loop->child_loops) {
-                to_process.push(child_id);
+                if (queued.count(child_id) == 0) {
+                    to_process.push(child_id);
+                    queued.insert(child_id);
+                }
             }
         }
     }
 
-    while (!to_process.empty()) {
+    // Also queue all loops with no parents (YarnOver, M1L, M1R) - they can be positioned immediately
+    for (const auto& loop : yarn_path_.loops()) {
+        if (loop.parent_loops.empty() && processed.count(loop.id) == 0 && queued.count(loop.id) == 0) {
+            to_process.push(loop.id);
+            queued.insert(loop.id);
+        }
+    }
+
+    size_t iteration = 0;
+    size_t max_iterations = yarn_path_.loops().size() * 2;  // Safety limit
+
+    while (!to_process.empty() && iteration < max_iterations) {
+        ++iteration;
         LoopId loop_id = to_process.front();
         to_process.pop();
 
@@ -121,10 +156,16 @@ void GeometryBuilder::propagate_positions() {
 
         // Queue children
         for (LoopId child_id : loop->child_loops) {
-            if (processed.count(child_id) == 0) {
+            if (processed.count(child_id) == 0 && queued.count(child_id) == 0) {
                 to_process.push(child_id);
+                queued.insert(child_id);
             }
         }
+    }
+
+    if (iteration >= max_iterations) {
+        log->warn("GeometryBuilder: propagate_positions hit iteration limit, {} loops processed out of {}",
+                  processed.size(), yarn_path_.loops().size());
     }
 }
 

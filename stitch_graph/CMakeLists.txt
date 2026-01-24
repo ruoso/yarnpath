@@ -6,4 +6,4 @@ add_library(stitch_graph
 )
 
 target_include_directories(stitch_graph PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(stitch_graph PUBLIC instructions)
+target_link_libraries(stitch_graph PUBLIC instructions common)

@@ -2,4 +2,4 @@ add_executable(yarnpath
     main.cpp
 )
 
-target_link_libraries(yarnpath PRIVATE geometry parser)
+target_link_libraries(yarnpath PRIVATE geometry parser common)

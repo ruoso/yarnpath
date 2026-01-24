@@ -10,6 +10,18 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Compiler warnings
 add_compile_options(-Wall -Wextra -Wpedantic)
 
+# spdlog for logging
+include(FetchContent)
+FetchContent_Declare(
+    spdlog
+    GIT_REPOSITORY https://github.com/gabime/spdlog.git
+    GIT_TAG v1.14.1
+)
+FetchContent_MakeAvailable(spdlog)
+
+# Common utilities (logging)
+add_subdirectory(common)
+
 # Libraries
 add_subdirectory(instructions)
 add_subdirectory(parser)
@@ -22,7 +34,6 @@ add_subdirectory(app)
 
 # Testing
 enable_testing()
-include(FetchContent)
 FetchContent_Declare(
     googletest
     GIT_REPOSITORY https://github.com/google/googletest.git

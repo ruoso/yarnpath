@@ -1,11 +1,35 @@
 #include "stitch_node.hpp"
 #include "stitch_instruction.hpp"
+#include "logging.hpp"
 #include <algorithm>
 #include <stdexcept>
 
 namespace yarnpath {
 
 namespace {
+
+// Helper to get instruction type name for logging
+const char* get_instruction_name(const StitchInstruction& instr) {
+    return std::visit([](auto&& arg) -> const char* {
+        using T = std::decay_t<decltype(arg)>;
+        if constexpr (std::is_same_v<T, instruction::Knit>) return "Knit";
+        else if constexpr (std::is_same_v<T, instruction::Purl>) return "Purl";
+        else if constexpr (std::is_same_v<T, instruction::Slip>) return "Slip";
+        else if constexpr (std::is_same_v<T, instruction::CastOn>) return "CastOn";
+        else if constexpr (std::is_same_v<T, instruction::BindOff>) return "BindOff";
+        else if constexpr (std::is_same_v<T, instruction::YarnOver>) return "YarnOver";
+        else if constexpr (std::is_same_v<T, instruction::KFB>) return "KFB";
+        else if constexpr (std::is_same_v<T, instruction::M1L>) return "M1L";
+        else if constexpr (std::is_same_v<T, instruction::M1R>) return "M1R";
+        else if constexpr (std::is_same_v<T, instruction::K2tog>) return "K2tog";
+        else if constexpr (std::is_same_v<T, instruction::SSK>) return "SSK";
+        else if constexpr (std::is_same_v<T, instruction::S2KP>) return "S2KP";
+        else if constexpr (std::is_same_v<T, instruction::CableLeft>) return "CableLeft";
+        else if constexpr (std::is_same_v<T, instruction::CableRight>) return "CableRight";
+        else if constexpr (std::is_same_v<T, instruction::Repeat>) return "Repeat";
+        else return "Unknown";
+    }, instr);
+}
 
 // Helper to process a single instruction and add nodes to the graph
 void process_instruction(
@@ -16,6 +40,9 @@ void process_instruction(
     uint32_t row,
     std::optional<uint32_t> panel_id
 ) {
+    auto log = yarnpath::logging::get_logger();
+    size_t live_before = live_stitches.size();
+
     std::visit([&](auto&& arg) {
         using T = std::decay_t<decltype(arg)>;
 
@@ -209,19 +236,28 @@ void process_instruction(
             throw std::runtime_error("Repeat should be expanded before processing");
         }
     }, instr);
+
+    log->debug("StitchGraph: {} at row={}, col={}, live_stitches: {} -> {}",
+               get_instruction_name(instr), row, column - 1, live_before, live_stitches.size());
 }
 
 }  // namespace
 
 StitchGraph StitchGraph::from_instructions(const PatternInstructions& pattern) {
+    auto log = yarnpath::logging::get_logger();
     StitchGraph graph;
     std::vector<StitchId> live_stitches;
+
+    log->debug("StitchGraph: building from {} row instructions", pattern.rows.size());
 
     for (uint32_t row_idx = 0; row_idx < pattern.rows.size(); ++row_idx) {
         const auto& row_instr = pattern.rows[row_idx];
 
         // Expand any repeats
         auto expanded = expand_instructions(row_instr.stitches);
+        std::string side_str = row_instr.side == RowSide::RS ? "RS" : "WS";
+        log->debug("StitchGraph: row {} ({}): {} instructions expanded",
+                   row_idx, side_str, expanded.size());
 
         // For WS rows, we work from right to left (reverse the live stitches order)
         if (row_instr.side == RowSide::WS && !live_stitches.empty()) {
@@ -250,8 +286,13 @@ StitchGraph StitchGraph::from_instructions(const PatternInstructions& pattern) {
 
         row_info.stitch_count = static_cast<uint32_t>(graph.nodes_.size()) - row_info.first_stitch_id;
         graph.rows_.push_back(row_info);
+
+        log->debug("StitchGraph: row {} complete, {} stitches added, {} live stitches",
+                   row_idx, row_info.stitch_count, live_stitches.size());
     }
 
+    log->debug("StitchGraph: built {} total nodes, {} rows",
+               graph.nodes_.size(), graph.rows_.size());
     return graph;
 }
 

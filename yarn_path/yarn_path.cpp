@@ -1,4 +1,5 @@
 #include "yarn_path.hpp"
+#include "logging.hpp"
 #include <algorithm>
 #include <stdexcept>
 
@@ -67,9 +68,13 @@ YarnPathBuilder::YarnPathBuilder(const StitchGraph& graph)
 }
 
 YarnPath YarnPathBuilder::build() {
+    auto log = yarnpath::logging::get_logger();
+    log->debug("YarnPath: building from {} rows", graph_.row_count());
+
     // Process all rows in order
     for (uint32_t row = 0; row < graph_.row_count(); ++row) {
         auto row_nodes = graph_.row(row);
+        log->debug("YarnPath: processing row {} with {} stitch nodes", row, row_nodes.size());
         for (const auto& node : row_nodes) {
             process_stitch(node);
         }
@@ -94,6 +99,8 @@ YarnPath YarnPathBuilder::build() {
         }
     }
 
+    log->debug("YarnPath: built {} loops, {} anchors, {} segments",
+               result.loops_.size(), result.anchors_.size(), result.segments_.size());
     return result;
 }
 
@@ -621,19 +628,24 @@ void YarnPathBuilder::process_cable_right(StitchId stitch_id, const stitch::Cabl
 // === Helper implementations ===
 
 AnchorId YarnPathBuilder::add_anchor(const Anchor& anchor, StitchId stitch_id) {
+    auto log = yarnpath::logging::get_logger();
     AnchorId id = static_cast<AnchorId>(anchors_.size());
     anchors_.push_back(AnchorNode{id, anchor, stitch_id, {}, {}, {}});
+    log->trace("YarnPath: created anchor {} for stitch {}", id, stitch_id);
     return id;
 }
 
 SegmentId YarnPathBuilder::add_segment(AnchorId from, AnchorId to, const SegmentType& type) {
+    auto log = yarnpath::logging::get_logger();
     SegmentId id = static_cast<SegmentId>(segments_.size());
     segments_.push_back(YarnSegment{id, from, to, type});
+    log->trace("YarnPath: created segment {} from anchor {} to anchor {}", id, from, to);
     return id;
 }
 
 LoopId YarnPathBuilder::create_loop(StitchId stitch_id, FormKind kind,
                                      const std::vector<LoopId>& parents) {
+    auto log = yarnpath::logging::get_logger();
     LoopId id = static_cast<LoopId>(loops_.size());
 
     Loop loop;
@@ -652,6 +664,8 @@ LoopId YarnPathBuilder::create_loop(StitchId stitch_id, FormKind kind,
     }
     stitch_to_loops_[stitch_id].push_back(id);
 
+    log->trace("YarnPath: created loop {} (kind={}) for stitch {}, {} parents",
+               id, static_cast<int>(kind), stitch_id, parents.size());
     return id;
 }
 

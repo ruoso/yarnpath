@@ -1,4 +1,5 @@
 #include "tokenizer.hpp"
+#include "logging.hpp"
 #include <cctype>
 #include <algorithm>
 
@@ -98,7 +99,11 @@ Token Tokenizer::next() {
         peeked_.reset();
         return t;
     }
-    return scan_token();
+    Token t = scan_token();
+    auto log = yarnpath::logging::get_logger();
+    log->trace("Token: type={}, text='{}', line={}, col={}",
+               static_cast<int>(t.type), t.text, t.line, t.column);
+    return t;
 }
 
 Token Tokenizer::scan_token() {

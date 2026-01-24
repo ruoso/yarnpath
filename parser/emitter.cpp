@@ -1,5 +1,6 @@
 #include "emitter.hpp"
 #include "stitch_instruction.hpp"
+#include "logging.hpp"
 #include <sstream>
 #include <stdexcept>
 
@@ -7,8 +8,11 @@ namespace yarnpath {
 namespace parser {
 
 PatternInstructions Emitter::emit(const ast::PatternAST& ast) {
+    auto log = yarnpath::logging::get_logger();
     PatternInstructions pattern;
     uint32_t live_stitches = 0;
+
+    log->debug("Emitter: processing {} AST nodes", ast.nodes.size());
 
     for (const auto& node : ast.nodes) {
         if (auto* cast_on = std::get_if<ast::CastOnNode>(&node)) {
@@ -18,6 +22,7 @@ PatternInstructions Emitter::emit(const ast::PatternAST& ast) {
             row.stitches.push_back(instruction::CastOn{cast_on->count});
             pattern.rows.push_back(row);
             live_stitches = cast_on->count;
+            log->debug("Emitter: cast-on {} stitches, live_stitches={}", cast_on->count, live_stitches);
         }
         else if (auto* bind_off = std::get_if<ast::BindOffNode>(&node)) {
             RowInstruction row;
@@ -26,6 +31,7 @@ PatternInstructions Emitter::emit(const ast::PatternAST& ast) {
             row.stitches.push_back(instruction::BindOff{count});
             pattern.rows.push_back(row);
             live_stitches -= count;
+            log->debug("Emitter: bind-off {} stitches, live_stitches={}", count, live_stitches);
         }
         else if (auto* row_node = std::get_if<ast::RowNode>(&node)) {
             auto row = emit_row(*row_node, live_stitches);
@@ -38,10 +44,15 @@ PatternInstructions Emitter::emit(const ast::PatternAST& ast) {
                 consumed += stitches_consumed(instr);
                 produced += stitches_produced(instr);
             }
+            uint32_t old_stitches = live_stitches;
             live_stitches = live_stitches - consumed + produced;
+            log->debug("Emitter: row {} - consumed={}, produced={}, live_stitches: {} -> {}",
+                       row_node->row_number.value_or(0), consumed, produced, old_stitches, live_stitches);
         }
     }
 
+    log->debug("Emitter: finished with {} rows, final live_stitches={}",
+               pattern.rows.size(), live_stitches);
     return pattern;
 }
 
@@ -94,12 +105,14 @@ std::vector<StitchInstruction> Emitter::emit_repeat(
     const ast::RepeatNode& repeat,
     uint32_t remaining_stitches
 ) {
+    auto log = yarnpath::logging::get_logger();
     std::vector<StitchInstruction> result;
 
     // Calculate stitches consumed by one iteration of the repeat body
     uint32_t body_consumption = calculate_consumption(repeat.body);
 
     if (body_consumption == 0) {
+        log->warn("Repeat body consumes 0 stitches");
         warnings_.push_back("Repeat body consumes 0 stitches");
         return result;
     }
@@ -126,6 +139,9 @@ std::vector<StitchInstruction> Emitter::emit_repeat(
         // Default: repeat once
         times = 1;
     }
+
+    log->debug("Emitter: repeat body_consumption={}, remaining={}, times={}, reserve={}",
+               body_consumption, remaining_stitches, times, reserve);
 
     // Emit the repeat body 'times' times
     for (uint32_t i = 0; i < times; ++i) {

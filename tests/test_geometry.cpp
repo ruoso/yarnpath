@@ -677,6 +677,68 @@ TEST(GeometryPathTest, SegmentLookup) {
 }
 
 // ============================================
+// Loops Without Parents (YarnOver, M1L, M1R)
+// These loops have no parent loops and must be queued specially during position propagation
+// ============================================
+
+TEST(GeometryPathTest, YarnOverPositioning) {
+    // YarnOver creates loops with no parents - these need special handling
+    // in position propagation since they're not children of any other loop
+    PatternInstructions pattern = create_pattern({
+        "CCCC",      // Cast on 4 stitches
+        "KOKOK"      // K, YO, K, YO, K - creates 2 yarn overs with no parents
+    });
+    StitchGraph graph = StitchGraph::from_instructions(pattern);
+    YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
+
+    PlaneSurface surface;
+    GeometryPath geometry = GeometryPath::from_yarn_path(
+        yarn_path,
+        YarnProperties::worsted(),
+        Gauge::worsted(),
+        surface
+    );
+
+    // All loops should be positioned (the bug was yarn overs weren't getting positioned)
+    EXPECT_EQ(geometry.loop_positions().size(), yarn_path.loops().size());
+
+    // Yarn over loops (in row 1) should have valid positions
+    for (const auto& pos : geometry.loop_positions()) {
+        EXPECT_TRUE(std::isfinite(pos.u));
+        EXPECT_TRUE(std::isfinite(pos.v));
+    }
+
+    // Should be able to generate output without hanging
+    std::string obj = geometry.to_obj();
+    EXPECT_FALSE(obj.empty());
+}
+
+TEST(GeometryPathTest, MultipleYarnOversInRow) {
+    // More complex pattern with multiple yarn overs
+    PatternInstructions pattern = create_pattern({
+        "CCCCCC",     // Cast on 6 stitches
+        "K2OKO2K"     // K2tog, YO, K, YO, K2tog, K - mixed increases/decreases
+    });
+    StitchGraph graph = StitchGraph::from_instructions(pattern);
+    YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
+
+    PlaneSurface surface;
+    GeometryPath geometry = GeometryPath::from_yarn_path(
+        yarn_path,
+        YarnProperties::worsted(),
+        Gauge::worsted(),
+        surface
+    );
+
+    // All loops should be positioned
+    EXPECT_EQ(geometry.loop_positions().size(), yarn_path.loops().size());
+
+    // Should complete without infinite loop
+    auto [min_pt, max_pt] = geometry.bounding_box();
+    EXPECT_LT(min_pt.x, max_pt.x);
+}
+
+// ============================================
 // Curvature Constraint Tests
 // ============================================
 

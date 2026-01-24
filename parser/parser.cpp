@@ -1,4 +1,5 @@
 #include "parser.hpp"
+#include "logging.hpp"
 #include <sstream>
 
 namespace yarnpath {
@@ -40,6 +41,8 @@ void Parser::error(const std::string& message) {
 }
 
 void Parser::skip_to_next_line() {
+    auto log = yarnpath::logging::get_logger();
+    log->warn("Parser error recovery: skipping to next line at line {}", current_.line);
     while (!check(TokenType::EndOfLine) && !check(TokenType::EndOfFile)) {
         advance();
     }
@@ -92,6 +95,7 @@ ast::PatternNode Parser::parse_line() {
 }
 
 ast::CastOnNode Parser::parse_cast_on() {
+    auto log = yarnpath::logging::get_logger();
     advance();  // consume CastOn
 
     uint32_t count = 0;
@@ -109,10 +113,12 @@ ast::CastOnNode Parser::parse_cast_on() {
     match(TokenType::Period);
     match(TokenType::EndOfLine);
 
+    log->debug("Parsed cast-on: {} stitches", count);
     return ast::CastOnNode{count};
 }
 
 ast::BindOffNode Parser::parse_bind_off() {
+    auto log = yarnpath::logging::get_logger();
     advance();  // consume BindOff
 
     ast::BindOffNode node;
@@ -131,10 +137,16 @@ ast::BindOffNode Parser::parse_bind_off() {
     match(TokenType::Period);
     match(TokenType::EndOfLine);
 
+    if (node.all) {
+        log->debug("Parsed bind-off: all stitches");
+    } else {
+        log->debug("Parsed bind-off: {} stitches", node.count.value_or(0));
+    }
     return node;
 }
 
 ast::RowNode Parser::parse_row() {
+    auto log = yarnpath::logging::get_logger();
     ast::RowNode row;
 
     advance();  // consume Row
@@ -165,6 +177,9 @@ ast::RowNode Parser::parse_row() {
     match(TokenType::Period);
     match(TokenType::EndOfLine);
 
+    std::string side_str = row.side.value_or(RowSide::RS) == RowSide::RS ? "RS" : "WS";
+    log->debug("Parsed row {}: side={}, {} elements",
+               row.row_number.value_or(0), side_str, row.elements.size());
     return row;
 }
 
@@ -211,6 +226,8 @@ std::vector<ast::RowElement> Parser::parse_stitch_sequence() {
 }
 
 ast::RepeatNode Parser::parse_asterisk_repeat() {
+    auto log = yarnpath::logging::get_logger();
+    log->debug("Parsing asterisk repeat");
     ast::RepeatNode repeat;
 
     advance();  // consume opening *
@@ -263,10 +280,14 @@ ast::RepeatNode Parser::parse_asterisk_repeat() {
     // Check for suffix stitches after the repeat
     match(TokenType::Comma);
 
+    log->debug("Parsed asterisk repeat: {} body elements, to_end={}, to_last={}",
+               repeat.body.size(), repeat.to_end, repeat.to_last.value_or(0));
     return repeat;
 }
 
 ast::RepeatNode Parser::parse_bracket_repeat() {
+    auto log = yarnpath::logging::get_logger();
+    log->debug("Parsing bracket repeat");
     ast::RepeatNode repeat;
 
     advance();  // consume [
@@ -297,6 +318,8 @@ ast::RepeatNode Parser::parse_bracket_repeat() {
         match(TokenType::Times);
     }
 
+    log->debug("Parsed bracket repeat: {} body elements, {} times",
+               repeat.body.size(), repeat.times.value_or(1));
     return repeat;
 }
 

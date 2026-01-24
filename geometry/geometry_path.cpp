@@ -1,5 +1,6 @@
 #include "geometry_path.hpp"
 #include "geometry_builder.hpp"
+#include "logging.hpp"
 #include <sstream>
 #include <iomanip>
 #include <limits>
@@ -72,18 +73,24 @@ std::vector<Vec3> GeometryPath::to_polyline_fixed(int samples_per_segment) const
 }
 
 ValidationResult GeometryPath::validate(const YarnProperties& yarn) const {
+    auto log = yarnpath::logging::get_logger();
     ValidationResult result;
 
     float max_curvature = yarn.max_curvature();
     float min_clearance = yarn.min_clearance();
 
+    log->debug("GeometryPath: validating {} segments, {} anchors",
+               segments_.size(), anchors_.size());
+    log->debug("GeometryPath: max_curvature={}, min_clearance={}", max_curvature, min_clearance);
+
     // Check curvature constraints
     for (const auto& seg : segments_) {
         if (seg.max_curvature > max_curvature) {
-            result.add_warning(
-                "Segment " + std::to_string(seg.segment_id) +
+            std::string msg = "Segment " + std::to_string(seg.segment_id) +
                 " exceeds max curvature: " + std::to_string(seg.max_curvature) +
-                " > " + std::to_string(max_curvature));
+                " > " + std::to_string(max_curvature);
+            log->warn("GeometryPath validation: {}", msg);
+            result.add_warning(msg);
         }
     }
 
@@ -93,27 +100,32 @@ ValidationResult GeometryPath::validate(const YarnProperties& yarn) const {
         for (size_t j = i + 2; j < anchors_.size(); ++j) {
             float dist = anchors_[i].position.distance_to(anchors_[j].position);
             if (dist < min_clearance) {
-                result.add_warning(
-                    "Anchors " + std::to_string(anchors_[i].anchor_id) +
+                std::string msg = "Anchors " + std::to_string(anchors_[i].anchor_id) +
                     " and " + std::to_string(anchors_[j].anchor_id) +
                     " are closer than min clearance: " +
-                    std::to_string(dist) + " < " + std::to_string(min_clearance));
+                    std::to_string(dist) + " < " + std::to_string(min_clearance);
+                log->warn("GeometryPath validation: {}", msg);
+                result.add_warning(msg);
             }
         }
     }
 
+    log->debug("GeometryPath: validation complete, {} warnings", result.warnings.size());
     return result;
 }
 
 float GeometryPath::total_arc_length() const {
+    auto log = yarnpath::logging::get_logger();
     float total = 0.0f;
     for (const auto& seg : segments_) {
         total += seg.arc_length;
     }
+    log->info("GeometryPath: total arc length = {}", total);
     return total;
 }
 
 std::pair<Vec3, Vec3> GeometryPath::bounding_box() const {
+    auto log = yarnpath::logging::get_logger();
     if (anchors_.empty()) {
         return {vec3::zero(), vec3::zero()};
     }
@@ -144,6 +156,8 @@ std::pair<Vec3, Vec3> GeometryPath::bounding_box() const {
         }
     }
 
+    log->info("GeometryPath: bounding box = ({}, {}, {}) to ({}, {}, {})",
+              min_pt.x, min_pt.y, min_pt.z, max_pt.x, max_pt.y, max_pt.z);
     return {min_pt, max_pt};
 }
 

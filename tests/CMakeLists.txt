@@ -4,6 +4,7 @@ add_executable(tests
     test_parser.cpp
     test_yarn_path.cpp
     test_geometry.cpp
+    test_loop_shape.cpp
 )
 
 target_link_libraries(tests PRIVATE

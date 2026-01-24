@@ -9,7 +9,7 @@
 #include "gauge.hpp"
 #include "cubic_bezier.hpp"
 #include "fabric_surface.hpp"
-#include "stitch_glyph.hpp"
+#include "physical_loop.hpp"
 #include "geometry_path.hpp"
 #include "geometry_builder.hpp"
 

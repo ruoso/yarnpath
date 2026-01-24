@@ -19,6 +19,10 @@ struct YarnProperties {
     float stiffness = 0.5f;           // 0=flexible, 1=stiff (affects repulsion)
     float friction = 0.3f;            // Yarn-yarn contact coefficient (future use)
 
+    // Tension/tightness properties
+    float tension = 0.5f;             // 0=loose, 1=tight knitting style
+    float elasticity = 0.3f;          // How much the yarn stretches under tension
+
     // Derived properties
     float min_clearance() const {
         return 2.0f * radius;
@@ -26,6 +30,17 @@ struct YarnProperties {
 
     float max_curvature() const {
         return 1.0f / min_bend_radius;
+    }
+
+    // Knot tightness factor: how much the loop contracts from its relaxed state
+    // Higher tension + lower elasticity = tighter knots
+    float knot_tightness() const {
+        return tension * (1.0f - elasticity * 0.5f);
+    }
+
+    // Effective loop size multiplier (1.0 = relaxed, < 1.0 = tighter)
+    float loop_size_factor() const {
+        return 1.0f - knot_tightness() * 0.3f;  // Up to 30% smaller when very tight
     }
 
     // Factory methods for common yarn types

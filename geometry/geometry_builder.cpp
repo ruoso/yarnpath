@@ -1,4 +1,5 @@
 #include "geometry_builder.hpp"
+#include "physical_loop.hpp"
 #include "logging.hpp"
 #include <algorithm>
 #include <cmath>
@@ -13,8 +14,7 @@ GeometryBuilder::GeometryBuilder(
     : yarn_path_(yarn_path)
     , yarn_(yarn)
     , gauge_(gauge)
-    , surface_(surface)
-    , glyph_factory_(yarn, gauge) {}
+    , surface_(surface) {}
 
 GeometryPath GeometryBuilder::build() {
     auto log = yarnpath::logging::get_logger();
@@ -27,432 +27,355 @@ GeometryPath GeometryBuilder::build() {
 
     log->debug("GeometryBuilder: building geometry for {} loops", yarn_path_.loops().size());
 
-    // Phase 1: Initialize cast-on positions
-    log->debug("GeometryBuilder: Phase 1 - initializing cast-on positions");
-    initialize_cast_on_positions();
-    log->debug("GeometryBuilder: initialized {} cast-on positions", loop_positions_.size());
+    // Calculate physical loop dimensions from needle and yarn
+    auto loop_dim = LoopDimensions::calculate(yarn_, gauge_);
+    log->debug("GeometryBuilder: physical loop dimensions - opening={}, height={}, width={}",
+               loop_dim.opening_diameter, loop_dim.loop_height, loop_dim.loop_width);
 
-    // Phase 2: Propagate positions through topology
-    log->debug("GeometryBuilder: Phase 2 - propagating positions");
-    propagate_positions();
-    log->debug("GeometryBuilder: propagated {} total loop positions", loop_positions_.size());
+    // Phase 1: Create physical loops for each stitch
+    // Positions are determined by topology (parent-child relationships)
+    std::map<LoopId, PhysicalLoop> physical_loops;
 
-    // Phase 3: Generate glyph geometry for each loop
-    log->debug("GeometryBuilder: Phase 3 - generating glyph geometries");
-    generate_glyph_geometries();
-    log->debug("GeometryBuilder: generated {} loop glyphs", loop_glyphs_.size());
-
-    // Phase 4: Create anchor geometries from glyphs
-    log->debug("GeometryBuilder: Phase 4 - creating anchor geometries");
-    create_anchor_geometries();
-    log->debug("GeometryBuilder: created {} anchor geometries", anchor_geometries_.size());
-
-    // Phase 5: Connect segments between anchors
-    log->debug("GeometryBuilder: Phase 5 - connecting segments");
-    auto segments = connect_segments();
-    log->debug("GeometryBuilder: connected {} segments", segments.size());
-
-    // Phase 6: Apply constraints
-    log->debug("GeometryBuilder: Phase 6 - applying constraints");
-    apply_constraints(segments);
-
-    // Build output
-    for (const auto& [loop_id, pos] : loop_positions_) {
-        result.loop_positions_.push_back(pos);
-        result.loop_position_index_[loop_id] = result.loop_positions_.size() - 1;
-    }
-
-    for (const auto& [anchor_id, geom] : anchor_geometries_) {
-        result.anchors_.push_back(geom);
-        result.anchor_index_[anchor_id] = result.anchors_.size() - 1;
-    }
-
-    for (auto& seg : segments) {
-        result.segment_index_[seg.segment_id] = result.segments_.size();
-        result.segments_.push_back(std::move(seg));
-    }
-
-    log->debug("GeometryBuilder: build complete - {} loops, {} anchors, {} segments",
-               result.loop_positions_.size(), result.anchors_.size(), result.segments_.size());
-    return result;
-}
-
-void GeometryBuilder::initialize_cast_on_positions() {
-    uint32_t column = 0;
-
+    // First, position cast-on loops (they have no parents)
+    float cast_on_x = 0.0f;
     for (const auto& loop : yarn_path_.loops()) {
         if (loop.kind == FormKind::CastOn) {
+            // Cast-on loops are positioned horizontally
+            Vec3 position(cast_on_x + loop_dim.loop_width * 0.5f, loop_dim.loop_height * 0.5f, 0.0f);
+            physical_loops[loop.id] = PhysicalLoop::from_properties(yarn_, gauge_, position);
+
+            log->debug("GeometryBuilder: cast-on loop {} at ({}, {}, {})",
+                       loop.id, position.x, position.y, position.z);
+
+            // Store position info
             LoopPosition pos;
             pos.loop_id = loop.id;
-            pos.row = 0;
-            pos.column = column;
-            pos.u = gauge_.stitch_to_u(static_cast<float>(column));
+            pos.u = cast_on_x;
             pos.v = 0.0f;
-
             loop_positions_[loop.id] = pos;
-            ++column;
+
+            cast_on_x += loop_dim.loop_width;
         }
     }
-}
 
-void GeometryBuilder::propagate_positions() {
-    auto log = yarnpath::logging::get_logger();
-    // BFS from positioned loops
+    // Then, position child loops based on their parents
+    // Use BFS to process in topological order
+    std::set<LoopId> positioned;
+    for (const auto& [id, _] : physical_loops) {
+        positioned.insert(id);
+    }
+
     std::queue<LoopId> to_process;
-    std::set<LoopId> processed;
-    std::set<LoopId> queued;  // Track what's been queued to avoid duplicates
-
-    // Start with all positioned loops (cast-on)
-    for (const auto& [loop_id, _] : loop_positions_) {
-        processed.insert(loop_id);
-        // Add children of cast-on to queue
-        const Loop* loop = yarn_path_.get_loop(loop_id);
-        if (loop) {
-            for (LoopId child_id : loop->child_loops) {
-                if (queued.count(child_id) == 0) {
-                    to_process.push(child_id);
-                    queued.insert(child_id);
-                }
-            }
-        }
-    }
-
-    // Also queue all loops with no parents (YarnOver, M1L, M1R) - they can be positioned immediately
     for (const auto& loop : yarn_path_.loops()) {
-        if (loop.parent_loops.empty() && processed.count(loop.id) == 0 && queued.count(loop.id) == 0) {
+        if (loop.kind != FormKind::CastOn && !loop.parent_loops.empty()) {
             to_process.push(loop.id);
-            queued.insert(loop.id);
         }
     }
 
+    size_t max_iterations = yarn_path_.loops().size() * 2;
     size_t iteration = 0;
-    size_t max_iterations = yarn_path_.loops().size() * 2;  // Safety limit
 
     while (!to_process.empty() && iteration < max_iterations) {
         ++iteration;
         LoopId loop_id = to_process.front();
         to_process.pop();
 
-        if (processed.count(loop_id) > 0) {
+        if (positioned.count(loop_id) > 0) {
             continue;
         }
 
         const Loop* loop = yarn_path_.get_loop(loop_id);
-        if (!loop) {
-            continue;
-        }
+        if (!loop) continue;
 
         // Check if all parents are positioned
-        if (!all_parents_positioned(loop_id)) {
-            // Re-queue for later
+        bool all_parents_ready = true;
+        for (LoopId parent_id : loop->parent_loops) {
+            if (positioned.count(parent_id) == 0) {
+                all_parents_ready = false;
+                break;
+            }
+        }
+
+        if (!all_parents_ready) {
             to_process.push(loop_id);
             continue;
         }
 
-        // Compute position from parents
-        LoopPosition pos = compute_child_position(*loop);
+        // Position this loop based on its parent(s)
+        Vec3 position(0.0f, 0.0f, 0.0f);
+        if (!loop->parent_loops.empty()) {
+            // Average parent positions horizontally
+            float avg_x = 0.0f;
+            float max_y = 0.0f;
+            for (LoopId parent_id : loop->parent_loops) {
+                const auto& parent = physical_loops[parent_id];
+                avg_x += parent.center.x;
+                max_y = std::max(max_y, parent.apex_point.y);
+            }
+            avg_x /= loop->parent_loops.size();
+
+            // New loop is positioned above parent, with its base at parent's apex
+            // This creates the interlocking structure
+            position.x = avg_x;
+            position.y = max_y + loop_dim.loop_height * 0.5f;
+            position.z = 0.0f;
+        }
+
+        physical_loops[loop_id] = PhysicalLoop::from_properties(yarn_, gauge_, position);
+        positioned.insert(loop_id);
+
+        log->debug("GeometryBuilder: loop {} (kind={}) at ({}, {}, {})",
+                   loop_id, static_cast<int>(loop->kind), position.x, position.y, position.z);
+
+        // Store position info
+        LoopPosition pos;
+        pos.loop_id = loop_id;
+        pos.u = position.x;
+        pos.v = position.y;
         loop_positions_[loop_id] = pos;
-        processed.insert(loop_id);
-
-        // Queue children
-        for (LoopId child_id : loop->child_loops) {
-            if (processed.count(child_id) == 0 && queued.count(child_id) == 0) {
-                to_process.push(child_id);
-                queued.insert(child_id);
-            }
-        }
     }
 
-    if (iteration >= max_iterations) {
-        log->warn("GeometryBuilder: propagate_positions hit iteration limit, {} loops processed out of {}",
-                  processed.size(), yarn_path_.loops().size());
-    }
-}
-
-bool GeometryBuilder::all_parents_positioned(LoopId loop_id) const {
-    const Loop* loop = yarn_path_.get_loop(loop_id);
-    if (!loop) {
-        return false;
-    }
-
-    for (LoopId parent_id : loop->parent_loops) {
-        if (loop_positions_.count(parent_id) == 0) {
-            return false;
-        }
-    }
-    return true;
-}
-
-LoopPosition GeometryBuilder::compute_child_position(const Loop& loop) const {
-    LoopPosition pos;
-    pos.loop_id = loop.id;
-
-    if (loop.parent_loops.empty()) {
-        // No parents (yarn over, etc.) - use stitch_id to estimate position
-        // This is a fallback case
-        pos.row = 1;
-        pos.column = 0;
-        pos.u = 0.0f;
-        pos.v = gauge_.row_to_v(1.0f);
-        return pos;
-    }
-
-    // Compute centroid of parent positions
-    float sum_u = 0.0f;
-    float max_v = 0.0f;
-    uint32_t max_row = 0;
-
-    for (LoopId parent_id : loop.parent_loops) {
-        auto it = loop_positions_.find(parent_id);
-        if (it != loop_positions_.end()) {
-            sum_u += it->second.u;
-            max_v = std::max(max_v, it->second.v);
-            max_row = std::max(max_row, it->second.row);
-        }
-    }
-
-    float avg_u = sum_u / static_cast<float>(loop.parent_loops.size());
-
-    pos.row = max_row + 1;
-    pos.column = static_cast<uint32_t>(std::round(avg_u * gauge_.stitches_per_unit));
-    pos.u = avg_u;
-    pos.v = max_v + gauge_.row_height();
-
-    // Apply FormKind-specific adjustments
-    switch (loop.kind) {
-        case FormKind::K2tog:
-        case FormKind::SSK:
-            // Decrease: position at centroid (already computed)
-            break;
-
-        case FormKind::S2KP:
-            // Centered decrease: position at middle parent
-            if (loop.parent_loops.size() == 3) {
-                auto it = loop_positions_.find(loop.parent_loops[1]);
-                if (it != loop_positions_.end()) {
-                    pos.u = it->second.u;
-                    pos.column = it->second.column;
-                }
-            }
-            break;
-
-        case FormKind::YarnOver:
-        case FormKind::M1L:
-        case FormKind::M1R:
-            // Increases: these add width, neighbors will adjust
-            break;
-
-        default:
-            // Standard stitches: inherit parent position
-            break;
-    }
-
-    return pos;
-}
-
-void GeometryBuilder::generate_glyph_geometries() {
+    // Handle loops without parents (like YarnOver, M1L, M1R)
+    // These need to be positioned based on their neighbors in the yarn path
     for (const auto& loop : yarn_path_.loops()) {
-        StitchGlyph glyph = glyph_factory_.create_glyph(loop.kind, loop);
+        if (positioned.count(loop.id) > 0) continue;
+        if (loop.kind == FormKind::CastOn) continue;
 
-        // Get loop position
-        auto pos_it = loop_positions_.find(loop.id);
-        if (pos_it == loop_positions_.end()) {
+        // This loop has no parents - position it based on yarn neighbors
+        Vec3 position(0.0f, 0.0f, 0.0f);
+        int neighbor_count = 0;
+
+        // Look at previous loop in yarn
+        if (loop.prev_in_yarn) {
+            auto prev_it = physical_loops.find(*loop.prev_in_yarn);
+            if (prev_it != physical_loops.end()) {
+                position.x += prev_it->second.center.x + loop_dim.loop_width;
+                position.y += prev_it->second.center.y;
+                neighbor_count++;
+            }
+        }
+
+        // Look at next loop in yarn
+        if (loop.next_in_yarn) {
+            auto next_it = physical_loops.find(*loop.next_in_yarn);
+            if (next_it != physical_loops.end()) {
+                position.x += next_it->second.center.x - loop_dim.loop_width;
+                position.y += next_it->second.center.y;
+                neighbor_count++;
+            }
+        }
+
+        if (neighbor_count > 0) {
+            position.x /= neighbor_count;
+            position.y /= neighbor_count;
+        } else {
+            // Fallback: position at origin with offset
+            position.x = loop.id * loop_dim.loop_width;
+            position.y = loop_dim.loop_height;
+        }
+
+        physical_loops[loop.id] = PhysicalLoop::from_properties(yarn_, gauge_, position);
+        positioned.insert(loop.id);
+
+        log->debug("GeometryBuilder: parentless loop {} (kind={}) at ({}, {}, {})",
+                   loop.id, static_cast<int>(loop.kind), position.x, position.y, position.z);
+
+        LoopPosition pos;
+        pos.loop_id = loop.id;
+        pos.u = position.x;
+        pos.v = position.y;
+        loop_positions_[loop.id] = pos;
+    }
+
+    // Phase 2: Generate yarn path by walking through loops in yarn order
+    // The yarn forms loops and passes through parent loops
+    log->debug("GeometryBuilder: Phase 2 - generating yarn path");
+
+    // We build the path by directly accumulating Bezier segments
+    // For loops with pre-computed shapes (like cast-on), we use those directly
+    // For transitions between loops, we create connecting segments
+    BezierSpline full_path;
+    std::optional<Vec3> last_point;  // Track where we left off for connections
+
+    // Find first loop
+    LoopId first_loop = yarn_path_.first_loop();
+    std::optional<LoopId> current_loop = first_loop;
+
+    while (current_loop) {
+        const Loop* loop = yarn_path_.get_loop(*current_loop);
+        if (!loop) break;
+
+        auto phys_it = physical_loops.find(*current_loop);
+        if (phys_it == physical_loops.end()) {
+            current_loop = loop->next_in_yarn;
             continue;
         }
 
-        const LoopPosition& pos = pos_it->second;
+        const PhysicalLoop& phys = phys_it->second;
 
-        // Transform glyph to world coordinates
-        Vec3 origin = to_world_position(pos.u, pos.v, 0.0f);
+        // For each loop, the yarn path goes:
+        // 1. Entry point (coming from previous loop or start)
+        // 2. Around the loop shape
+        // 3. Through parent loop opening (if knit/purl)
+        // 4. Exit point (going to next loop)
 
-        // Scale based on gauge and yarn
-        Vec3 scale(
-            gauge_.stitch_width(),
-            gauge_.row_height() * yarn_.loop_aspect_ratio,
-            gauge_.fabric_thickness * yarn_.radius
-        );
+        bool is_knit = (loop->kind == FormKind::Knit);
+        bool is_purl = (loop->kind == FormKind::Purl);
+        bool is_cast_on = (loop->kind == FormKind::CastOn);
 
-        loop_glyphs_[loop.id] = glyph.transformed(origin, scale);
-    }
-}
+        if (is_cast_on) {
+            // Cast-on: use the pre-computed cylinder-wrapped shape directly
+            // This ensures the yarn properly wraps around the needle
 
-void GeometryBuilder::create_anchor_geometries() {
-    for (const auto& anchor_node : yarn_path_.anchors()) {
-        AnchorGeometry geom;
-        geom.anchor_id = anchor_node.id;
-
-        // Determine which loop this anchor belongs to
-        LoopId loop_id = 0;
-        std::string anchor_name;
-
-        std::visit([&](auto&& anchor) {
-            using T = std::decay_t<decltype(anchor)>;
-            if constexpr (std::is_same_v<T, anchor::LoopForm>) {
-                loop_id = anchor.loop_id;
-                anchor_name = "form";
-            } else if constexpr (std::is_same_v<T, anchor::LoopApex>) {
-                loop_id = anchor.loop_id;
-                anchor_name = "apex";
-            } else if constexpr (std::is_same_v<T, anchor::LoopEntry>) {
-                loop_id = anchor.loop_id;
-                anchor_name = "entry";
-            } else if constexpr (std::is_same_v<T, anchor::LoopExit>) {
-                loop_id = anchor.loop_id;
-                anchor_name = "exit";
-            } else if constexpr (std::is_same_v<T, anchor::CastOnBase>) {
-                loop_id = anchor.loop_id;
-                anchor_name = "base";
-            } else if constexpr (std::is_same_v<T, anchor::BindOffEnd>) {
-                loop_id = anchor.loop_id;
-                anchor_name = "end";
-            } else if constexpr (std::is_same_v<T, anchor::YarnOverApex>) {
-                loop_id = anchor.loop_id;
-                anchor_name = "apex";
-            } else if constexpr (std::is_same_v<T, anchor::CrossOver>) {
-                // Cable crossover - use first over loop
-                if (!anchor.over_loops.empty()) {
-                    loop_id = anchor.over_loops[0];
-                }
-                anchor_name = "crossover";
+            // If we have a previous point, connect to the loop entry
+            if (last_point) {
+                Vec3 entry = phys.shape.segments().empty()
+                    ? phys.entry_point
+                    : phys.shape.segments().front().start();
+                Vec3 tangent = (entry - *last_point) * 0.4f;
+                CubicBezier connector = CubicBezier::from_hermite(
+                    *last_point, tangent, entry, tangent);
+                full_path.add_segment(connector);
             }
-        }, anchor_node.anchor);
 
-        // Get glyph for this loop
-        auto glyph_it = loop_glyphs_.find(loop_id);
-        if (glyph_it != loop_glyphs_.end()) {
-            const auto* glyph_anchor = glyph_it->second.get_anchor(anchor_name);
-            if (glyph_anchor) {
-                geom.position = glyph_anchor->position;
-                geom.tangent = glyph_anchor->tangent;
+            // Add all segments from the pre-computed shape
+            for (const auto& seg : phys.shape.segments()) {
+                full_path.add_segment(seg);
+            }
+
+            // Update last point to exit of the shape
+            if (!phys.shape.segments().empty()) {
+                last_point = phys.shape.segments().back().end();
             } else {
-                // Fallback: use loop position
-                auto pos_it = loop_positions_.find(loop_id);
-                if (pos_it != loop_positions_.end()) {
-                    geom.position = to_world_position(
-                        pos_it->second.u + gauge_.stitch_width() * 0.5f,
-                        pos_it->second.v + gauge_.row_height() * 0.5f,
-                        0.0f
+                last_point = phys.exit_point;
+            }
+        } else if (is_knit || is_purl) {
+            // Knit/Purl: the yarn passes through the parent loop, then forms new loop
+            std::vector<YarnPathPoint> transition_points;
+
+            // Get parent loop
+            if (!loop->parent_loops.empty()) {
+                LoopId parent_id = loop->parent_loops[0];
+                auto parent_it = physical_loops.find(parent_id);
+                if (parent_it != physical_loops.end()) {
+                    const PhysicalLoop& parent = parent_it->second;
+
+                    // Entry: approach the parent loop from outside
+                    float entry_z = is_knit ? -yarn_.radius * 2.0f : yarn_.radius * 2.0f;
+                    Vec3 approach_point(
+                        parent.opening_center.x - loop_dim.loop_width * 0.3f,
+                        parent.opening_center.y,
+                        entry_z
                     );
-                    geom.tangent = vec3::unit_x();
+                    transition_points.push_back(YarnPathPoint(approach_point, 0.3f));
+
+                    // Pass through parent loop opening
+                    Vec3 through_point(
+                        parent.opening_center.x,
+                        parent.opening_center.y,
+                        0.0f  // Middle of opening
+                    );
+                    transition_points.push_back(YarnPathPoint(through_point, 0.5f));
+
+                    // Exit parent loop on the other side
+                    float exit_z = is_knit ? yarn_.radius * 2.0f : -yarn_.radius * 2.0f;
+                    Vec3 exit_parent_point(
+                        parent.opening_center.x + loop_dim.loop_width * 0.3f,
+                        parent.opening_center.y,
+                        exit_z
+                    );
+                    transition_points.push_back(YarnPathPoint(exit_parent_point, 0.3f));
                 }
             }
-        } else {
-            // No glyph - estimate from position
-            auto pos_it = loop_positions_.find(loop_id);
-            if (pos_it != loop_positions_.end()) {
-                geom.position = to_world_position(
-                    pos_it->second.u + gauge_.stitch_width() * 0.5f,
-                    pos_it->second.v + gauge_.row_height() * 0.5f,
-                    0.0f
-                );
-                geom.tangent = vec3::unit_x();
+
+            // Connect from last point through transition
+            if (last_point && !transition_points.empty()) {
+                transition_points.insert(transition_points.begin(),
+                    YarnPathPoint(*last_point, 0.3f));
+            }
+
+            // Create transition spline and add its segments
+            if (transition_points.size() >= 2) {
+                BezierSpline transition = BezierSpline::from_yarn_points(transition_points);
+                for (const auto& seg : transition.segments()) {
+                    full_path.add_segment(seg);
+                }
+                last_point = transition.segments().back().end();
+            }
+
+            // Connect to and add the loop shape
+            Vec3 entry = phys.shape.segments().empty()
+                ? phys.entry_point
+                : phys.shape.segments().front().start();
+            if (last_point) {
+                Vec3 tangent = (entry - *last_point) * 0.4f;
+                CubicBezier connector = CubicBezier::from_hermite(
+                    *last_point, tangent, entry, tangent);
+                full_path.add_segment(connector);
+            }
+
+            for (const auto& seg : phys.shape.segments()) {
+                full_path.add_segment(seg);
+            }
+
+            if (!phys.shape.segments().empty()) {
+                last_point = phys.shape.segments().back().end();
             } else {
-                geom.position = vec3::zero();
-                geom.tangent = vec3::unit_x();
+                last_point = phys.exit_point;
             }
-        }
-
-        // Use layout hints if provided
-        if (anchor_node.hint_x || anchor_node.hint_y || anchor_node.hint_z) {
-            auto pos_it = loop_positions_.find(loop_id);
-            if (pos_it != loop_positions_.end()) {
-                float hint_x = anchor_node.hint_x.value_or(0.5f);
-                float hint_y = anchor_node.hint_y.value_or(0.5f);
-                float hint_z = anchor_node.hint_z.value_or(0.5f);
-
-                geom.position = to_world_position(
-                    pos_it->second.u + hint_x * gauge_.stitch_width(),
-                    pos_it->second.v + hint_y * gauge_.row_height(),
-                    (hint_z - 0.5f) * gauge_.fabric_thickness * yarn_.radius
-                );
-            }
-        }
-
-        // Surface normal
-        auto pos_it = loop_positions_.find(loop_id);
-        if (pos_it != loop_positions_.end()) {
-            geom.normal = surface_.normal(pos_it->second.u, pos_it->second.v);
         } else {
-            geom.normal = vec3::unit_z();
+            // Other stitch types: use the pre-computed shape
+            if (last_point) {
+                Vec3 entry = phys.shape.segments().empty()
+                    ? phys.entry_point
+                    : phys.shape.segments().front().start();
+                Vec3 tangent = (entry - *last_point) * 0.4f;
+                CubicBezier connector = CubicBezier::from_hermite(
+                    *last_point, tangent, entry, tangent);
+                full_path.add_segment(connector);
+            }
+
+            for (const auto& seg : phys.shape.segments()) {
+                full_path.add_segment(seg);
+            }
+
+            if (!phys.shape.segments().empty()) {
+                last_point = phys.shape.segments().back().end();
+            } else {
+                last_point = phys.exit_point;
+            }
         }
 
-        anchor_geometries_[anchor_node.id] = geom;
+        current_loop = loop->next_in_yarn;
     }
-}
 
-std::vector<SegmentGeometry> GeometryBuilder::connect_segments() {
-    std::vector<SegmentGeometry> result;
+    log->debug("GeometryBuilder: built path with {} segments", full_path.segments().size());
 
-    for (const auto& yarn_seg : yarn_path_.segments()) {
-        auto from_it = anchor_geometries_.find(yarn_seg.from_anchor);
-        auto to_it = anchor_geometries_.find(yarn_seg.to_anchor);
-
-        if (from_it == anchor_geometries_.end() || to_it == anchor_geometries_.end()) {
-            continue;
-        }
-
+    // Phase 3: Store the path
+    if (!full_path.segments().empty()) {
         SegmentGeometry seg_geom;
-        seg_geom.segment_id = yarn_seg.id;
-        seg_geom.curve = create_connecting_curve(from_it->second, to_it->second, yarn_seg);
+        seg_geom.segment_id = 0;
+        seg_geom.curve = std::move(full_path);
         seg_geom.arc_length = seg_geom.curve.total_arc_length();
         seg_geom.max_curvature = seg_geom.curve.max_curvature();
 
-        result.push_back(std::move(seg_geom));
+        result.segment_index_[seg_geom.segment_id] = result.segments_.size();
+        result.segments_.push_back(std::move(seg_geom));
     }
 
+    // Store loop positions in result
+    for (const auto& [loop_id, pos] : loop_positions_) {
+        result.loop_positions_.push_back(pos);
+        result.loop_position_index_[loop_id] = result.loop_positions_.size() - 1;
+    }
+
+    size_t total_bezier_segments = 0;
+    for (const auto& seg : result.segments_) {
+        total_bezier_segments += seg.curve.segments().size();
+    }
+    log->debug("GeometryBuilder: build complete - {} loops, {} geometry segments, {} bezier segments",
+               result.loop_positions_.size(), result.segments_.size(), total_bezier_segments);
     return result;
-}
-
-BezierSpline GeometryBuilder::create_connecting_curve(
-    const AnchorGeometry& from,
-    const AnchorGeometry& to,
-    const YarnSegment& segment) const {
-
-    BezierSpline spline;
-
-    // Adjust Z based on segment type (ThroughLoop pass mode)
-    float z_offset_from = 0.0f;
-    float z_offset_to = 0.0f;
-
-    std::visit([&](auto&& seg_type) {
-        using T = std::decay_t<decltype(seg_type)>;
-        if constexpr (std::is_same_v<T, segment::ThroughLoop>) {
-            z_offset_to = get_z_offset(seg_type.mode);
-        }
-    }, segment.segment_type);
-
-    Vec3 adjusted_from = from.position;
-    adjusted_from.z += z_offset_from;
-
-    Vec3 adjusted_to = to.position;
-    adjusted_to.z += z_offset_to;
-
-    // Scale tangent based on distance
-    float dist = adjusted_from.distance_to(adjusted_to);
-    float tangent_scale = std::max(dist * 0.4f, yarn_.min_bend_radius);
-
-    Vec3 tangent_from = from.tangent * tangent_scale;
-    Vec3 tangent_to = to.tangent * tangent_scale;
-
-    CubicBezier curve = CubicBezier::from_hermite(
-        adjusted_from, tangent_from,
-        adjusted_to, tangent_to
-    );
-
-    spline.add_segment(curve);
-    return spline;
-}
-
-void GeometryBuilder::apply_constraints(std::vector<SegmentGeometry>& segments) {
-    float max_curvature = yarn_.max_curvature();
-
-    for (auto& seg : segments) {
-        if (seg.max_curvature > max_curvature) {
-            seg.curve.clamp_curvature(max_curvature);
-            seg.arc_length = seg.curve.total_arc_length();
-            seg.max_curvature = seg.curve.max_curvature();
-        }
-    }
 }
 
 float GeometryBuilder::get_z_offset(PassMode mode) const {
@@ -460,16 +383,12 @@ float GeometryBuilder::get_z_offset(PassMode mode) const {
 
     switch (mode) {
         case PassMode::KnitWise:
-            // Front to back
             return -thickness * 0.3f;
         case PassMode::PurlWise:
-            // Back to front
             return thickness * 0.3f;
         case PassMode::ThroughBackLoop:
-            // Twisted knit
             return -thickness * 0.4f;
         case PassMode::ThroughFrontLoop:
-            // Twisted purl
             return thickness * 0.4f;
         default:
             return 0.0f;

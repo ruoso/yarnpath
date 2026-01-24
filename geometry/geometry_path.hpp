@@ -14,15 +14,7 @@
 
 namespace yarnpath {
 
-// Geometry for a single anchor point
-struct AnchorGeometry {
-    AnchorId anchor_id;
-    Vec3 position;
-    Vec3 tangent;      // Direction of yarn at this anchor
-    Vec3 normal;       // Surface normal
-};
-
-// Geometry for a yarn segment
+// Geometry for a yarn segment (Bezier spline)
 struct SegmentGeometry {
     SegmentId segment_id;
     BezierSpline curve;
@@ -49,10 +41,8 @@ struct ValidationResult {
 // Loop position in fabric coordinates
 struct LoopPosition {
     LoopId loop_id;
-    float u;           // Horizontal position in fabric
-    float v;           // Vertical position (row)
-    uint32_t row;      // Discrete row number
-    uint32_t column;   // Discrete column number
+    float u;           // Horizontal position in fabric (mm)
+    float v;           // Vertical position in fabric (mm)
 };
 
 // Main output: 3D geometry for a yarn path
@@ -65,10 +55,6 @@ public:
         const Gauge& gauge,
         const FabricSurface& surface
     );
-
-    // Access anchor geometry
-    const AnchorGeometry* get_anchor(AnchorId id) const;
-    const std::vector<AnchorGeometry>& anchors() const { return anchors_; }
 
     // Access segment geometry
     const SegmentGeometry* get_segment(SegmentId id) const;
@@ -99,12 +85,10 @@ public:
 private:
     friend class GeometryBuilder;
 
-    std::vector<AnchorGeometry> anchors_;
     std::vector<SegmentGeometry> segments_;
     std::vector<LoopPosition> loop_positions_;
 
     // Index maps for fast lookup
-    std::map<AnchorId, size_t> anchor_index_;
     std::map<SegmentId, size_t> segment_index_;
     std::map<LoopId, size_t> loop_position_index_;
 };

@@ -155,6 +155,77 @@ CubicBezier CubicBezier::from_hermite(const Vec3& p0, const Vec3& tangent0,
 BezierSpline::BezierSpline(std::vector<CubicBezier> segments)
     : segments_(std::move(segments)) {}
 
+BezierSpline BezierSpline::from_yarn_points(const std::vector<YarnPathPoint>& points) {
+    BezierSpline spline;
+
+    if (points.size() < 2) {
+        return spline;
+    }
+
+    // For each pair of consecutive points, create a Bezier segment
+    // The tangent at each point is computed from neighboring points
+    // Tension controls how much the tangent affects the curve shape
+
+    for (size_t i = 0; i + 1 < points.size(); ++i) {
+        const auto& p0 = points[i];
+        const auto& p1 = points[i + 1];
+
+        // Compute tangent at p0 (looking at neighbors)
+        Vec3 tangent0;
+        if (i == 0) {
+            // First point: tangent points toward next point
+            tangent0 = p1.position - p0.position;
+        } else {
+            // Interior point: tangent from previous to next (Catmull-Rom style)
+            tangent0 = points[i + 1].position - points[i - 1].position;
+        }
+
+        // Compute tangent at p1 (looking at neighbors)
+        Vec3 tangent1;
+        if (i + 2 >= points.size()) {
+            // Last point: tangent points from previous point
+            tangent1 = p1.position - p0.position;
+        } else {
+            // Interior point: tangent from previous to next
+            tangent1 = points[i + 2].position - points[i].position;
+        }
+
+        // Scale tangents based on tension and distance
+        // High tension = shorter tangent = tighter curve
+        // Low tension = longer tangent = smoother curve
+        float dist = p0.position.distance_to(p1.position);
+
+        // Tension affects tangent length: high tension = short tangent
+        // Standard Catmull-Rom uses 0.5 factor, we modify based on tension
+        // tension 0 -> factor ~0.5 (smooth)
+        // tension 1 -> factor ~0.1 (tight)
+        float factor0 = 0.5f * (1.0f - p0.tension * 0.8f);
+        float factor1 = 0.5f * (1.0f - p1.tension * 0.8f);
+
+        // Clamp tangent magnitude to be reasonable relative to segment length
+        float mag0 = tangent0.length();
+        float mag1 = tangent1.length();
+
+        Vec3 scaled_tangent0 = (mag0 > 0.0001f)
+            ? tangent0 * (factor0 * dist / mag0)
+            : Vec3(dist * factor0, 0.0f, 0.0f);
+
+        Vec3 scaled_tangent1 = (mag1 > 0.0001f)
+            ? tangent1 * (factor1 * dist / mag1)
+            : Vec3(dist * factor1, 0.0f, 0.0f);
+
+        // Create Bezier from Hermite data
+        CubicBezier segment = CubicBezier::from_hermite(
+            p0.position, scaled_tangent0,
+            p1.position, scaled_tangent1
+        );
+
+        spline.add_segment(segment);
+    }
+
+    return spline;
+}
+
 void BezierSpline::add_segment(const CubicBezier& segment) {
     segments_.push_back(segment);
 }

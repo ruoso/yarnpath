@@ -61,11 +61,26 @@ struct CubicBezier {
     Vec3& end() { return control_points[3]; }
 };
 
+// A point on a yarn path with associated curvature hint
+struct YarnPathPoint {
+    Vec3 position;
+    float tension;  // 0.0 = smooth transition, 1.0 = tight loop
+
+    YarnPathPoint() : position(), tension(0.5f) {}
+    YarnPathPoint(const Vec3& pos, float t = 0.5f) : position(pos), tension(t) {}
+};
+
 // A spline composed of multiple Bezier segments
 class BezierSpline {
 public:
     BezierSpline() = default;
     explicit BezierSpline(std::vector<CubicBezier> segments);
+
+    // Create a smooth spline through yarn path points
+    // Each point has its own tension value controlling local curvature
+    // High tension (near 1.0) = tight curve at loop apex
+    // Low tension (near 0.0) = gentle curve for transitions
+    static BezierSpline from_yarn_points(const std::vector<YarnPathPoint>& points);
 
     // Add a segment to the spline
     void add_segment(const CubicBezier& segment);

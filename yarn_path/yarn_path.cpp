@@ -1,6 +1,7 @@
 #include "yarn_path.hpp"
 #include "logging.hpp"
 #include <algorithm>
+#include <sstream>
 #include <stdexcept>
 
 namespace yarnpath {
@@ -56,6 +57,102 @@ const YarnSegment* YarnPath::get_segment(SegmentId id) const {
         return nullptr;
     }
     return &segments_[id];
+}
+
+namespace {
+
+const char* form_kind_name(FormKind kind) {
+    switch (kind) {
+        case FormKind::CastOn: return "CastOn";
+        case FormKind::Knit: return "K";
+        case FormKind::Purl: return "P";
+        case FormKind::Slip: return "Sl";
+        case FormKind::YarnOver: return "YO";
+        case FormKind::M1L: return "M1L";
+        case FormKind::M1R: return "M1R";
+        case FormKind::KFB: return "KFB";
+        case FormKind::K2tog: return "K2tog";
+        case FormKind::SSK: return "SSK";
+        case FormKind::S2KP: return "S2KP";
+        case FormKind::BindOff: return "BO";
+        default: return "?";
+    }
+}
+
+const char* form_kind_color(FormKind kind) {
+    switch (kind) {
+        case FormKind::CastOn: return "lightblue";
+        case FormKind::Knit: return "white";
+        case FormKind::Purl: return "lightgray";
+        case FormKind::Slip: return "lightyellow";
+        case FormKind::YarnOver: return "lightgreen";
+        case FormKind::M1L:
+        case FormKind::M1R:
+        case FormKind::KFB: return "palegreen";
+        case FormKind::K2tog:
+        case FormKind::SSK:
+        case FormKind::S2KP: return "lightsalmon";
+        case FormKind::BindOff: return "lightpink";
+        default: return "white";
+    }
+}
+
+}  // namespace
+
+std::string YarnPath::to_dot() const {
+    std::ostringstream ss;
+
+    ss << "digraph YarnPath {\n";
+    ss << "  rankdir=BT;\n";  // Bottom to top (like knitting)
+    ss << "  node [shape=box, style=filled];\n";
+    ss << "  \n";
+
+    // Group loops by row (using stitch_id to infer row from graph)
+    // For simplicity, we'll use a flat layout with explicit positioning
+
+    // Output loop nodes
+    ss << "  // Loop nodes\n";
+    for (const auto& loop : loops_) {
+        ss << "  loop" << loop.id << " [label=\""
+           << form_kind_name(loop.kind) << "\\nL" << loop.id
+           << "\\nS" << loop.stitch_id << "\", fillcolor=\""
+           << form_kind_color(loop.kind) << "\"];\n";
+    }
+    ss << "  \n";
+
+    // Output parent-child relationships (structural)
+    ss << "  // Parent-child relationships (structural)\n";
+    ss << "  edge [color=blue, style=solid, arrowhead=normal];\n";
+    for (const auto& loop : loops_) {
+        for (LoopId parent_id : loop.parent_loops) {
+            ss << "  loop" << parent_id << " -> loop" << loop.id << ";\n";
+        }
+    }
+    ss << "  \n";
+
+    // Output yarn path order (next_in_yarn links)
+    ss << "  // Yarn path order\n";
+    ss << "  edge [color=red, style=dashed, arrowhead=vee, constraint=false];\n";
+    for (const auto& loop : loops_) {
+        if (loop.next_in_yarn.has_value()) {
+            ss << "  loop" << loop.id << " -> loop" << loop.next_in_yarn.value()
+               << " [label=\"yarn\"];\n";
+        }
+    }
+    ss << "  \n";
+
+    // Add legend
+    ss << "  // Legend\n";
+    ss << "  subgraph cluster_legend {\n";
+    ss << "    label=\"Legend\";\n";
+    ss << "    style=dashed;\n";
+    ss << "    leg_struct [label=\"Parent→Child\", shape=plaintext];\n";
+    ss << "    leg_yarn [label=\"Yarn Order\", shape=plaintext];\n";
+    ss << "  }\n";
+
+    ss << "}\n";
+
+    return ss.str();
 }
 
 // === YarnPathBuilder implementation ===
@@ -164,6 +261,10 @@ void YarnPathBuilder::process_cast_on(StitchId stitch_id) {
 
     Loop& loop = loops_[loop_id];
 
+    // Check if we need a connecting segment BEFORE creating this cast-on's anchors
+    // (The first cast-on has nothing to connect from)
+    bool needs_connecting_segment = !anchors_.empty();
+
     // Create anchors for cast-on: CastOnBase -> LoopApex -> (LoopExit when worked)
     AnchorId base_anchor = add_anchor(anchor::CastOnBase{loop_id}, stitch_id);
     AnchorId apex_anchor = add_anchor(anchor::LoopApex{loop_id}, stitch_id);
@@ -174,7 +275,7 @@ void YarnPathBuilder::process_cast_on(StitchId stitch_id) {
     loop.form_anchor = form_anchor;
 
     // Connect: last_anchor -> base (free) -> apex
-    if (last_anchor_ != 0 || !anchors_.empty()) {
+    if (needs_connecting_segment) {
         add_segment(last_anchor_, base_anchor, segment::Free{});
     }
     add_segment(base_anchor, apex_anchor, segment::Free{});

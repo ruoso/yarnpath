@@ -17,14 +17,6 @@ GeometryPath GeometryPath::from_yarn_path(
     return builder.build();
 }
 
-const AnchorGeometry* GeometryPath::get_anchor(AnchorId id) const {
-    auto it = anchor_index_.find(id);
-    if (it != anchor_index_.end()) {
-        return &anchors_[it->second];
-    }
-    return nullptr;
-}
-
 const SegmentGeometry* GeometryPath::get_segment(SegmentId id) const {
     auto it = segment_index_.find(id);
     if (it != segment_index_.end()) {
@@ -77,11 +69,9 @@ ValidationResult GeometryPath::validate(const YarnProperties& yarn) const {
     ValidationResult result;
 
     float max_curvature = yarn.max_curvature();
-    float min_clearance = yarn.min_clearance();
 
-    log->debug("GeometryPath: validating {} segments, {} anchors",
-               segments_.size(), anchors_.size());
-    log->debug("GeometryPath: max_curvature={}, min_clearance={}", max_curvature, min_clearance);
+    log->debug("GeometryPath: validating {} segments", segments_.size());
+    log->debug("GeometryPath: max_curvature={}", max_curvature);
 
     // Check curvature constraints
     for (const auto& seg : segments_) {
@@ -91,22 +81,6 @@ ValidationResult GeometryPath::validate(const YarnProperties& yarn) const {
                 " > " + std::to_string(max_curvature);
             log->warn("GeometryPath validation: {}", msg);
             result.add_warning(msg);
-        }
-    }
-
-    // Check clearance between non-adjacent anchors
-    // This is a simplified O(n^2) check - could be optimized with spatial indexing
-    for (size_t i = 0; i < anchors_.size(); ++i) {
-        for (size_t j = i + 2; j < anchors_.size(); ++j) {
-            float dist = anchors_[i].position.distance_to(anchors_[j].position);
-            if (dist < min_clearance) {
-                std::string msg = "Anchors " + std::to_string(anchors_[i].anchor_id) +
-                    " and " + std::to_string(anchors_[j].anchor_id) +
-                    " are closer than min clearance: " +
-                    std::to_string(dist) + " < " + std::to_string(min_clearance);
-                log->warn("GeometryPath validation: {}", msg);
-                result.add_warning(msg);
-            }
         }
     }
 
@@ -126,23 +100,19 @@ float GeometryPath::total_arc_length() const {
 
 std::pair<Vec3, Vec3> GeometryPath::bounding_box() const {
     auto log = yarnpath::logging::get_logger();
-    if (anchors_.empty()) {
+
+    if (segments_.empty()) {
         return {vec3::zero(), vec3::zero()};
     }
 
-    Vec3 min_pt = anchors_[0].position;
-    Vec3 max_pt = anchors_[0].position;
+    Vec3 min_pt(std::numeric_limits<float>::max(),
+                std::numeric_limits<float>::max(),
+                std::numeric_limits<float>::max());
+    Vec3 max_pt(std::numeric_limits<float>::lowest(),
+                std::numeric_limits<float>::lowest(),
+                std::numeric_limits<float>::lowest());
 
-    for (const auto& anchor : anchors_) {
-        min_pt.x = std::min(min_pt.x, anchor.position.x);
-        min_pt.y = std::min(min_pt.y, anchor.position.y);
-        min_pt.z = std::min(min_pt.z, anchor.position.z);
-        max_pt.x = std::max(max_pt.x, anchor.position.x);
-        max_pt.y = std::max(max_pt.y, anchor.position.y);
-        max_pt.z = std::max(max_pt.z, anchor.position.z);
-    }
-
-    // Also check segment control points
+    // Check all segment control points
     for (const auto& seg : segments_) {
         for (const auto& bezier : seg.curve.segments()) {
             for (const auto& cp : bezier.control_points) {
@@ -166,8 +136,8 @@ std::string GeometryPath::to_obj(int samples_per_segment) const {
     ss << std::fixed << std::setprecision(6);
 
     ss << "# YarnPath OBJ Export\n";
-    ss << "# Anchors: " << anchors_.size() << "\n";
-    ss << "# Segments: " << segments_.size() << "\n\n";
+    ss << "# Segments: " << segments_.size() << "\n";
+    ss << "# Loops: " << loop_positions_.size() << "\n\n";
 
     // Export polyline as vertices
     auto points = to_polyline_fixed(samples_per_segment);

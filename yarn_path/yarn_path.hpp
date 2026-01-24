@@ -4,6 +4,7 @@
 #include "stitch_node.hpp"
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <variant>
 #include <vector>
 
@@ -192,6 +193,9 @@ public:
 
     // Segment lookup
     const YarnSegment* get_segment(SegmentId id) const;
+
+    // Visualization
+    std::string to_dot() const;
 
 private:
     std::vector<AnchorNode> anchors_;

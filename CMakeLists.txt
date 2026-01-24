@@ -11,6 +11,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 add_compile_options(-Wall -Wextra -Wpedantic)
 
 # Libraries
+add_subdirectory(instructions)
 add_subdirectory(stitch_graph)
 add_subdirectory(yarn_path)
 add_subdirectory(geometry)

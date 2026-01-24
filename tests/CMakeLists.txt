@@ -3,6 +3,7 @@ add_executable(tests
     test_stitch_graph.cpp
     test_parser.cpp
     test_yarn_path.cpp
+    test_geometry.cpp
 )
 
 target_link_libraries(tests PRIVATE
@@ -10,6 +11,7 @@ target_link_libraries(tests PRIVATE
     instructions
     parser
     yarn_path
+    geometry
     GTest::gtest_main
 )
 

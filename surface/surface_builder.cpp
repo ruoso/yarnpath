@@ -73,10 +73,10 @@ void SurfaceBuilder::create_continuity_edges() {
     auto log = yarnpath::logging::get_logger();
 
     // Rest length for continuity edges based on yarn properties
-    // This is the yarn length between loop centers - typically 2-4x the yarn radius
-    // For tight knitting (high tension), use smaller value; for loose, use larger
-    float base_rest_length = yarn_.radius * 3.0f * (1.0f + (1.0f - yarn_.tension) * 0.5f);
-    // For worsted (radius=1.0, tension=0.5): rest_length ≈ 3.0 * 1.25 = 3.75mm
+    // Adjacent segments along yarn are touching or very close
+    // Use yarn diameter (2*radius) as minimum, scaled slightly by tension
+    float base_rest_length = yarn_.radius * 2.0f * (1.0f + (1.0f - yarn_.tension) * 0.25f);
+    // For worsted (radius=1.0, tension=0.5): rest_length ≈ 2.0 * 1.125 = 2.25mm
 
     // Stiffness derived from yarn properties
     // Base stiffness scales with yarn stiffness (0=flexible, 1=stiff)
@@ -273,6 +273,15 @@ void SurfaceBuilder::initialize_positions() {
             );
         }
 
+        // Compute current plane normal from nodes placed so far
+        Vec3 plane_normal = compute_plane_normal(node_id);
+
+        // Check and fix angular constraint to prevent sharp bends/folds
+        // Max bend angle of ~60 degrees (about 1 radian) to allow natural curvature
+        // but prevent folding back
+        const float max_bend_angle = 1.0f;  // radians (~57 degrees)
+        check_and_fix_angle(node_id, plane_normal, max_bend_angle);
+
         // Check for collisions with non-connected existing nodes
         // and push away if too close
         resolve_collisions(node_id, passthrough_info);
@@ -283,6 +292,12 @@ void SurfaceBuilder::initialize_positions() {
         if (!constraints_ok) {
             // Run local relaxation with nodes 0..i to satisfy constraints
             relax_partial(node_id, continuity_lengths, passthrough_info);
+
+            // After relaxation, re-check angles for all affected nodes
+            for (NodeId j = 2; j <= node_id; ++j) {
+                plane_normal = compute_plane_normal(j);
+                check_and_fix_angle(j, plane_normal, max_bend_angle);
+            }
         }
     }
 
@@ -486,6 +501,136 @@ void SurfaceBuilder::resolve_collisions(
         log->debug("SurfaceBuilder: fixing inverted Y at node {}", node_id);
         node.position.y = graph_.node(parent_id).position.y + yarn_.min_clearance();
     }
+}
+
+Vec3 SurfaceBuilder::compute_plane_normal(NodeId up_to_node) const {
+    // Compute dominant plane from nodes 0 to up_to_node using cross products
+    // of consecutive edge pairs
+
+    if (up_to_node < 2) {
+        // Not enough nodes to determine a plane, default to Z-up
+        return vec3::unit_z();
+    }
+
+    Vec3 avg_normal = vec3::zero();
+    int count = 0;
+
+    // Sample triplets of consecutive nodes to build up the average normal
+    for (NodeId i = 2; i <= up_to_node; ++i) {
+        const Vec3& p0 = graph_.node(i - 2).position;
+        const Vec3& p1 = graph_.node(i - 1).position;
+        const Vec3& p2 = graph_.node(i).position;
+
+        Vec3 v1 = p1 - p0;
+        Vec3 v2 = p2 - p1;
+
+        Vec3 normal = v1.cross(v2);
+        float len = normal.length();
+
+        if (len > 1e-6f) {
+            // Normalize and accumulate
+            // Ensure consistent direction (positive Z preferred)
+            normal = normal / len;
+            if (normal.z < 0) {
+                normal = -normal;
+            }
+            avg_normal += normal;
+            count++;
+        }
+    }
+
+    if (count > 0 && avg_normal.length() > 1e-6f) {
+        return avg_normal.normalized();
+    }
+
+    // Fallback: assume XY plane, normal is Z
+    return vec3::unit_z();
+}
+
+bool SurfaceBuilder::check_and_fix_angle(NodeId node_id, const Vec3& plane_normal, float max_bend_angle) {
+    auto log = yarnpath::logging::get_logger();
+
+    // Need at least 3 nodes for an angle
+    if (node_id < 2) {
+        return true;
+    }
+
+    auto& node_c = graph_.node(node_id);
+    const auto& node_b = graph_.node(node_id - 1);
+    const auto& node_a = graph_.node(node_id - 2);
+
+    // Vectors along the yarn path
+    Vec3 v1 = node_b.position - node_a.position;  // A -> B
+    Vec3 v2 = node_c.position - node_b.position;  // B -> C
+
+    float len1 = v1.length();
+    float len2 = v2.length();
+
+    if (len1 < 1e-6f || len2 < 1e-6f) {
+        return true;  // Degenerate case
+    }
+
+    Vec3 dir1 = v1 / len1;
+    Vec3 dir2 = v2 / len2;
+
+    // Compute the bend angle
+    // cos(angle) = dir1 . dir2
+    // angle = 0 means straight continuation
+    // angle = PI means complete reversal (fold)
+    float cos_angle = dir1.dot(dir2);
+    cos_angle = std::max(-1.0f, std::min(1.0f, cos_angle));
+
+    // We want to prevent sharp bends - angle should be close to 0 (straight)
+    // max_bend_angle is the maximum allowed deviation from straight
+    float min_cos = std::cos(max_bend_angle);  // cos of max allowed bend
+
+    if (cos_angle >= min_cos) {
+        return true;  // Angle is within acceptable range
+    }
+
+    // Angle is too sharp - need to correct the position of node_c
+    log->debug("SurfaceBuilder: fixing sharp angle at node {} (cos={:.3f}, min_cos={:.3f})",
+               node_id, cos_angle, min_cos);
+
+    // Project node_c to maintain the same distance from node_b but with acceptable angle
+    // The ideal direction is a blend of continuing straight (dir1) and the current direction
+
+    // Compute the plane perpendicular to dir1 that contains node_b
+    // Find the component of dir2 perpendicular to dir1
+    Vec3 perp = dir2 - dir1 * cos_angle;
+    float perp_len = perp.length();
+
+    if (perp_len < 1e-6f) {
+        // dir2 is parallel or anti-parallel to dir1
+        // If anti-parallel (cos_angle close to -1), we have a fold
+        // Push node_c perpendicular to dir1, preferring to stay in the plane
+        perp = plane_normal.cross(dir1);
+        perp_len = perp.length();
+        if (perp_len < 1e-6f) {
+            // dir1 is parallel to plane_normal, use any perpendicular
+            perp = vec3::unit_x();
+            if (std::abs(dir1.dot(perp)) > 0.9f) {
+                perp = vec3::unit_y();
+            }
+            perp = perp - dir1 * dir1.dot(perp);
+            perp_len = perp.length();
+        }
+    }
+
+    if (perp_len > 1e-6f) {
+        perp = perp / perp_len;
+    }
+
+    // New direction: blend of dir1 (straight) and perp (perpendicular)
+    // to achieve exactly max_bend_angle
+    float sin_angle = std::sin(max_bend_angle);
+    Vec3 new_dir = dir1 * min_cos + perp * sin_angle;
+    new_dir = new_dir.normalized();
+
+    // New position for node_c
+    node_c.position = node_b.position + new_dir * len2;
+
+    return false;  // Correction was needed
 }
 
 }  // namespace yarnpath

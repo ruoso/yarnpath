@@ -89,7 +89,7 @@ SolveResult SurfaceSolver::solve(SurfaceGraph& graph,
 void SurfaceSolver::step(SurfaceGraph& graph,
                           const YarnProperties& yarn,
                           const SolveConfig& config) {
-    // 1. Compute all forces (including gravity if enabled)
+    // 1. Compute all forces (including gravity and collision repulsion)
     compute_forces(graph, yarn, config.force_config);
 
     // 2. Integrate using Verlet
@@ -97,7 +97,8 @@ void SurfaceSolver::step(SurfaceGraph& graph,
 
     // 3. Apply floor constraint if enabled
     if (config.force_config.enable_floor) {
-        apply_floor_constraint(graph, config.force_config.floor_position);
+        apply_floor_constraint(graph, config.force_config.floor_position,
+                               config.force_config.gravity_direction);
     }
 
     // 4. Project constraints

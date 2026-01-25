@@ -65,6 +65,14 @@ private:
         NodeId node_id,
         const std::map<NodeId, std::vector<std::pair<NodeId, float>>>& passthrough_info);
 
+    // Compute dominant plane normal from placed nodes (0 to up_to_node inclusive)
+    Vec3 compute_plane_normal(NodeId up_to_node) const;
+
+    // Check and fix angular constraint for node triplet (prev2 -> prev -> current)
+    // Ensures the bend angle doesn't exceed max_bend_angle relative to plane normal
+    // Returns true if angle was acceptable, false if correction was needed
+    bool check_and_fix_angle(NodeId node_id, const Vec3& plane_normal, float max_bend_angle);
+
     const YarnPath& path_;
     const YarnProperties& yarn_;
     const Gauge& gauge_;

@@ -2,6 +2,8 @@
 #include "logging.hpp"
 #include <cmath>
 #include <limits>
+#include <set>
+#include <vector>
 
 namespace yarnpath {
 
@@ -19,6 +21,11 @@ void compute_forces(SurfaceGraph& graph,
 
     // Add loop curvature forces
     compute_loop_curvature_forces(graph, yarn, config.loop_curvature_strength);
+
+    // Add collision repulsion forces
+    if (config.enable_collision && config.collision_strength > 0) {
+        compute_collision_forces(graph, yarn.min_clearance(), config.collision_strength);
+    }
 
     // Add gravity if enabled
     if (config.enable_gravity && config.gravity_strength > 0) {
@@ -200,6 +207,136 @@ void apply_damping(SurfaceGraph& graph, float damping) {
     }
 }
 
+void compute_bending_forces(SurfaceGraph& graph,
+                            float stiffness,
+                            float min_angle) {
+    // Look at triplets of consecutive nodes along continuity edges
+    // and apply forces to prevent sharp bends/folds
+
+    const auto& edges = graph.edges();
+
+    // Find continuity chains: sequences of nodes connected by YarnContinuity edges
+    // Since continuity edges connect consecutive segments (i -> i+1),
+    // we can iterate through nodes in order
+
+    // For each triplet (prev, curr, next) along continuity path
+    for (NodeId curr = 1; curr + 1 < graph.node_count(); ++curr) {
+        NodeId prev = curr - 1;
+        NodeId next = curr + 1;
+
+        // Verify these are connected by continuity edges
+        bool has_prev_edge = false;
+        bool has_next_edge = false;
+        for (const auto& edge : edges) {
+            if (edge.type != EdgeType::YarnContinuity) continue;
+            if ((edge.node_a == prev && edge.node_b == curr) ||
+                (edge.node_a == curr && edge.node_b == prev)) {
+                has_prev_edge = true;
+            }
+            if ((edge.node_a == curr && edge.node_b == next) ||
+                (edge.node_a == next && edge.node_b == curr)) {
+                has_next_edge = true;
+            }
+        }
+
+        if (!has_prev_edge || !has_next_edge) continue;
+
+        // Get positions
+        const Vec3& pos_prev = graph.node(prev).position;
+        const Vec3& pos_curr = graph.node(curr).position;
+        const Vec3& pos_next = graph.node(next).position;
+
+        // Vectors along the chain
+        Vec3 v1 = pos_curr - pos_prev;  // prev -> curr
+        Vec3 v2 = pos_next - pos_curr;  // curr -> next
+
+        float len1 = v1.length();
+        float len2 = v2.length();
+
+        if (len1 < 1e-6f || len2 < 1e-6f) continue;
+
+        Vec3 dir1 = v1 / len1;
+        Vec3 dir2 = v2 / len2;
+
+        // Compute the bend angle
+        // cos(angle) = dir1 . dir2
+        // angle = 0 means straight, angle = PI means folded back
+        float cos_angle = dir1.dot(dir2);
+        cos_angle = std::max(-1.0f, std::min(1.0f, cos_angle));
+
+        // We want the angle to be close to 0 (straight) or at least > min_angle
+        // If cos_angle < cos(PI - min_angle), the bend is too sharp
+        float max_cos = std::cos(3.14159f - min_angle);  // cos of max allowed bend
+
+        if (cos_angle < max_cos) {
+            // Bend is too sharp - apply straightening force
+            float bend_severity = max_cos - cos_angle;
+            float force_mag = stiffness * bend_severity;
+
+            // The straightening direction: push next node to align with dir1
+            // and push prev node to align with -dir2
+            // The ideal position for next would be: pos_curr + dir1 * len2
+            Vec3 ideal_next = pos_curr + dir1 * len2;
+            Vec3 correction_next = ideal_next - pos_next;
+
+            // Similarly for prev
+            Vec3 ideal_prev = pos_curr - dir2 * len1;
+            Vec3 correction_prev = ideal_prev - pos_prev;
+
+            // Apply scaled forces
+            float corr_next_len = correction_next.length();
+            float corr_prev_len = correction_prev.length();
+
+            if (corr_next_len > 1e-6f) {
+                Vec3 force_next = correction_next / corr_next_len * force_mag;
+                graph.node(next).add_force(force_next);
+                graph.node(curr).add_force(-force_next * 0.5f);
+            }
+
+            if (corr_prev_len > 1e-6f) {
+                Vec3 force_prev = correction_prev / corr_prev_len * force_mag;
+                graph.node(prev).add_force(force_prev);
+                graph.node(curr).add_force(-force_prev * 0.5f);
+            }
+        }
+    }
+}
+
+void compute_planar_forces(SurfaceGraph& graph,
+                           float stiffness,
+                           float max_deviation) {
+    if (graph.node_count() < 3) return;
+
+    // Compute centroid
+    Vec3 centroid = vec3::zero();
+    for (const auto& node : graph.nodes()) {
+        centroid += node.position;
+    }
+    centroid = centroid / static_cast<float>(graph.node_count());
+
+    // Compute dominant plane normal using the helper function
+    Vec3 plane_normal = compute_dominant_plane_normal(graph);
+
+    // For each node, compute signed distance to plane and apply force if needed
+    for (auto& node : graph.nodes()) {
+        if (node.is_pinned) continue;
+
+        // Signed distance from node to plane
+        Vec3 to_node = node.position - centroid;
+        float signed_dist = to_node.dot(plane_normal);
+
+        // If deviation exceeds max, apply restoring force
+        if (std::abs(signed_dist) > max_deviation) {
+            float excess = std::abs(signed_dist) - max_deviation;
+            float force_mag = stiffness * excess;
+
+            // Force direction: push back toward plane
+            Vec3 force = -plane_normal * (signed_dist > 0 ? force_mag : -force_mag);
+            node.add_force(force);
+        }
+    }
+}
+
 void compute_gravity_force(SurfaceGraph& graph,
                            float strength,
                            const Vec3& direction) {
@@ -227,40 +364,93 @@ void compute_gravity_force(SurfaceGraph& graph,
     }
 }
 
-void apply_floor_constraint(SurfaceGraph& graph, float floor_z) {
+void apply_floor_constraint(SurfaceGraph& graph, float floor_dist, const Vec3& direction) {
     auto log = yarnpath::logging::get_logger();
 
     static int log_counter = 0;
     bool should_log = (log_counter++ % 1000 == 0);
 
+    Vec3 floor_dir = direction.normalized();
     int nodes_on_floor = 0;
-    float min_z = std::numeric_limits<float>::max();
-    float max_z = std::numeric_limits<float>::lowest();
+    float min_dist = std::numeric_limits<float>::max();
+    float max_dist = std::numeric_limits<float>::lowest();
 
-    // Prevent nodes from going below the floor (in Z direction)
+    // Prevent nodes from going past the floor along the gravity direction
     for (auto& node : graph.nodes()) {
-        min_z = std::min(min_z, node.position.z);
-        max_z = std::max(max_z, node.position.z);
+        // Compute signed distance along floor direction
+        float dist = node.position.dot(floor_dir);
+        min_dist = std::min(min_dist, dist);
+        max_dist = std::max(max_dist, dist);
 
-        if (node.position.z > floor_z) {
-            node.position.z = floor_z;
-            // Also zero out downward velocity
-            if (node.velocity.z > 0) {
-                node.velocity.z = 0;
+        if (dist > floor_dist) {
+            // Project node back to floor plane
+            float excess = dist - floor_dist;
+            node.position -= floor_dir * excess;
+
+            // Zero out velocity component along floor direction
+            float vel_along = node.velocity.dot(floor_dir);
+            if (vel_along > 0) {
+                node.velocity -= floor_dir * vel_along;
             }
             nodes_on_floor++;
         }
     }
 
     if (should_log) {
-        log->debug("Floor: z={}, nodes_on_floor={}/{}, z_range=[{}, {}]",
-                   floor_z, nodes_on_floor, graph.node_count(), min_z, max_z);
+        log->debug("Floor: dist={}, nodes_on_floor={}/{}, dist_range=[{}, {}]",
+                   floor_dist, nodes_on_floor, graph.node_count(), min_dist, max_dist);
+    }
+}
+
+void compute_collision_forces(SurfaceGraph& graph, float min_distance, float strength) {
+    // Build a set of connected pairs (edges) to skip during collision check
+    std::set<std::pair<NodeId, NodeId>> connected;
+    for (const auto& edge : graph.edges()) {
+        NodeId a = std::min(edge.node_a, edge.node_b);
+        NodeId b = std::max(edge.node_a, edge.node_b);
+        connected.insert({a, b});
+    }
+
+    // Also skip adjacent nodes along the yarn path (i, i+1)
+    for (NodeId i = 0; i + 1 < graph.node_count(); ++i) {
+        connected.insert({i, i + 1});
+    }
+
+    auto& nodes = graph.nodes();
+
+    // Check all pairs of non-connected nodes for potential collisions
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        for (size_t j = i + 1; j < nodes.size(); ++j) {
+            // Skip if connected
+            NodeId a = static_cast<NodeId>(i);
+            NodeId b = static_cast<NodeId>(j);
+            if (connected.count({a, b})) continue;
+
+            // Check distance
+            Vec3 delta = nodes[j].position - nodes[i].position;
+            float dist = delta.length();
+
+            // Apply repulsion force when closer than min_distance
+            // Force falls off with distance: F = strength * (1 - dist/min_distance)^2
+            if (dist < min_distance && dist > 1e-6f) {
+                float overlap_ratio = 1.0f - dist / min_distance;
+                float force_magnitude = strength * overlap_ratio * overlap_ratio;
+
+                Vec3 direction = delta / dist;  // Points from i to j
+                Vec3 force = direction * force_magnitude;
+
+                // Push nodes apart
+                nodes[i].add_force(-force);
+                nodes[j].add_force(force);
+            }
+        }
     }
 }
 
 Vec3 compute_dominant_plane_normal(const SurfaceGraph& graph) {
-    // Compute the dominant plane from node positions using PCA-like approach
-    // For knitting, the fabric typically lies in a plane, so we find that plane's normal
+    // Compute the dominant plane normal using covariance matrix analysis
+    // The normal is the eigenvector corresponding to the smallest eigenvalue
+    // (direction of minimum variance = perpendicular to the plane)
 
     if (graph.node_count() < 3) {
         return vec3::unit_z();  // Default to Z-up
@@ -273,31 +463,111 @@ Vec3 compute_dominant_plane_normal(const SurfaceGraph& graph) {
     }
     centroid = centroid / static_cast<float>(graph.node_count());
 
-    // Compute covariance matrix (simplified: just find the direction with least variance)
-    // For a flat fabric, the normal is perpendicular to the plane of highest variance
+    // Compute 3x3 covariance matrix
+    // cov[i][j] = sum((pos[i] - centroid[i]) * (pos[j] - centroid[j])) / n
+    float cov[3][3] = {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
 
-    // Sample approach: compute average normal from triangles formed by consecutive nodes
-    Vec3 avg_normal = vec3::zero();
-    int normal_count = 0;
-
-    const auto& nodes = graph.nodes();
-    for (size_t i = 2; i < nodes.size(); ++i) {
-        Vec3 v1 = nodes[i-1].position - nodes[i-2].position;
-        Vec3 v2 = nodes[i].position - nodes[i-2].position;
-        Vec3 normal = v1.cross(v2);
-        float len = normal.length();
-        if (len > 1e-6f) {
-            avg_normal += normal / len;
-            normal_count++;
+    for (const auto& node : graph.nodes()) {
+        Vec3 d = node.position - centroid;
+        float coords[3] = {d.x, d.y, d.z};
+        for (int i = 0; i < 3; ++i) {
+            for (int j = 0; j < 3; ++j) {
+                cov[i][j] += coords[i] * coords[j];
+            }
         }
     }
 
-    if (normal_count > 0 && avg_normal.length() > 1e-6f) {
-        return avg_normal.normalized();
+    float n = static_cast<float>(graph.node_count());
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) {
+            cov[i][j] /= n;
+        }
     }
 
-    // Fallback: assume fabric is in XY plane, normal is Z
-    return vec3::unit_z();
+    // Use power iteration to find the eigenvector with the largest eigenvalue
+    // Then find the one with the smallest by trying all three axis-aligned starts
+    // and keeping the one that converges to the smallest eigenvalue
+
+    auto power_iteration = [&](Vec3 start, int iterations) -> std::pair<Vec3, float> {
+        Vec3 v = start.normalized();
+        float eigenvalue = 0;
+        for (int iter = 0; iter < iterations; ++iter) {
+            // Multiply by covariance matrix
+            Vec3 Av;
+            Av.x = cov[0][0] * v.x + cov[0][1] * v.y + cov[0][2] * v.z;
+            Av.y = cov[1][0] * v.x + cov[1][1] * v.y + cov[1][2] * v.z;
+            Av.z = cov[2][0] * v.x + cov[2][1] * v.y + cov[2][2] * v.z;
+
+            float len = Av.length();
+            if (len < 1e-10f) {
+                // This direction has near-zero variance - it's the normal!
+                return {v, 0.0f};
+            }
+            eigenvalue = len;
+            v = Av / len;
+        }
+        return {v, eigenvalue};
+    };
+
+    // Find the largest eigenvector first (principal component)
+    auto [v1, e1] = power_iteration(Vec3(1, 0, 0), 50);
+
+    // Deflate the matrix to find the second largest
+    // cov' = cov - e1 * v1 * v1^T
+    float cov2[3][3];
+    float v1_coords[3] = {v1.x, v1.y, v1.z};
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) {
+            cov2[i][j] = cov[i][j] - e1 * v1_coords[i] * v1_coords[j];
+        }
+    }
+
+    // Find second eigenvector (start perpendicular to v1)
+    Vec3 start2 = (std::abs(v1.x) < 0.9f) ? Vec3(1, 0, 0) : Vec3(0, 1, 0);
+    start2 = start2 - v1 * start2.dot(v1);
+    if (start2.length() > 1e-6f) {
+        start2 = start2.normalized();
+    }
+
+    auto power_iteration2 = [&](Vec3 start, int iterations) -> std::pair<Vec3, float> {
+        Vec3 v = start.normalized();
+        float eigenvalue = 0;
+        for (int iter = 0; iter < iterations; ++iter) {
+            Vec3 Av;
+            Av.x = cov2[0][0] * v.x + cov2[0][1] * v.y + cov2[0][2] * v.z;
+            Av.y = cov2[1][0] * v.x + cov2[1][1] * v.y + cov2[1][2] * v.z;
+            Av.z = cov2[2][0] * v.x + cov2[2][1] * v.y + cov2[2][2] * v.z;
+
+            float len = Av.length();
+            if (len < 1e-10f) {
+                return {v, 0.0f};
+            }
+            eigenvalue = len;
+            v = Av / len;
+        }
+        return {v, eigenvalue};
+    };
+
+    auto [v2, e2] = power_iteration2(start2, 50);
+
+    // The normal is perpendicular to both v1 and v2
+    Vec3 normal = v1.cross(v2);
+    if (normal.length() < 1e-6f) {
+        // Degenerate case - use default
+        return vec3::unit_z();
+    }
+    normal = normal.normalized();
+
+    // Ensure consistent orientation (prefer positive Z component)
+    if (normal.z < 0) {
+        normal = -normal;
+    }
+
+    auto log = yarnpath::logging::get_logger();
+    log->debug("Dominant plane: v1=({:.3f},{:.3f},{:.3f}) e1={:.3f}, v2=({:.3f},{:.3f},{:.3f}) e2={:.3f}, normal=({:.3f},{:.3f},{:.3f})",
+               v1.x, v1.y, v1.z, e1, v2.x, v2.y, v2.z, e2, normal.x, normal.y, normal.z);
+
+    return normal;
 }
 
 }  // namespace yarnpath

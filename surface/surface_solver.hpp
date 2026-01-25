@@ -24,7 +24,7 @@ struct SolveConfig {
     float convergence_threshold = 1e-4f;
 
     // Number of constraint projection iterations per step
-    int constraint_iterations = 3;
+    int constraint_iterations = 10;
 
     // Number of constraint-only pre-solve iterations (before force relaxation)
     // This helps satisfy constraints before springs start pulling

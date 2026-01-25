@@ -1,5 +1,6 @@
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <sstream>
 #include <string>
 
@@ -254,30 +255,11 @@ int main(int argc, char* argv[]) {
             solve_config.pre_solve_iterations = pre_solve_iterations;
             solve_config.convergence_threshold = threshold;
             solve_config.force_config.damping = damping;
-            solve_config.force_config.enable_gravity = true;
-            // Gravity scaled to be gentle - helps fabric settle flat
-            solve_config.force_config.gravity_strength = 20.0f;
-
-            // Fabric is laid out in XY plane, so gravity pulls in +Z to settle it flat
-            // (like pressing it down onto a table)
-            solve_config.force_config.gravity_direction = yarnpath::Vec3(0, 0, 1);
-
-            // Find the max Z (lowest point in gravity direction) to set floor
-            float max_z = 0.0f;
-            for (const auto& node : surface_graph.nodes()) {
-                max_z = std::max(max_z, node.position.z);
-            }
-            solve_config.force_config.enable_floor = true;
-            solve_config.force_config.floor_position = max_z;  // Floor at lowest initial node
-
-            log->debug("Gravity enabled: strength={}, direction=({},{},{})",
-                       solve_config.force_config.gravity_strength,
-                       solve_config.force_config.gravity_direction.x,
-                       solve_config.force_config.gravity_direction.y,
-                       solve_config.force_config.gravity_direction.z);
+            solve_config.force_config.enable_gravity = false;
+            solve_config.force_config.enable_floor = false;
 
             yarnpath::VisualizerConfig viz_config;
-            viz_config.steps_per_frame = 100;
+            viz_config.steps_per_frame = 10;  // 10 iterations per frame = snapshot every 10 iterations
             viz_config.auto_run = true;
 
             log->info("Starting visualization...");

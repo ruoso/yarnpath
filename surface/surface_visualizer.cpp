@@ -5,8 +5,17 @@
 
 #include <GLFW/glfw3.h>
 #include <cmath>
+#include <vector>
 
 namespace yarnpath {
+
+// Snapshot of node positions at a point in time
+struct Snapshot {
+    int iteration;
+    float energy;
+    std::vector<Vec3> positions;
+    std::vector<Vec3> velocities;
+};
 
 // Camera state
 struct Camera {
@@ -33,6 +42,11 @@ static double g_last_mouse_y = 0;
 static bool g_paused = false;
 static float g_rotation_speed = 0.5f;
 static float g_zoom_speed = 1.1f;
+
+// History navigation
+static std::vector<Snapshot> g_snapshots;
+static int g_current_snapshot = -1;  // -1 means live view
+static bool g_viewing_history = false;
 
 static void mouse_button_callback(GLFWwindow* window, int button, int action, int mods) {
     (void)window;
@@ -67,19 +81,91 @@ static void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) 
     }
 }
 
+static void navigate_history(int delta) {
+    if (g_snapshots.empty()) return;
+
+    if (!g_viewing_history) {
+        // Enter history mode at the latest snapshot
+        g_viewing_history = true;
+        g_current_snapshot = static_cast<int>(g_snapshots.size()) - 1;
+        g_paused = true;
+    }
+
+    g_current_snapshot += delta;
+
+    // Clamp to valid range
+    if (g_current_snapshot < 0) {
+        g_current_snapshot = 0;
+    }
+    if (g_current_snapshot >= static_cast<int>(g_snapshots.size())) {
+        g_current_snapshot = static_cast<int>(g_snapshots.size()) - 1;
+    }
+}
+
 static void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) {
     (void)scancode;
     (void)mods;
-    if (action == GLFW_PRESS) {
+    if (action == GLFW_PRESS || action == GLFW_REPEAT) {
         if (key == GLFW_KEY_ESCAPE || key == GLFW_KEY_Q) {
             glfwSetWindowShouldClose(window, GLFW_TRUE);
         } else if (key == GLFW_KEY_SPACE) {
+            if (g_viewing_history) {
+                // Exit history mode, resume live
+                g_viewing_history = false;
+                g_current_snapshot = -1;
+            }
             g_paused = !g_paused;
         } else if (key == GLFW_KEY_R) {
             // Reset camera
             g_camera.yaw = 0.0f;
             g_camera.pitch = 0.3f;
+        } else if (key == GLFW_KEY_LEFT) {
+            // Previous frame
+            navigate_history(-1);
+        } else if (key == GLFW_KEY_RIGHT) {
+            // Next frame
+            navigate_history(1);
+        } else if (key == GLFW_KEY_PAGE_UP) {
+            // Back 30 frames
+            navigate_history(-30);
+        } else if (key == GLFW_KEY_PAGE_DOWN) {
+            // Forward 30 frames
+            navigate_history(30);
+        } else if (key == GLFW_KEY_HOME) {
+            // Go to first snapshot
+            if (!g_snapshots.empty()) {
+                g_viewing_history = true;
+                g_current_snapshot = 0;
+                g_paused = true;
+            }
+        } else if (key == GLFW_KEY_END) {
+            // Go to last snapshot / live view
+            g_viewing_history = false;
+            g_current_snapshot = -1;
         }
+    }
+}
+
+static Snapshot take_snapshot(const SurfaceGraph& graph, int iteration, float energy) {
+    Snapshot snap;
+    snap.iteration = iteration;
+    snap.energy = energy;
+    snap.positions.reserve(graph.node_count());
+    snap.velocities.reserve(graph.node_count());
+
+    for (const auto& node : graph.nodes()) {
+        snap.positions.push_back(node.position);
+        snap.velocities.push_back(node.velocity);
+    }
+
+    return snap;
+}
+
+static void apply_snapshot(SurfaceGraph& graph, const Snapshot& snap) {
+    auto& nodes = graph.nodes();
+    for (size_t i = 0; i < nodes.size() && i < snap.positions.size(); ++i) {
+        nodes[i].position = snap.positions[i];
+        nodes[i].velocity = snap.velocities[i];
     }
 }
 
@@ -265,6 +351,11 @@ VisualizerResult visualize_relaxation(
     g_zoom_speed = viz_config.zoom_speed;
     g_paused = !viz_config.auto_run;
 
+    // Initialize history
+    g_snapshots.clear();
+    g_current_snapshot = -1;
+    g_viewing_history = false;
+
     // Initial camera fit
     fit_camera_to_graph(graph, g_camera);
 
@@ -274,9 +365,18 @@ VisualizerResult visualize_relaxation(
     glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
 
     int iteration = 0;
+    int frame_count = 0;
     float energy = graph.compute_energy();
+    int last_logged_snapshot = -1;
 
-    log->info("Visualizer started. Controls: mouse drag=rotate, scroll=zoom, space=pause, q=quit");
+    // Take initial snapshot
+    g_snapshots.push_back(take_snapshot(graph, iteration, energy));
+
+    log->info("Visualizer started. Controls:");
+    log->info("  mouse drag=rotate, scroll=zoom");
+    log->info("  space=pause/resume, q=quit, r=reset camera");
+    log->info("  left/right=frame by frame, pgup/pgdn=30 frames");
+    log->info("  home=first frame, end=live view");
 
     // Main loop
     while (!glfwWindowShouldClose(window)) {
@@ -309,8 +409,10 @@ VisualizerResult visualize_relaxation(
         // Clear
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        // Run solver steps if not paused
-        if (!g_paused) {
+        // Run solver steps if not paused and not viewing history
+        if (!g_paused && !g_viewing_history) {
+            float prev_energy = energy;
+
             for (int i = 0; i < viz_config.steps_per_frame; ++i) {
                 SurfaceSolver::step(graph, yarn, solve_config);
                 iteration++;
@@ -319,16 +421,45 @@ VisualizerResult visualize_relaxation(
                 float new_energy = graph.compute_energy();
                 if (std::abs(new_energy - energy) < solve_config.convergence_threshold) {
                     g_paused = true;
-                    log->info("Converged at iteration {}", iteration);
+                    log->info("Converged at iteration {}, energy={}", iteration, new_energy);
                     break;
                 }
                 energy = new_energy;
 
                 if (iteration >= solve_config.max_iterations) {
                     g_paused = true;
-                    log->info("Max iterations reached");
+                    log->info("Max iterations reached, energy={}", energy);
                     break;
                 }
+            }
+
+            // Log progress periodically (every 100 iterations)
+            if (iteration % 100 == 0) {
+                float delta = energy - prev_energy;
+                log->debug("Iteration {}: energy={:.6f}, delta={:.6f}", iteration, energy, delta);
+            }
+
+            // Take snapshot at configured interval
+            frame_count++;
+            if (frame_count % viz_config.snapshot_interval == 0) {
+                if (static_cast<int>(g_snapshots.size()) < viz_config.max_snapshots) {
+                    g_snapshots.push_back(take_snapshot(graph, iteration, energy));
+                }
+            }
+        }
+
+        // If viewing history, apply the snapshot to the graph for rendering
+        if (g_viewing_history && g_current_snapshot >= 0 &&
+            g_current_snapshot < static_cast<int>(g_snapshots.size())) {
+            apply_snapshot(graph, g_snapshots[g_current_snapshot]);
+
+            // Log frame info when snapshot changes
+            if (g_current_snapshot != last_logged_snapshot) {
+                const auto& snap = g_snapshots[g_current_snapshot];
+                log->info("Frame {}/{}: iteration={}, energy={}",
+                         g_current_snapshot + 1, g_snapshots.size(),
+                         snap.iteration, snap.energy);
+                last_logged_snapshot = g_current_snapshot;
             }
         }
 
@@ -340,12 +471,24 @@ VisualizerResult visualize_relaxation(
         glfwPollEvents();
     }
 
+    // If we were viewing history, restore the final state
+    if (g_viewing_history && !g_snapshots.empty()) {
+        apply_snapshot(graph, g_snapshots.back());
+    }
+
     result.completed = true;
     result.total_iterations = iteration;
     result.final_energy = energy;
 
+    // Clean up global state
+    g_snapshots.clear();
+    g_current_snapshot = -1;
+    g_viewing_history = false;
+
     glfwDestroyWindow(window);
     glfwTerminate();
+
+    log->info("Visualization ended. {} snapshots recorded.", frame_count + 1);
 
     return result;
 }

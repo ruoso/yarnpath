@@ -30,6 +30,10 @@ struct VisualizerConfig {
     // Simulation
     int steps_per_frame = 10;         // Solver steps per rendered frame
     bool auto_run = true;             // Start running immediately
+
+    // History/playback
+    int snapshot_interval = 1;        // Store snapshot every N frames
+    int max_snapshots = 100000;       // Maximum snapshots to keep in memory
 };
 
 // Result of visualization session

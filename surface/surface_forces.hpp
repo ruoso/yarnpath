@@ -17,6 +17,7 @@ struct ForceConfig {
     // Loop curvature force (encourages natural loop shape)
     float loop_curvature_strength = 0.1f;
 
+
     // Gravity configuration
     float gravity_strength = 9.8f;      // Gravity magnitude (m/s^2 or similar units)
     Vec3 gravity_direction{0, 1, 0};    // Default: positive Y is "down"
@@ -25,6 +26,10 @@ struct ForceConfig {
     // Floor configuration
     float floor_position = 0.0f;        // Floor Y position (nodes can't go below this)
     bool enable_floor = false;          // Whether to enforce floor constraint
+
+    // Collision configuration
+    bool enable_collision = true;       // Whether to apply collision repulsion
+    float collision_strength = 100.0f;  // Repulsion force strength
 };
 
 // Compute all forces on the graph nodes
@@ -47,6 +52,7 @@ void compute_loop_curvature_forces(SurfaceGraph& graph,
                                     const YarnProperties& yarn,
                                     float strength);
 
+
 // Damping force: F = -damping * velocity
 void apply_damping(SurfaceGraph& graph, float damping);
 
@@ -55,8 +61,11 @@ void compute_gravity_force(SurfaceGraph& graph,
                            float strength,
                            const Vec3& direction);
 
-// Apply floor constraint (prevent nodes from going below floor)
-void apply_floor_constraint(SurfaceGraph& graph, float floor_y);
+// Apply floor constraint (prevent nodes from going past floor along gravity direction)
+void apply_floor_constraint(SurfaceGraph& graph, float floor_dist, const Vec3& direction);
+
+// Collision repulsion force: pushes non-adjacent nodes apart when too close
+void compute_collision_forces(SurfaceGraph& graph, float min_distance, float strength);
 
 // Determine the dominant plane from node positions (returns normal direction)
 Vec3 compute_dominant_plane_normal(const SurfaceGraph& graph);

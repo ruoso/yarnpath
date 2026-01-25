@@ -225,18 +225,29 @@ TEST_F(SurfaceBuilderTest, FormsLoopFlagCopied) {
     }
 }
 
-TEST_F(SurfaceBuilderTest, RestLengthsBasedOnGauge) {
+TEST_F(SurfaceBuilderTest, RestLengthsBasedOnYarnProperties) {
     YarnPath path = create_simple_yarn_path();
 
     SurfaceGraph graph = SurfaceBuilder::from_yarn_path(path, yarn, gauge);
 
-    // Passthrough edges should have rest length close to row_height
-    float row_height = gauge.row_height();
+    // Passthrough edges have rest length = loop_height + min_clearance
+    float loop_height = gauge.loop_height(yarn.radius, yarn.loop_aspect_ratio);
+    float expected_passthrough = loop_height + yarn.min_clearance();
 
     for (const auto& edge : graph.edges()) {
         if (edge.type == EdgeType::PassThrough) {
-            // Rest length should be approximately row_height
-            EXPECT_NEAR(edge.rest_length, row_height, row_height * 0.5f);
+            // Rest length should be approximately loop_height + min_clearance
+            EXPECT_NEAR(edge.rest_length, expected_passthrough, expected_passthrough * 0.1f);
+        }
+    }
+
+    // Continuity edges have rest length based on yarn radius
+    float expected_continuity = yarn.radius * 2.0f * (1.0f + (1.0f - yarn.tension) * 0.25f);
+
+    for (const auto& edge : graph.edges()) {
+        if (edge.type == EdgeType::YarnContinuity) {
+            // Rest length should be approximately 2*radius with tension adjustment
+            EXPECT_NEAR(edge.rest_length, expected_continuity, expected_continuity * 0.1f);
         }
     }
 }

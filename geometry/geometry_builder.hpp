@@ -3,10 +3,10 @@
 
 #include "geometry_path.hpp"
 #include "yarn_path.hpp"
-#include "yarn_properties.hpp"
-#include "gauge.hpp"
+#include <yarn/yarn_properties.hpp>
+#include <yarn/gauge.hpp>
 #include "physical_loop.hpp"
-#include "vec3.hpp"
+#include <math/vec3.hpp>
 #include "cubic_bezier.hpp"
 #include <vector>
 #include <map>

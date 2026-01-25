@@ -11,6 +11,10 @@ add_executable(tests
     test_continuity.cpp
     test_yarn_interlocking.cpp
     test_topology_geometry.cpp
+    test_surface_graph.cpp
+    test_surface_forces.cpp
+    test_surface_solver.cpp
+    test_surface_builder.cpp
 )
 
 target_link_libraries(tests PRIVATE
@@ -19,6 +23,7 @@ target_link_libraries(tests PRIVATE
     parser
     yarn_path
     geometry
+    surface
     GTest::gtest_main
 )
 

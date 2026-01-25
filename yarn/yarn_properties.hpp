@@ -1,5 +1,5 @@
-#ifndef YARNPATH_GEOMETRY_YARN_PROPERTIES_HPP
-#define YARNPATH_GEOMETRY_YARN_PROPERTIES_HPP
+#ifndef YARNPATH_YARN_YARN_PROPERTIES_HPP
+#define YARNPATH_YARN_YARN_PROPERTIES_HPP
 
 namespace yarnpath {
 
@@ -23,6 +23,9 @@ struct YarnProperties {
     float tension = 0.5f;             // 0=loose, 1=tight knitting style
     float elasticity = 0.3f;          // How much the yarn stretches under tension
 
+    // Mass properties
+    float linear_density = 0.003f;    // Mass per unit length (g/mm) - worsted ~3g per meter = 0.003g/mm
+
     // Derived properties
     float min_clearance() const {
         return 2.0f * radius;
@@ -30,6 +33,29 @@ struct YarnProperties {
 
     float max_curvature() const {
         return 1.0f / min_bend_radius;
+    }
+
+    // Estimate yarn length for a loop segment (mm)
+    // A loop wraps around and back, so it's roughly 2 * loop_height + loop_width
+    float loop_yarn_length(float loop_width) const {
+        float loop_height = loop_width * loop_aspect_ratio;
+        return 2.0f * loop_height + loop_width + loop_width * loop_slack;
+    }
+
+    // Estimate yarn length for a connector segment (mm)
+    // Just the distance between nodes plus some slack
+    float connector_yarn_length(float distance) const {
+        return distance * (1.0f + loop_slack * 0.5f);
+    }
+
+    // Mass of a loop segment (grams)
+    float loop_mass(float loop_width) const {
+        return loop_yarn_length(loop_width) * linear_density;
+    }
+
+    // Mass of a connector segment (grams)
+    float connector_mass(float distance) const {
+        return connector_yarn_length(distance) * linear_density;
     }
 
     // Knot tightness factor: how much the loop contracts from its relaxed state
@@ -80,4 +106,4 @@ struct YarnProperties {
 
 }  // namespace yarnpath
 
-#endif // YARNPATH_GEOMETRY_YARN_PROPERTIES_HPP
+#endif // YARNPATH_YARN_YARN_PROPERTIES_HPP

@@ -4,9 +4,9 @@
 // Geometry layer public API
 // Transforms YarnPath (1D yarn sequence with topology) into 3D geometry
 
-#include "vec3.hpp"
-#include "yarn_properties.hpp"
-#include "gauge.hpp"
+#include <math/vec3.hpp>
+#include <yarn/yarn_properties.hpp>
+#include <yarn/gauge.hpp>
 #include "cubic_bezier.hpp"
 #include "physical_loop.hpp"
 #include "geometry_path.hpp"

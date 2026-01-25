@@ -4,6 +4,8 @@
 #include <string>
 
 #include "geometry.hpp"
+#include "surface/surface.hpp"
+#include "surface/surface_visualizer.hpp"
 #include "tokenizer.hpp"
 #include "parser.hpp"
 #include "emitter.hpp"
@@ -15,8 +17,14 @@ void print_usage(const char* program_name) {
     std::cerr << "Converts a knitting pattern text file to 3D geometry.\n";
     std::cerr << "\n";
     std::cerr << "Options:\n";
-    std::cerr << "  --dot       Output yarn path as DOT/Graphviz (skips geometry)\n";
-    std::cerr << "  --help      Show this help message\n";
+    std::cerr << "  --dot             Output yarn path as DOT/Graphviz (skips geometry)\n";
+    std::cerr << "  --surface         Output relaxed surface as OBJ (nodes as spheres, edges as lines)\n";
+    std::cerr << "  --iterations N    Max solver iterations (default: 100000)\n";
+    std::cerr << "  --presolve N      Pre-solve constraint iterations (default: 1000)\n";
+    std::cerr << "  --damping N       Solver damping factor 0-1 (default: 0.9)\n";
+    std::cerr << "  --threshold N     Convergence threshold (default: 1e-6)\n";
+    std::cerr << "  --visualize       Open OpenGL window to watch relaxation (requires GLFW)\n";
+    std::cerr << "  --help            Show this help message\n";
     std::cerr << "\n";
     std::cerr << "Arguments:\n";
     std::cerr << "  input.txt   - Input pattern file (Shirley Paden notation)\n";
@@ -49,14 +57,32 @@ int main(int argc, char* argv[]) {
 
     // 1. Parse command-line arguments
     bool output_dot = false;
+    bool output_surface = false;
+    bool visualize = false;
     std::string input_path;
     std::string output_path;
     bool write_to_stdout = true;
+    int max_iterations = 100000;
+    int pre_solve_iterations = 1000;
+    float damping = 0.9f;
+    float threshold = 1e-6f;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--dot") {
             output_dot = true;
+        } else if (arg == "--surface") {
+            output_surface = true;
+        } else if (arg == "--visualize") {
+            visualize = true;
+        } else if (arg == "--iterations" && i + 1 < argc) {
+            max_iterations = std::stoi(argv[++i]);
+        } else if (arg == "--presolve" && i + 1 < argc) {
+            pre_solve_iterations = std::stoi(argv[++i]);
+        } else if (arg == "--damping" && i + 1 < argc) {
+            damping = std::stof(argv[++i]);
+        } else if (arg == "--threshold" && i + 1 < argc) {
+            threshold = std::stof(argv[++i]);
         } else if (arg == "--help" || arg == "-h") {
             print_usage(argv[0]);
             return 0;
@@ -77,6 +103,8 @@ int main(int argc, char* argv[]) {
     log->info("Input file: {}", input_path);
     if (output_dot) {
         log->info("Output format: DOT (yarn path visualization)");
+    } else if (output_surface) {
+        log->info("Output format: OBJ (surface relaxation visualization)");
     }
     if (!write_to_stdout) {
         log->info("Output file: {}", output_path);
@@ -151,6 +179,113 @@ int main(int argc, char* argv[]) {
             }
 
             log->info("DOT export complete: {} segments", yarn_path.segments().size());
+            return 0;
+        }
+
+        // If --surface, output surface relaxation OBJ and exit early
+        if (output_surface) {
+            log->debug("Building surface graph");
+            yarnpath::YarnProperties yarn = yarnpath::YarnProperties::worsted();
+            yarnpath::Gauge gauge = yarnpath::Gauge::worsted();
+
+            // Build and solve surface
+            yarnpath::SurfaceBuildConfig build_config;
+            build_config.random_seed = 42;
+
+            yarnpath::SurfaceGraph surface_graph =
+                yarnpath::SurfaceBuilder::from_yarn_path(yarn_path, yarn, gauge, build_config);
+
+            log->debug("Solving surface relaxation");
+            yarnpath::SolveConfig solve_config;
+            solve_config.max_iterations = max_iterations;
+            solve_config.pre_solve_iterations = pre_solve_iterations;
+            solve_config.convergence_threshold = threshold;
+            solve_config.force_config.damping = damping;
+
+            yarnpath::SolveResult result =
+                yarnpath::SurfaceSolver::solve(surface_graph, yarn, solve_config);
+
+            log->info("Surface relaxation: {} after {} iterations",
+                      result.converged ? "converged" : "did not converge",
+                      result.iterations);
+
+            // Export to OBJ
+            log->debug("Exporting surface OBJ");
+            yarnpath::SurfaceObjConfig obj_config;
+            obj_config.node_radius = 0.3f;
+            obj_config.sphere_subdivisions = 1;
+
+            std::string obj = yarnpath::surface_to_obj(surface_graph, obj_config);
+
+            if (write_to_stdout) {
+                std::cout << obj;
+            } else {
+                write_file(output_path, obj);
+                std::cerr << "Wrote " << output_path << " ("
+                          << surface_graph.node_count() << " nodes, "
+                          << surface_graph.edge_count() << " edges)\n";
+            }
+
+            log->info("Surface OBJ export complete: {} nodes, {} edges",
+                      surface_graph.node_count(), surface_graph.edge_count());
+            return 0;
+        }
+
+        // If --visualize, open OpenGL window and exit early
+        if (visualize) {
+            if (!yarnpath::visualization_available()) {
+                log->error("Visualization not available - recompile with GLFW and OpenGL");
+                std::cerr << "Error: Visualization not available\n";
+                return 1;
+            }
+
+            log->debug("Building surface graph for visualization");
+            yarnpath::YarnProperties yarn = yarnpath::YarnProperties::worsted();
+            yarnpath::Gauge gauge = yarnpath::Gauge::worsted();
+
+            yarnpath::SurfaceBuildConfig build_config;
+            build_config.random_seed = 42;
+
+            yarnpath::SurfaceGraph surface_graph =
+                yarnpath::SurfaceBuilder::from_yarn_path(yarn_path, yarn, gauge, build_config);
+
+            yarnpath::SolveConfig solve_config;
+            solve_config.max_iterations = max_iterations;
+            solve_config.pre_solve_iterations = pre_solve_iterations;
+            solve_config.convergence_threshold = threshold;
+            solve_config.force_config.damping = damping;
+            solve_config.force_config.enable_gravity = true;
+            // Gravity scaled to be gentle - helps fabric settle flat
+            solve_config.force_config.gravity_strength = 20.0f;
+
+            // Fabric is laid out in XY plane, so gravity pulls in +Z to settle it flat
+            // (like pressing it down onto a table)
+            solve_config.force_config.gravity_direction = yarnpath::Vec3(0, 0, 1);
+
+            // Find the max Z (lowest point in gravity direction) to set floor
+            float max_z = 0.0f;
+            for (const auto& node : surface_graph.nodes()) {
+                max_z = std::max(max_z, node.position.z);
+            }
+            solve_config.force_config.enable_floor = true;
+            solve_config.force_config.floor_position = max_z;  // Floor at lowest initial node
+
+            log->debug("Gravity enabled: strength={}, direction=({},{},{})",
+                       solve_config.force_config.gravity_strength,
+                       solve_config.force_config.gravity_direction.x,
+                       solve_config.force_config.gravity_direction.y,
+                       solve_config.force_config.gravity_direction.z);
+
+            yarnpath::VisualizerConfig viz_config;
+            viz_config.steps_per_frame = 100;
+            viz_config.auto_run = true;
+
+            log->info("Starting visualization...");
+            yarnpath::VisualizerResult result =
+                yarnpath::visualize_relaxation(surface_graph, yarn, solve_config, viz_config);
+
+            log->info("Visualization complete: {} iterations, final energy = {}",
+                      result.total_iterations, result.final_energy);
             return 0;
         }
 

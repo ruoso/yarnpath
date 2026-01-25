@@ -1,7 +1,7 @@
 #ifndef YARNPATH_GEOMETRY_CUBIC_BEZIER_HPP
 #define YARNPATH_GEOMETRY_CUBIC_BEZIER_HPP
 
-#include "vec3.hpp"
+#include <math/vec3.hpp>
 #include <array>
 #include <vector>
 

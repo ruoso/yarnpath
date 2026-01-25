@@ -1,10 +1,10 @@
 #ifndef YARNPATH_GEOMETRY_PHYSICAL_LOOP_HPP
 #define YARNPATH_GEOMETRY_PHYSICAL_LOOP_HPP
 
-#include "vec3.hpp"
+#include <math/vec3.hpp>
 #include "cubic_bezier.hpp"
-#include "yarn_properties.hpp"
-#include "gauge.hpp"
+#include <yarn/yarn_properties.hpp>
+#include <yarn/gauge.hpp>
 #include <vector>
 
 namespace yarnpath {

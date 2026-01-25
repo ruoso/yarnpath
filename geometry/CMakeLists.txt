@@ -1,9 +1,6 @@
 add_library(geometry
     geometry.hpp
     geometry.cpp
-    vec3.hpp
-    yarn_properties.hpp
-    gauge.hpp
     cubic_bezier.hpp
     cubic_bezier.cpp
     geometry_path.hpp
@@ -15,4 +12,4 @@ add_library(geometry
 )
 
 target_include_directories(geometry PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(geometry PUBLIC yarn_path common)
+target_link_libraries(geometry PUBLIC yarn_path common math yarn)

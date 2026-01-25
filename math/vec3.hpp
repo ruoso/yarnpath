@@ -1,5 +1,5 @@
-#ifndef YARNPATH_GEOMETRY_VEC3_HPP
-#define YARNPATH_GEOMETRY_VEC3_HPP
+#ifndef YARNPATH_MATH_VEC3_HPP
+#define YARNPATH_MATH_VEC3_HPP
 
 #include <cmath>
 #include <array>
@@ -137,4 +137,4 @@ namespace vec3 {
 
 }  // namespace yarnpath
 
-#endif // YARNPATH_GEOMETRY_VEC3_HPP
+#endif // YARNPATH_MATH_VEC3_HPP

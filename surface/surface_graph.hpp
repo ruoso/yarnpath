@@ -1,0 +1,66 @@
+#ifndef YARNPATH_SURFACE_GRAPH_HPP
+#define YARNPATH_SURFACE_GRAPH_HPP
+
+#include "surface_node.hpp"
+#include "surface_edge.hpp"
+#include "surface_constraint.hpp"
+#include <vector>
+#include <unordered_map>
+
+namespace yarnpath {
+
+// Container for the complete surface relaxation graph.
+// Holds all nodes, edges, and constraints.
+class SurfaceGraph {
+public:
+    SurfaceGraph() = default;
+
+    // Node management
+    NodeId add_node(const SurfaceNode& node);
+    SurfaceNode& node(NodeId id);
+    const SurfaceNode& node(NodeId id) const;
+    size_t node_count() const { return nodes_.size(); }
+    std::vector<SurfaceNode>& nodes() { return nodes_; }
+    const std::vector<SurfaceNode>& nodes() const { return nodes_; }
+
+    // Edge management
+    EdgeId add_edge(const SurfaceEdge& edge);
+    SurfaceEdge& edge(EdgeId id);
+    const SurfaceEdge& edge(EdgeId id) const;
+    size_t edge_count() const { return edges_.size(); }
+    std::vector<SurfaceEdge>& edges() { return edges_; }
+    const std::vector<SurfaceEdge>& edges() const { return edges_; }
+
+    // Constraint management
+    ConstraintId add_constraint(const SurfaceConstraint& constraint);
+    SurfaceConstraint& constraint(ConstraintId id);
+    const SurfaceConstraint& constraint(ConstraintId id) const;
+    size_t constraint_count() const { return constraints_.size(); }
+    std::vector<SurfaceConstraint>& constraints() { return constraints_; }
+    const std::vector<SurfaceConstraint>& constraints() const { return constraints_; }
+
+    // Lookup node by segment ID
+    NodeId node_for_segment(SegmentId seg_id) const;
+    bool has_segment(SegmentId seg_id) const;
+
+    // Get edges connected to a node
+    std::vector<EdgeId> edges_for_node(NodeId node_id) const;
+
+    // Compute total system energy (for convergence checking)
+    float compute_energy() const;
+
+    // Clear all forces on all nodes
+    void clear_all_forces();
+
+private:
+    std::vector<SurfaceNode> nodes_;
+    std::vector<SurfaceEdge> edges_;
+    std::vector<SurfaceConstraint> constraints_;
+
+    // Mapping from SegmentId to NodeId for quick lookup
+    std::unordered_map<SegmentId, NodeId> segment_to_node_;
+};
+
+}  // namespace yarnpath
+
+#endif // YARNPATH_SURFACE_GRAPH_HPP

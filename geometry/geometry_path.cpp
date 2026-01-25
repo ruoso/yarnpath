@@ -1,7 +1,7 @@
 #include "geometry_path.hpp"
 #include "geometry_builder.hpp"
-#include "yarn_properties.hpp"
-#include "gauge.hpp"
+#include <yarn/yarn_properties.hpp>
+#include <yarn/gauge.hpp>
 #include "logging.hpp"
 #include <sstream>
 #include <iomanip>

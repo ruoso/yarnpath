@@ -1,5 +1,5 @@
-#ifndef YARNPATH_GEOMETRY_GAUGE_HPP
-#define YARNPATH_GEOMETRY_GAUGE_HPP
+#ifndef YARNPATH_YARN_GAUGE_HPP
+#define YARNPATH_YARN_GAUGE_HPP
 
 namespace yarnpath {
 
@@ -80,4 +80,4 @@ struct Gauge {
 
 }  // namespace yarnpath
 
-#endif // YARNPATH_GEOMETRY_GAUGE_HPP
+#endif // YARNPATH_YARN_GAUGE_HPP

@@ -19,8 +19,23 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(spdlog)
 
+# GLFW for OpenGL windowing (optional visualization)
+find_package(glfw3 QUIET)
+find_package(OpenGL QUIET)
+if(glfw3_FOUND AND OpenGL_FOUND)
+    set(YARNPATH_HAS_VISUALIZATION ON)
+    message(STATUS "Visualization enabled (GLFW + OpenGL found)")
+else()
+    set(YARNPATH_HAS_VISUALIZATION OFF)
+    message(STATUS "Visualization disabled (GLFW or OpenGL not found)")
+endif()
+
 # Common utilities (logging)
 add_subdirectory(common)
+
+# Shared type modules
+add_subdirectory(math)
+add_subdirectory(yarn)
 
 # Libraries
 add_subdirectory(instructions)
@@ -28,6 +43,7 @@ add_subdirectory(parser)
 add_subdirectory(stitch_graph)
 add_subdirectory(yarn_path)
 add_subdirectory(geometry)
+add_subdirectory(surface)
 
 # Application
 add_subdirectory(app)

@@ -40,9 +40,14 @@ TEST(LoopShapeTest, CurvatureWithinLimits) {
     );
 
     // Check that max curvature is reasonable
+    // The geometry wraps yarn around needles, so curvature can exceed the yarn's
+    // "relaxed" minimum bend radius. We allow up to 1/(needle_radius) curvature
+    // since the yarn is physically wrapped around the needle.
+    float needle_radius = Gauge::worsted().needle_diameter * 0.5f;
+    float max_reasonable_curvature = 1.0f / needle_radius + yarn.max_curvature();
     for (const auto& seg : geometry.segments()) {
-        // Allow generous tolerance - the geometry uses Bezier approximations
-        // and wraps around needles which can be sharper than yarn's ideal bend
-        EXPECT_LT(seg.max_curvature, yarn.max_curvature() * 15.0f);
+        EXPECT_LT(seg.max_curvature, max_reasonable_curvature * 2.0f)
+            << "Segment " << seg.segment_id << " has curvature " << seg.max_curvature
+            << " which exceeds " << max_reasonable_curvature * 2.0f;
     }
 }

@@ -10,6 +10,7 @@
 #include "cubic_bezier.hpp"
 #include <vector>
 #include <map>
+#include <optional>
 
 namespace yarnpath {
 
@@ -30,6 +31,10 @@ struct YarnState {
     Vec3 position;
     Vec3 direction;
     std::map<SegmentId, PhysicalLoop> formed_loops;
+
+    // Track last parent X for determining knitting direction
+    // nullopt means no parent has been used yet (start of row or cast-on)
+    std::optional<float> last_parent_x;
 };
 
 // Result of building a single segment

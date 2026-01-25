@@ -31,54 +31,57 @@ std::string YarnPath::to_dot() const {
     std::ostringstream ss;
 
     ss << "digraph YarnPath {\n";
-    ss << "  rankdir=BT;\n";  // Bottom to top (like knitting)
-    ss << "  node [shape=box, style=filled, fillcolor=white];\n";
+    ss << "  rankdir=LR;\n";  // Left to right
+    ss << "  node [shape=box];\n";
     ss << "  \n";
 
-    // Output loop segments as nodes
-    ss << "  // Loop segments\n";
+    // Output all segment nodes
+    ss << "  // Segment nodes\n";
+    for (size_t i = 0; i < segments_.size(); ++i) {
+        ss << "  s" << i;
+        if (segments_[i].forms_loop) {
+            ss << " [style=filled, fillcolor=lightblue]";
+        }
+        ss << ";\n";
+    }
+    ss << "  \n";
+
+    // Output loop nodes for segments that form loops
+    ss << "  // Loop nodes\n";
     for (size_t i = 0; i < segments_.size(); ++i) {
         if (segments_[i].forms_loop) {
-            ss << "  seg" << i << " [label=\"L" << i << "\"];\n";
+            ss << "  loop" << i << " [shape=ellipse, style=filled, fillcolor=lightyellow];\n";
         }
     }
     ss << "  \n";
 
-    // Output parent-child relationships (from through vectors)
-    ss << "  // Parent-child relationships\n";
-    ss << "  edge [color=blue, style=solid, arrowhead=normal];\n";
+    // Output sequential segment connections
+    ss << "  // Sequential segment connections\n";
+    for (size_t i = 0; i + 1 < segments_.size(); ++i) {
+        ss << "  s" << i << " -> s" << (i + 1) << ";\n";
+    }
+    ss << "  \n";
+
+    // Output bidirectional connections between segments and their loops
+    ss << "  // Segment-loop connections\n";
     for (size_t i = 0; i < segments_.size(); ++i) {
         if (segments_[i].forms_loop) {
-            for (SegmentId parent : segments_[i].through) {
-                ss << "  seg" << parent << " -> seg" << i << ";\n";
+            ss << "  s" << i << " -> loop" << i << ";\n";
+            ss << "  loop" << i << " -> s" << i << ";\n";
+        }
+    }
+    ss << "  \n";
+
+    // Output connections showing which loops segments go through
+    ss << "  // Through connections\n";
+    for (size_t i = 0; i < segments_.size(); ++i) {
+        for (SegmentId parent : segments_[i].through) {
+            if (parent < segments_.size() && segments_[parent].forms_loop) {
+                ss << "  s" << i << " -> loop" << parent << " [style=dashed, color=gray];\n";
+                ss << "  loop" << parent << " -> s" << i << " [style=dashed, color=gray];\n";
             }
         }
     }
-    ss << "  \n";
-
-    // Output yarn path order (sequential loop segments)
-    ss << "  // Yarn path order\n";
-    ss << "  edge [color=red, style=dashed, arrowhead=vee, constraint=false];\n";
-    std::optional<SegmentId> prev_loop;
-    for (size_t i = 0; i < segments_.size(); ++i) {
-        if (segments_[i].forms_loop) {
-            if (prev_loop.has_value()) {
-                ss << "  seg" << prev_loop.value() << " -> seg" << i
-                   << " [label=\"yarn\"];\n";
-            }
-            prev_loop = static_cast<SegmentId>(i);
-        }
-    }
-    ss << "  \n";
-
-    // Add legend
-    ss << "  // Legend\n";
-    ss << "  subgraph cluster_legend {\n";
-    ss << "    label=\"Legend\";\n";
-    ss << "    style=dashed;\n";
-    ss << "    leg_struct [label=\"Parent→Child\", shape=plaintext];\n";
-    ss << "    leg_yarn [label=\"Yarn Order\", shape=plaintext];\n";
-    ss << "  }\n";
 
     ss << "}\n";
 

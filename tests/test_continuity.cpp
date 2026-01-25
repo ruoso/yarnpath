@@ -301,13 +301,15 @@ struct CurvatureViolation {
     float curvature;
     float max_allowed;
     Vec3 position;
+    // Control points for debugging
+    Vec3 p0, p1, p2, p3;
 };
 
 static std::vector<CurvatureViolation> find_curvature_violations(
     const GeometryPath& geometry,
     const YarnProperties& yarn,
     int samples_per_bezier = 20,
-    float tolerance_factor = 15.0f) {  // Allow generous tolerance for needle wrapping
+    float tolerance_factor = 2.0f) {  // Allow some tolerance for needle wrapping
 
     std::vector<CurvatureViolation> violations;
     float max_k = yarn.max_curvature() * tolerance_factor;
@@ -330,7 +332,11 @@ static std::vector<CurvatureViolation> find_curvature_violations(
                         .t = t,
                         .curvature = k,
                         .max_allowed = max_k,
-                        .position = bezier.evaluate(t)
+                        .position = bezier.evaluate(t),
+                        .p0 = bezier.start(),
+                        .p1 = bezier.control1(),
+                        .p2 = bezier.control2(),
+                        .p3 = bezier.end()
                     });
                 }
             }
@@ -370,7 +376,11 @@ TEST(CurvatureTest, CurvatureWithinYarnBendRadius) {
                       << ": curvature=" << v.curvature
                       << " > max_allowed=" << v.max_allowed
                       << " (bend radius=" << (1.0f / v.curvature) << " < min=" << yarn.min_bend_radius << ")"
-                      << " at position (" << v.position.x << ", " << v.position.y << ", " << v.position.z << ")";
+                      << " at position (" << v.position.x << ", " << v.position.y << ", " << v.position.z << ")"
+                      << "\n  Control points: P0=(" << v.p0.x << "," << v.p0.y << "," << v.p0.z << ")"
+                      << " P1=(" << v.p1.x << "," << v.p1.y << "," << v.p1.z << ")"
+                      << " P2=(" << v.p2.x << "," << v.p2.y << "," << v.p2.z << ")"
+                      << " P3=(" << v.p3.x << "," << v.p3.y << "," << v.p3.z << ")";
     }
 
     EXPECT_TRUE(violations.empty())
@@ -406,7 +416,11 @@ TEST(CurvatureTest, CurvatureWithinYarnBendRadiusRibbing) {
                       << ": curvature=" << v.curvature
                       << " > max_allowed=" << v.max_allowed
                       << " (bend radius=" << (1.0f / v.curvature) << " < min=" << yarn.min_bend_radius << ")"
-                      << " at position (" << v.position.x << ", " << v.position.y << ", " << v.position.z << ")";
+                      << " at position (" << v.position.x << ", " << v.position.y << ", " << v.position.z << ")"
+                      << "\n  Control points: P0=(" << v.p0.x << "," << v.p0.y << "," << v.p0.z << ")"
+                      << " P1=(" << v.p1.x << "," << v.p1.y << "," << v.p1.z << ")"
+                      << " P2=(" << v.p2.x << "," << v.p2.y << "," << v.p2.z << ")"
+                      << " P3=(" << v.p3.x << "," << v.p3.y << "," << v.p3.z << ")";
     }
 
     EXPECT_TRUE(violations.empty())
@@ -439,7 +453,11 @@ TEST(CurvatureTest, CurvatureWithinYarnBendRadiusFineYarn) {
                       << ": curvature=" << v.curvature
                       << " > max_allowed=" << v.max_allowed
                       << " (bend radius=" << (1.0f / v.curvature) << " < min=" << yarn.min_bend_radius << ")"
-                      << " at position (" << v.position.x << ", " << v.position.y << ", " << v.position.z << ")";
+                      << " at position (" << v.position.x << ", " << v.position.y << ", " << v.position.z << ")"
+                      << "\n  Control points: P0=(" << v.p0.x << "," << v.p0.y << "," << v.p0.z << ")"
+                      << " P1=(" << v.p1.x << "," << v.p1.y << "," << v.p1.z << ")"
+                      << " P2=(" << v.p2.x << "," << v.p2.y << "," << v.p2.z << ")"
+                      << " P3=(" << v.p3.x << "," << v.p3.y << "," << v.p3.z << ")";
     }
 
     EXPECT_TRUE(violations.empty())

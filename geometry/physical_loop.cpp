@@ -1,4 +1,5 @@
 #include "physical_loop.hpp"
+#include "logging.hpp"
 #include <cmath>
 
 namespace yarnpath {
@@ -73,24 +74,25 @@ PhysicalLoop PhysicalLoop::from_properties(
     float theta_front = -PI * 0.5f;
     float theta_back = PI * 0.5f;
 
-    // Entry point: front of needle, left side of loop
+    // Entry point: front of needle, at loop center X
+    // (X transitions happen in connectors, not in the loop shape)
     loop.entry_point = Vec3(
-        position.x - loop.loop_width * 0.5f,
+        position.x,                                      // Center X (constant in loop shape)
         position.y,                                      // At needle center height
         wrap_radius * std::sin(theta_front)              // = -wrap_radius (front)
     );
 
-    // Exit point: back of needle, right side of loop
+    // Exit point: back of needle, at loop center X
     loop.exit_point = Vec3(
-        position.x + loop.loop_width * 0.5f,
+        position.x,                                      // Center X (constant in loop shape)
         position.y,                                      // At needle center height
         wrap_radius * std::sin(theta_back)               // = +wrap_radius (back)
     );
-    
+
     // Entry tangent: at front (θ = -π/2), the circular arc tangent points up (+Y)
     // No X component - let the connector curves handle horizontal movement
     loop.entry_tangent = Vec3(0.0f, 1.0f, 0.0f);
-    
+
     // Exit tangent: at back (θ = π/2), the yarn continues toward front (-Z)
     // with slight downward curve. This allows smooth transition to the next loop
     // which is above and toward the front.
@@ -107,7 +109,7 @@ PhysicalLoop PhysicalLoop::from_properties(
 
     // Base point: at the bottom of the needle (θ = π)
     loop.base_point = Vec3(
-        position.x + loop.loop_width * 0.25f,  // Slightly right of center (where bottom is reached)
+        position.x,                             // Center X (constant in loop shape)
         position.y - wrap_radius,               // Bottom of the wrap
         0.0f                                    // Z = 0 at bottom
     );
@@ -154,7 +156,6 @@ void PhysicalLoop::generate_shape(const Gauge& gauge) {
 
     float needle_radius = gauge.needle_diameter * 0.5f;
     float wrap_radius = needle_radius + yarn_radius;
-    float half_width = loop_width * 0.5f;
 
     // Point on cylinder surface given angle θ and X offset
     auto cylinder_point = [&](float theta, float x) -> Vec3 {
@@ -194,29 +195,31 @@ void PhysicalLoop::generate_shape(const Gauge& gauge) {
     float arc_90 = PI * 0.5f;
     float k = bezier_k(arc_90);
 
-    // X positions progress from left to right as we go around
-    float x_entry = center.x - half_width;
-    float x_top = center.x;
-    float x_exit = center.x + half_width;
+    // Loop shape has CONSTANT X = center.x (touching the needle)
+    // X transitions happen in the connector curves, not in the loop shape
+    float loop_x = center.x;
 
     Vec3 p0, p3, t0, t3;
-    float dx;
 
-    // === Segment 1: Front to Top ===
-    p0 = cylinder_point(theta_front, x_entry);
-    p3 = cylinder_point(theta_top, x_top);
+    // === Segment 1: Front to Top (constant X) ===
+    p0 = cylinder_point(theta_front, loop_x);
+    p3 = cylinder_point(theta_top, loop_x);
     t0 = arc_tangent(theta_front) * k;
     t3 = arc_tangent(theta_top) * (-k);
-    dx = (p3.x - p0.x) * 0.4f;
-    shape.add_segment(CubicBezier(p0, p0 + t0 + Vec3(dx, 0, 0), p3 + t3 + Vec3(-dx, 0, 0), p3));
+    CubicBezier seg1(p0, p0 + t0, p3 + t3, p3);
+    yarnpath::logging::get_logger()->debug("loop_shape seg1 (front→top): p0=({:.3f},{:.3f},{:.3f}) p3=({:.3f},{:.3f},{:.3f}) max_curvature={:.3f}",
+                 p0.x, p0.y, p0.z, p3.x, p3.y, p3.z, seg1.max_curvature());
+    shape.add_segment(seg1);
 
-    // === Segment 2: Top to Back (exit) ===
+    // === Segment 2: Top to Back (constant X) ===
     p0 = p3;
-    p3 = cylinder_point(theta_back, x_exit);
+    p3 = cylinder_point(theta_back, loop_x);
     t0 = arc_tangent(theta_top) * k;
     t3 = arc_tangent(theta_back) * (-k);
-    dx = (p3.x - p0.x) * 0.4f;
-    shape.add_segment(CubicBezier(p0, p0 + t0 + Vec3(dx, 0, 0), p3 + t3 + Vec3(-dx, 0, 0), p3));
+    CubicBezier seg2(p0, p0 + t0, p3 + t3, p3);
+    yarnpath::logging::get_logger()->debug("loop_shape seg2 (top→back): p0=({:.3f},{:.3f},{:.3f}) p3=({:.3f},{:.3f},{:.3f}) max_curvature={:.3f}",
+                 p0.x, p0.y, p0.z, p3.x, p3.y, p3.z, seg2.max_curvature());
+    shape.add_segment(seg2);
 }
 
 bool PhysicalLoop::segment_passes_through(const Vec3& p1, const Vec3& p2) const {

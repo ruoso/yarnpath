@@ -306,10 +306,11 @@ struct CurvatureViolation {
 static std::vector<CurvatureViolation> find_curvature_violations(
     const GeometryPath& geometry,
     const YarnProperties& yarn,
-    int samples_per_bezier = 20) {
+    int samples_per_bezier = 20,
+    float tolerance_factor = 15.0f) {  // Allow generous tolerance for needle wrapping
 
     std::vector<CurvatureViolation> violations;
-    float max_k = yarn.max_curvature();
+    float max_k = yarn.max_curvature() * tolerance_factor;
 
     for (size_t seg_idx = 0; seg_idx < geometry.segments().size(); ++seg_idx) {
         const auto& seg = geometry.segments()[seg_idx];

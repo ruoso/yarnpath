@@ -88,13 +88,13 @@ PhysicalLoop PhysicalLoop::from_properties(
     );
     
     // Entry tangent: at front (θ = -π/2), the circular arc tangent points up (+Y)
-    // with some rightward movement for the helical progression
-    loop.entry_tangent = Vec3(0.3f, 1.0f, 0.0f).normalized();
+    // No X component - let the connector curves handle horizontal movement
+    loop.entry_tangent = Vec3(0.0f, 1.0f, 0.0f);
     
-    // Exit tangent: at back (θ = π/2), the circular arc tangent points down (-Y)
-    // and toward front (-Z) to continue around the cylinder
-    // This is the direction of travel when exiting the loop
-    loop.exit_tangent = Vec3(0.3f, -1.0f, -0.5f).normalized();
+    // Exit tangent: at back (θ = π/2), the yarn continues toward front (-Z)
+    // with slight downward curve. This allows smooth transition to the next loop
+    // which is above and toward the front.
+    loop.exit_tangent = Vec3(0.0f, -0.3f, -1.0f).normalized();
 
     // Apex: at the top of the needle (θ = 0), this is where child loops pass through
     // X is at center because the loop reaches center.x by the time it gets to the top

@@ -199,8 +199,20 @@ SegmentBuildResult build_through_and_form_loop(const GeometryContext& ctx,
     PhysicalLoop new_loop = create_loop_at_position(ctx, loop_position);
 
     // Detect if we're moving up to a new row (Y increasing significantly)
-    // In that case, we need to wrap around the needle before going up
-    bool is_row_turn = (new_center_y - pos.y) > wrap_radius;
+    // This happens at the end of a row when we need to wrap around before going to the next row.
+    // We detect this by checking if there's a big vertical gap between the current position
+    // and the parent's apex - not just if the new loop is above the current pos.
+    // Normal stitches go through the parent apex, which is only wrap_radius above the center.
+    bool is_row_turn = false;
+    if (highest_parent != nullptr) {
+        // Row turn if we're significantly below the parent's apex
+        // (i.e., not just coming from a loop at the same level)
+        float vertical_gap = highest_parent->apex_point.y - pos.y;
+        is_row_turn = vertical_gap > wrap_radius * 1.5f;
+    } else {
+        // No parent - check if going up significantly
+        is_row_turn = (new_center_y - pos.y) > wrap_radius * 2.0f;
+    }
     
     if (is_row_turn) {
         // At end of row, we need to complete the wrap around the needle
@@ -270,9 +282,18 @@ SegmentBuildResult build_through_and_form_loop(const GeometryContext& ctx,
         float t = wrap_radius * 1.5f;
         
         // First curve: pos → apex
-        // Coming from back of previous loop, curving up and toward front
-        // At apex (top, Z=0), we're moving toward front (-Z) and still going up slightly
-        Vec3 arriving_at_apex = Vec3(0.0f, 0.5f, -1.0f).normalized();
+        // The tangent direction depends on where we're coming from:
+        // - Normal case: from back (+Z), arriving tangent points up and toward front
+        // - Row turn case: from front (-Z), arriving tangent points up and toward back
+        Vec3 arriving_at_apex;
+        if (is_row_turn) {
+            // After row turn, we're at front going up, apex is at Z=0
+            // Tangent should curve up and toward back (+Z)
+            arriving_at_apex = Vec3(0.0f, 0.5f, 1.0f).normalized();
+        } else {
+            // Normal case: from back, curving up and toward front
+            arriving_at_apex = Vec3(0.0f, 0.5f, -1.0f).normalized();
+        }
         
         spline.add_segment(CubicBezier::from_hermite(
             pos, dir.normalized() * t,
@@ -321,7 +342,6 @@ SegmentBuildResult build_through_and_form_loop(const GeometryContext& ctx,
         spline.add_segment(seg);
     }
 
-    // Build the result
     result.geometry.segment_id = seg_id;
     result.geometry.curve = std::move(spline);
     result.geometry.arc_length = result.geometry.curve.total_arc_length();
@@ -363,7 +383,6 @@ SegmentBuildResult build_through_only(const GeometryContext& ctx,
         }
     }
 
-    // Build the result
     result.geometry.segment_id = seg_id;
     result.geometry.curve = std::move(spline);
     result.geometry.arc_length = result.geometry.curve.total_arc_length();

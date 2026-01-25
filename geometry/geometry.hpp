@@ -8,7 +8,6 @@
 #include "yarn_properties.hpp"
 #include "gauge.hpp"
 #include "cubic_bezier.hpp"
-#include "fabric_surface.hpp"
 #include "physical_loop.hpp"
 #include "geometry_path.hpp"
 #include "geometry_builder.hpp"
@@ -21,10 +20,8 @@ namespace yarnpath {
 //   YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
 //   YarnProperties yarn = YarnProperties::worsted();
 //   Gauge gauge = Gauge::worsted();
-//   PlaneSurface surface;
 //
-//   GeometryPath geometry = GeometryPath::from_yarn_path(
-//       yarn_path, yarn, gauge, surface);
+//   GeometryPath geometry = GeometryPath::from_yarn_path(yarn_path, yarn, gauge);
 //
 //   // Export as OBJ for visualization
 //   std::string obj = geometry.to_obj();

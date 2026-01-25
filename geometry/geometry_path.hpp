@@ -3,13 +3,8 @@
 
 #include "vec3.hpp"
 #include "cubic_bezier.hpp"
-#include "yarn_properties.hpp"
-#include "gauge.hpp"
-#include "fabric_surface.hpp"
 #include "yarn_path.hpp"
 #include <vector>
-#include <optional>
-#include <map>
 #include <string>
 
 namespace yarnpath {
@@ -38,12 +33,9 @@ struct ValidationResult {
     }
 };
 
-// Loop position in fabric coordinates
-struct LoopPosition {
-    LoopId loop_id;
-    float u;           // Horizontal position in fabric (mm)
-    float v;           // Vertical position in fabric (mm)
-};
+// Forward declarations
+struct YarnProperties;
+struct Gauge;
 
 // Main output: 3D geometry for a yarn path
 class GeometryPath {
@@ -52,17 +44,12 @@ public:
     static GeometryPath from_yarn_path(
         const YarnPath& yarn_path,
         const YarnProperties& yarn,
-        const Gauge& gauge,
-        const FabricSurface& surface
+        const Gauge& gauge
     );
 
     // Access segment geometry
     const SegmentGeometry* get_segment(SegmentId id) const;
     const std::vector<SegmentGeometry>& segments() const { return segments_; }
-
-    // Access loop positions
-    const LoopPosition* get_loop_position(LoopId id) const;
-    const std::vector<LoopPosition>& loop_positions() const { return loop_positions_; }
 
     // Convert entire path to polyline
     std::vector<Vec3> to_polyline(float segment_length) const;
@@ -83,14 +70,11 @@ public:
     std::string to_obj(int samples_per_segment = 10) const;
 
 private:
-    friend class GeometryBuilder;
+    friend GeometryPath build_geometry(const YarnPath& yarn_path,
+                                        const YarnProperties& yarn,
+                                        const Gauge& gauge);
 
     std::vector<SegmentGeometry> segments_;
-    std::vector<LoopPosition> loop_positions_;
-
-    // Index maps for fast lookup
-    std::map<SegmentId, size_t> segment_index_;
-    std::map<LoopId, size_t> loop_position_index_;
 };
 
 }  // namespace yarnpath

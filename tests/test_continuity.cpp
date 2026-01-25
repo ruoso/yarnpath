@@ -33,19 +33,16 @@ TEST(ContinuityTest, BasicGeometryGeneration) {
     });
     StitchGraph graph = StitchGraph::from_instructions(pattern);
     YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
-
-    PlaneSurface surface;
     GeometryPath geometry = GeometryPath::from_yarn_path(
         yarn_path,
         YarnProperties::worsted(),
-        Gauge::worsted(),
-        surface
+        Gauge::worsted()
     );
 
     // Should have segments generated
     EXPECT_FALSE(geometry.segments().empty());
     // Should have loop positions
-    EXPECT_EQ(geometry.loop_positions().size(), 12u);  // 3 stitches * 4 rows
+    EXPECT_EQ(geometry.segments().size(), 12u);  // 3 stitches * 4 rows
     // Should have non-empty polyline
     auto polyline = geometry.to_polyline_fixed(10);
     EXPECT_FALSE(polyline.empty());
@@ -61,18 +58,15 @@ TEST(ContinuityTest, PolylineSmoothnessCheck) {
     });
     StitchGraph graph = StitchGraph::from_instructions(pattern);
     YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
-
-    PlaneSurface surface;
     GeometryPath geometry = GeometryPath::from_yarn_path(
         yarn_path,
         YarnProperties::worsted(),
-        Gauge::worsted(),
-        surface
+        Gauge::worsted()
     );
 
     // Check geometry was generated successfully
     EXPECT_FALSE(geometry.segments().empty());
-    EXPECT_EQ(geometry.loop_positions().size(), 24u);  // 6 stitches * 4 rows
+    EXPECT_EQ(geometry.segments().size(), 24u);  // 6 stitches * 4 rows
 }
 
 
@@ -85,13 +79,10 @@ TEST(ContinuityTest, TangentDirectionsAreConsistent) {
     });
     StitchGraph graph = StitchGraph::from_instructions(pattern);
     YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
-
-    PlaneSurface surface;
     GeometryPath geometry = GeometryPath::from_yarn_path(
         yarn_path,
         YarnProperties::worsted(),
-        Gauge::worsted(),
-        surface
+        Gauge::worsted()
     );
 
     // For each segment, verify the curve tangents make sense
@@ -133,13 +124,10 @@ TEST(ContinuityTest, NoBezierSelfIntersection) {
     });
     StitchGraph graph = StitchGraph::from_instructions(pattern);
     YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
-
-    PlaneSurface surface;
     GeometryPath geometry = GeometryPath::from_yarn_path(
         yarn_path,
         YarnProperties::worsted(),
-        Gauge::worsted(),
-        surface
+        Gauge::worsted()
     );
 
     for (const auto& seg : geometry.segments()) {
@@ -198,15 +186,12 @@ TEST(CurvatureTest, CurvatureIsFinite) {
     });
     StitchGraph graph = StitchGraph::from_instructions(pattern);
     YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
-
-    PlaneSurface surface;
     YarnProperties yarn = YarnProperties::worsted();
 
     GeometryPath geometry = GeometryPath::from_yarn_path(
         yarn_path,
         yarn,
-        Gauge::worsted(),
-        surface
+        Gauge::worsted()
     );
 
     // Check that curvature values are reasonable (finite and non-negative)
@@ -267,13 +252,10 @@ TEST(PolylineTest, PolylineOutputExists) {
     });
     StitchGraph graph = StitchGraph::from_instructions(pattern);
     YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
-
-    PlaneSurface surface;
     GeometryPath geometry = GeometryPath::from_yarn_path(
         yarn_path,
         YarnProperties::worsted(),
-        Gauge::worsted(),
-        surface
+        Gauge::worsted()
     );
 
     // Get polyline with same sampling as OBJ output (10 samples per segment)
@@ -294,13 +276,10 @@ TEST(PolylineTest, PolylineBoundingBoxMakesSense) {
     });
     StitchGraph graph = StitchGraph::from_instructions(pattern);
     YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
-
-    PlaneSurface surface;
     GeometryPath geometry = GeometryPath::from_yarn_path(
         yarn_path,
         YarnProperties::worsted(),
-        Gauge::worsted(),
-        surface
+        Gauge::worsted()
     );
 
     auto [min_pt, max_pt] = geometry.bounding_box();
@@ -308,4 +287,160 @@ TEST(PolylineTest, PolylineBoundingBoxMakesSense) {
     // Should have non-zero extent
     EXPECT_GT(max_pt.x - min_pt.x, 0.0f);
     EXPECT_GT(max_pt.y - min_pt.y, 0.0f);
+}
+
+// ============================================
+// Yarn Bend Radius Constraint Tests
+// ============================================
+
+// Helper to find all curvature violations in the spline
+struct CurvatureViolation {
+    size_t segment_idx;
+    size_t bezier_idx;
+    float t;
+    float curvature;
+    float max_allowed;
+    Vec3 position;
+};
+
+static std::vector<CurvatureViolation> find_curvature_violations(
+    const GeometryPath& geometry,
+    const YarnProperties& yarn,
+    int samples_per_bezier = 20) {
+
+    std::vector<CurvatureViolation> violations;
+    float max_k = yarn.max_curvature();
+
+    for (size_t seg_idx = 0; seg_idx < geometry.segments().size(); ++seg_idx) {
+        const auto& seg = geometry.segments()[seg_idx];
+        const auto& beziers = seg.curve.segments();
+
+        for (size_t bez_idx = 0; bez_idx < beziers.size(); ++bez_idx) {
+            const auto& bezier = beziers[bez_idx];
+
+            for (int i = 0; i <= samples_per_bezier; ++i) {
+                float t = static_cast<float>(i) / static_cast<float>(samples_per_bezier);
+                float k = bezier.curvature(t);
+
+                if (k > max_k) {
+                    violations.push_back({
+                        .segment_idx = seg_idx,
+                        .bezier_idx = bez_idx,
+                        .t = t,
+                        .curvature = k,
+                        .max_allowed = max_k,
+                        .position = bezier.evaluate(t)
+                    });
+                }
+            }
+        }
+    }
+
+    return violations;
+}
+
+TEST(CurvatureTest, CurvatureWithinYarnBendRadius) {
+    // Test that no point in the spline has curvature exceeding yarn's min bend radius
+    // This walks through the entire spline sampling curvature at many points
+    PatternInstructions pattern = create_pattern({
+        "CCCC",
+        "KKKK",
+        "PPPP",
+        "KKKK"
+    });
+    StitchGraph graph = StitchGraph::from_instructions(pattern);
+    YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
+    YarnProperties yarn = YarnProperties::worsted();
+
+    GeometryPath geometry = GeometryPath::from_yarn_path(
+        yarn_path,
+        yarn,
+        Gauge::worsted()
+    );
+
+    // Sample at 20 points per Bezier segment for thorough checking
+    auto violations = find_curvature_violations(geometry, yarn, 20);
+
+    // Report all violations for debugging
+    for (const auto& v : violations) {
+        ADD_FAILURE() << "Curvature violation at segment " << v.segment_idx
+                      << ", bezier " << v.bezier_idx
+                      << ", t=" << v.t
+                      << ": curvature=" << v.curvature
+                      << " > max_allowed=" << v.max_allowed
+                      << " (bend radius=" << (1.0f / v.curvature) << " < min=" << yarn.min_bend_radius << ")"
+                      << " at position (" << v.position.x << ", " << v.position.y << ", " << v.position.z << ")";
+    }
+
+    EXPECT_TRUE(violations.empty())
+        << "Found " << violations.size() << " points with curvature exceeding yarn's minimum bend radius";
+}
+
+TEST(CurvatureTest, CurvatureWithinYarnBendRadiusRibbing) {
+    // Test ribbing pattern which has frequent knit-purl transitions
+    // These transitions are more likely to create sharp turns
+    PatternInstructions pattern = create_pattern({
+        "CCCCCCCC",
+        "KPKPKPKP",  // 1x1 rib
+        "PKPKPKPK",
+        "KPKPKPKP",
+        "PKPKPKPK"
+    });
+    StitchGraph graph = StitchGraph::from_instructions(pattern);
+    YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
+    YarnProperties yarn = YarnProperties::worsted();
+
+    GeometryPath geometry = GeometryPath::from_yarn_path(
+        yarn_path,
+        yarn,
+        Gauge::worsted()
+    );
+
+    auto violations = find_curvature_violations(geometry, yarn, 20);
+
+    for (const auto& v : violations) {
+        ADD_FAILURE() << "Curvature violation in ribbing at segment " << v.segment_idx
+                      << ", bezier " << v.bezier_idx
+                      << ", t=" << v.t
+                      << ": curvature=" << v.curvature
+                      << " > max_allowed=" << v.max_allowed
+                      << " (bend radius=" << (1.0f / v.curvature) << " < min=" << yarn.min_bend_radius << ")"
+                      << " at position (" << v.position.x << ", " << v.position.y << ", " << v.position.z << ")";
+    }
+
+    EXPECT_TRUE(violations.empty())
+        << "Found " << violations.size() << " curvature violations in ribbing pattern";
+}
+
+TEST(CurvatureTest, CurvatureWithinYarnBendRadiusFineYarn) {
+    // Test with finer yarn which has tighter bend radius constraint
+    PatternInstructions pattern = create_pattern({
+        "CCC",
+        "KKK",
+        "PPP"
+    });
+    StitchGraph graph = StitchGraph::from_instructions(pattern);
+    YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
+    YarnProperties yarn = YarnProperties::fingering();  // Tighter constraints
+
+    GeometryPath geometry = GeometryPath::from_yarn_path(
+        yarn_path,
+        yarn,
+        Gauge::fingering()
+    );
+
+    auto violations = find_curvature_violations(geometry, yarn, 20);
+
+    for (const auto& v : violations) {
+        ADD_FAILURE() << "Curvature violation with fingering yarn at segment " << v.segment_idx
+                      << ", bezier " << v.bezier_idx
+                      << ", t=" << v.t
+                      << ": curvature=" << v.curvature
+                      << " > max_allowed=" << v.max_allowed
+                      << " (bend radius=" << (1.0f / v.curvature) << " < min=" << yarn.min_bend_radius << ")"
+                      << " at position (" << v.position.x << ", " << v.position.y << ", " << v.position.z << ")";
+    }
+
+    EXPECT_TRUE(violations.empty())
+        << "Found " << violations.size() << " curvature violations with fingering yarn";
 }

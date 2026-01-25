@@ -7,7 +7,6 @@ add_executable(tests
     test_vec3.cpp
     test_bezier.cpp
     test_yarn_properties.cpp
-    test_fabric_surface.cpp
     test_geometry_path.cpp
     test_continuity.cpp
     test_yarn_interlocking.cpp

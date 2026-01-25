@@ -1,5 +1,7 @@
 #include "geometry_path.hpp"
 #include "geometry_builder.hpp"
+#include "yarn_properties.hpp"
+#include "gauge.hpp"
 #include "logging.hpp"
 #include <sstream>
 #include <iomanip>
@@ -10,25 +12,14 @@ namespace yarnpath {
 GeometryPath GeometryPath::from_yarn_path(
     const YarnPath& yarn_path,
     const YarnProperties& yarn,
-    const Gauge& gauge,
-    const FabricSurface& surface) {
+    const Gauge& gauge) {
 
-    GeometryBuilder builder(yarn_path, yarn, gauge, surface);
-    return builder.build();
+    return build_geometry(yarn_path, yarn, gauge);
 }
 
 const SegmentGeometry* GeometryPath::get_segment(SegmentId id) const {
-    auto it = segment_index_.find(id);
-    if (it != segment_index_.end()) {
-        return &segments_[it->second];
-    }
-    return nullptr;
-}
-
-const LoopPosition* GeometryPath::get_loop_position(LoopId id) const {
-    auto it = loop_position_index_.find(id);
-    if (it != loop_position_index_.end()) {
-        return &loop_positions_[it->second];
+    if (id < segments_.size()) {
+        return &segments_[id];
     }
     return nullptr;
 }
@@ -136,8 +127,7 @@ std::string GeometryPath::to_obj(int samples_per_segment) const {
     ss << std::fixed << std::setprecision(6);
 
     ss << "# YarnPath OBJ Export\n";
-    ss << "# Segments: " << segments_.size() << "\n";
-    ss << "# Loops: " << loop_positions_.size() << "\n\n";
+    ss << "# Segments: " << segments_.size() << "\n\n";
 
     // Export polyline as vertices
     auto points = to_polyline_fixed(samples_per_segment);

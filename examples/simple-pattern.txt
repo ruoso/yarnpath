@@ -1,5 +1,5 @@
 Cast on 21 sts.
-Row 1 (RS): P, K3, P, Ssk, Yo, K3, P, K3, Yo, K2tog, P, K3, P.
+Row 1 (WS): P, K3, P, Ssk, Yo, K3, P, K3, Yo, K2tog, P, K3, P.
 Row 2 (RS): P, K3, P, K, Ssk, Yo, K2, P, K2, Yo, K2tog, K, P, K3, P.
-Row 2 (RS): P, K3, P, K2, Ssk, Yo, K, P, K, Yo, K2tog, K2, P, K3, P.
+Row 2 (WS): P, K3, P, K2, Ssk, Yo, K, P, K, Yo, K2tog, K2, P, K3, P.
 Row 3 (RS): P, K3, P, K3, Ssk, Yo, P, Yo, K2tog, K3, P, K3, P.

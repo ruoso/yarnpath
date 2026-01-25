@@ -29,6 +29,8 @@ struct PhysicalLoop {
     // Key points on the loop (for yarn connectivity)
     Vec3 entry_point;         // Where yarn enters this loop
     Vec3 exit_point;          // Where yarn exits this loop
+    Vec3 entry_tangent;       // Tangent direction at entry (for C1 continuity)
+    Vec3 exit_tangent;        // Tangent direction at exit (for C1 continuity)
     Vec3 apex_point;          // Top of the loop
     Vec3 base_point;          // Bottom of the loop (where it interlocks with parent)
 

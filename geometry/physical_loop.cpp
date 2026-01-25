@@ -68,27 +68,39 @@ PhysicalLoop PhysicalLoop::from_properties(
 
     constexpr float PI = 3.14159265f;
 
-    // Entry and exit are at the front of the needle (θ = -π/2)
+    // Entry is at the FRONT of the needle (θ = -π/2), exit is at the BACK (θ = π/2)
+    // This way the yarn passes through from front to back naturally
     float theta_front = -PI * 0.5f;
+    float theta_back = PI * 0.5f;
 
     // Entry point: front of needle, left side of loop
     loop.entry_point = Vec3(
         position.x - loop.loop_width * 0.5f,
-        position.y + wrap_radius * std::cos(theta_front),  // = position.y (cos(-90°) = 0)
-        wrap_radius * std::sin(theta_front)                 // = -wrap_radius (front)
+        position.y,                                      // At needle center height
+        wrap_radius * std::sin(theta_front)              // = -wrap_radius (front)
     );
 
-    // Exit point: front of needle, right side of loop
+    // Exit point: back of needle, right side of loop
     loop.exit_point = Vec3(
         position.x + loop.loop_width * 0.5f,
-        position.y + wrap_radius * std::cos(theta_front),  // = position.y
-        wrap_radius * std::sin(theta_front)                 // = -wrap_radius (front)
+        position.y,                                      // At needle center height
+        wrap_radius * std::sin(theta_back)               // = +wrap_radius (back)
     );
+    
+    // Entry tangent: at front (θ = -π/2), the circular arc tangent points up (+Y)
+    // with some rightward movement for the helical progression
+    loop.entry_tangent = Vec3(0.3f, 1.0f, 0.0f).normalized();
+    
+    // Exit tangent: at back (θ = π/2), the circular arc tangent points down (-Y)
+    // and toward front (-Z) to continue around the cylinder
+    // This is the direction of travel when exiting the loop
+    loop.exit_tangent = Vec3(0.3f, -1.0f, -0.5f).normalized();
 
-    // Apex: at the top of the needle (θ = 0), used for visual reference
-    // For full wrap, the "apex" is really the topmost point
+    // Apex: at the top of the needle (θ = 0), this is where child loops pass through
+    // X is at center because the loop reaches center.x by the time it gets to the top
+    // This means the X transition is 50% complete at the pass-through point
     loop.apex_point = Vec3(
-        position.x - loop.loop_width * 0.25f,  // Slightly left of center (where top is reached)
+        position.x,                             // Center X - halfway through the X transition
         position.y + wrap_radius,               // Top of the wrap
         0.0f                                    // Z = 0 at top
     );
@@ -171,12 +183,12 @@ void PhysicalLoop::generate_shape(const Gauge& gauge) {
 
     constexpr float PI = 3.14159265f;
 
-    // Key angles for the wrap (going clockwise when viewed from +X)
-    float theta_front = -PI * 0.5f;   // Front of needle (-90°)
-    float theta_top = 0.0f;           // Top of needle (0°)
-    float theta_back = PI * 0.5f;     // Back of needle (90°)
-    float theta_bottom = PI;          // Bottom of needle (180°)
-    float theta_exit = PI * 1.5f;     // Front again (270° = -90° + 360°)
+    // The loop wraps from FRONT to BACK over the top:
+    // Entry at front (θ = -90°) → Top (θ = 0°) → Exit at back (θ = 90°)
+    // This is a 180° wrap forming a U-shape open at the bottom
+    float theta_front = -PI * 0.5f;      // Front of needle (-90°) - entry
+    float theta_top = 0.0f;              // Top of needle (0°)
+    float theta_back = PI * 0.5f;        // Back of needle (90°) - exit
 
     // Each 90° arc uses the same Bezier factor
     float arc_90 = PI * 0.5f;
@@ -184,15 +196,13 @@ void PhysicalLoop::generate_shape(const Gauge& gauge) {
 
     // X positions progress from left to right as we go around
     float x_entry = center.x - half_width;
-    float x_top = center.x - half_width * 0.5f;
-    float x_back = center.x;
-    float x_bottom = center.x + half_width * 0.5f;
+    float x_top = center.x;
     float x_exit = center.x + half_width;
 
     Vec3 p0, p3, t0, t3;
     float dx;
 
-    // === Segment 1: Front to Top (entry, going up) ===
+    // === Segment 1: Front to Top ===
     p0 = cylinder_point(theta_front, x_entry);
     p3 = cylinder_point(theta_top, x_top);
     t0 = arc_tangent(theta_front) * k;
@@ -200,30 +210,11 @@ void PhysicalLoop::generate_shape(const Gauge& gauge) {
     dx = (p3.x - p0.x) * 0.4f;
     shape.add_segment(CubicBezier(p0, p0 + t0 + Vec3(dx, 0, 0), p3 + t3 + Vec3(-dx, 0, 0), p3));
 
-    // === Segment 2: Top to Back ===
+    // === Segment 2: Top to Back (exit) ===
     p0 = p3;
-    p3 = cylinder_point(theta_back, x_back);
+    p3 = cylinder_point(theta_back, x_exit);
     t0 = arc_tangent(theta_top) * k;
     t3 = arc_tangent(theta_back) * (-k);
-    dx = (p3.x - p0.x) * 0.4f;
-    shape.add_segment(CubicBezier(p0, p0 + t0 + Vec3(dx, 0, 0), p3 + t3 + Vec3(-dx, 0, 0), p3));
-
-    // === Segment 3: Back to Bottom ===
-    p0 = p3;
-    p3 = cylinder_point(theta_bottom, x_bottom);
-    t0 = arc_tangent(theta_back) * k;
-    t3 = arc_tangent(theta_bottom) * (-k);
-    dx = (p3.x - p0.x) * 0.4f;
-    shape.add_segment(CubicBezier(p0, p0 + t0 + Vec3(dx, 0, 0), p3 + t3 + Vec3(-dx, 0, 0), p3));
-
-    // === Segment 4: Bottom to Front (exit) ===
-    // theta_exit = 3π/2 = 270°, but for cos/sin we use -π/2 (same position)
-    p0 = p3;
-    p3 = cylinder_point(theta_front, x_exit);  // Same angle as entry, different X
-    t0 = arc_tangent(theta_bottom) * k;
-    // At the exit (front), the tangent should point in direction of increasing theta
-    // which is the same as at entry
-    t3 = arc_tangent(theta_front) * (-k);
     dx = (p3.x - p0.x) * 0.4f;
     shape.add_segment(CubicBezier(p0, p0 + t0 + Vec3(dx, 0, 0), p3 + t3 + Vec3(-dx, 0, 0), p3));
 }

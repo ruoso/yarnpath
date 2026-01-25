@@ -135,10 +135,7 @@ int main(int argc, char* argv[]) {
         // 7. Build YarnPath
         log->debug("Stage 6: Building yarn path");
         yarnpath::YarnPath yarn_path = yarnpath::YarnPath::from_stitch_graph(graph);
-        log->debug("Built yarn path with {} loops, {} anchors, {} segments",
-                   yarn_path.loops().size(),
-                   yarn_path.anchors().size(),
-                   yarn_path.segments().size());
+        log->debug("Built yarn path with {} segments", yarn_path.segments().size());
 
         // If --dot, output DOT format and exit early
         if (output_dot) {
@@ -150,13 +147,10 @@ int main(int argc, char* argv[]) {
             } else {
                 write_file(output_path, dot);
                 std::cerr << "Wrote " << output_path << " ("
-                          << yarn_path.loops().size() << " loops)\n";
+                          << yarn_path.segments().size() << " segments)\n";
             }
 
-            log->info("DOT export complete: {} loops, {} anchors, {} segments",
-                      yarn_path.loops().size(),
-                      yarn_path.anchors().size(),
-                      yarn_path.segments().size());
+            log->info("DOT export complete: {} segments", yarn_path.segments().size());
             return 0;
         }
 
@@ -164,12 +158,10 @@ int main(int argc, char* argv[]) {
         log->debug("Stage 7: Building geometry path");
         yarnpath::YarnProperties yarn = yarnpath::YarnProperties::worsted();
         yarnpath::Gauge gauge = yarnpath::Gauge::worsted();
-        yarnpath::PlaneSurface surface;
 
         yarnpath::GeometryPath geometry = yarnpath::GeometryPath::from_yarn_path(
-            yarn_path, yarn, gauge, surface);
-        log->debug("Built geometry with {} positioned loops, {} segment geometries",
-                   geometry.loop_positions().size(),
+            yarn_path, yarn, gauge);
+        log->debug("Built geometry with {} segment geometries",
                    geometry.segments().size());
 
         // 9. Export OBJ
@@ -183,13 +175,10 @@ int main(int argc, char* argv[]) {
         } else {
             write_file(output_path, obj);
             std::cerr << "Wrote " << output_path << " ("
-                      << geometry.segments().size() << " segments, "
-                      << geometry.loop_positions().size() << " loops)\n";
+                      << geometry.segments().size() << " segments)\n";
         }
 
-        log->info("Pipeline complete: {} segments, {} loops",
-                  geometry.segments().size(),
-                  geometry.loop_positions().size());
+        log->info("Pipeline complete: {} segments", geometry.segments().size());
 
         return 0;
 

@@ -6,7 +6,6 @@ add_library(geometry
     gauge.hpp
     cubic_bezier.hpp
     cubic_bezier.cpp
-    fabric_surface.hpp
     geometry_path.hpp
     geometry_path.cpp
     geometry_builder.hpp

@@ -106,18 +106,25 @@ GeometryPath GeometryBuilder::build() {
         if (!loop->parent_loops.empty()) {
             // Average parent positions horizontally
             float avg_x = 0.0f;
-            float max_y = 0.0f;
+            float max_parent_center_y = 0.0f;
             for (LoopId parent_id : loop->parent_loops) {
                 const auto& parent = physical_loops[parent_id];
                 avg_x += parent.center.x;
-                max_y = std::max(max_y, parent.apex_point.y);
+                max_parent_center_y = std::max(max_parent_center_y, parent.center.y);
             }
             avg_x /= loop->parent_loops.size();
 
-            // New loop is positioned above parent, with its base at parent's apex
-            // This creates the interlocking structure
+            // Row spacing should be based on the loop height, which comes from wrapping
+            // around the needle. When loops interlock, they overlap by approximately
+            // half their height, so the row-to-row center spacing is about loop_height.
+            //
+            // The exact relationship is:
+            // - Parent loop wraps around needle with wrap_radius
+            // - Child loop also wraps with wrap_radius
+            // - They interlock at the catch point (parent apex)
+            // - Row spacing = loop_dim.loop_height (vertical extent of one loop)
             position.x = avg_x;
-            position.y = max_y + loop_dim.loop_height * 0.5f;
+            position.y = max_parent_center_y + loop_dim.loop_height;
             position.z = 0.0f;
         }
 
@@ -250,78 +257,226 @@ GeometryPath GeometryBuilder::build() {
                 last_point = phys.exit_point;
             }
         } else if (is_knit || is_purl) {
-            // Knit/Purl: the yarn passes through the parent loop, then forms new loop
-            std::vector<YarnPathPoint> transition_points;
+            // Knit/Purl: the yarn catches the parent loop at its apex, then wraps around
+            // the new loop's needle.
+            //
+            // The direction of travel (from yarn topology) determines the wrap direction:
+            // - Traveling LEFT (decreasing X): catch from front, exit to front
+            // - Traveling RIGHT (increasing X): catch from back, exit to back
+            //
+            // After catching, the yarn wraps around the needle:
+            // - If caught from front: yarn is at back -> wrap: back -> bottom -> front
+            // - If caught from back: yarn is at front -> wrap: front -> bottom -> back
 
-            // Get parent loop
+            // Determine travel direction from yarn topology
+            bool traveling_left = false;
+            bool traveling_right = false;
+
+            if (loop->prev_in_yarn) {
+                auto prev_it = physical_loops.find(*loop->prev_in_yarn);
+                if (prev_it != physical_loops.end()) {
+                    float prev_x = prev_it->second.center.x;
+                    float curr_x = phys.center.x;
+                    traveling_left = prev_x > curr_x;
+                    traveling_right = prev_x < curr_x;
+                    log->debug("GeometryBuilder: loop {} prev={} (x={}) curr_x={} -> traveling_{}",
+                               *current_loop, *loop->prev_in_yarn, prev_x, curr_x,
+                               traveling_left ? "left" : (traveling_right ? "right" : "none"));
+                }
+            }
+
+            // Default to traveling left if we can't determine
+            if (!traveling_left && !traveling_right) {
+                traveling_left = true;
+                log->debug("GeometryBuilder: loop {} defaulting to traveling_left", *current_loop);
+            }
+
+            // Get parent loop for catch point calculation
             if (!loop->parent_loops.empty()) {
                 LoopId parent_id = loop->parent_loops[0];
                 auto parent_it = physical_loops.find(parent_id);
                 if (parent_it != physical_loops.end()) {
                     const PhysicalLoop& parent = parent_it->second;
 
-                    // Entry: approach the parent loop from outside
-                    float entry_z = is_knit ? -yarn_.radius * 2.0f : yarn_.radius * 2.0f;
-                    Vec3 approach_point(
-                        parent.opening_center.x - loop_dim.loop_width * 0.3f,
-                        parent.opening_center.y,
-                        entry_z
-                    );
-                    transition_points.push_back(YarnPathPoint(approach_point, 0.3f));
+                    // The yarn must:
+                    // 1. Pass THROUGH the parent loop's opening (front to back for knit)
+                    // 2. Then catch the parent at its apex
+                    // 3. Then wrap around the new needle
+                    //
+                    // Parent loop geometry:
+                    // - opening_center: center of the opening (at needle axis level)
+                    // - apex_point: top of the loop where the catch happens
+                    float wrap_radius = gauge_.needle_diameter * 0.5f + yarn_.radius;
 
-                    // Pass through parent loop opening
-                    Vec3 through_point(
-                        parent.opening_center.x,
-                        parent.opening_center.y,
-                        0.0f  // Middle of opening
-                    );
-                    transition_points.push_back(YarnPathPoint(through_point, 0.5f));
+                    // Z positions for front and back
+                    float front_z = -wrap_radius;
+                    float back_z = wrap_radius;
 
-                    // Exit parent loop on the other side
-                    float exit_z = is_knit ? yarn_.radius * 2.0f : -yarn_.radius * 2.0f;
-                    Vec3 exit_parent_point(
-                        parent.opening_center.x + loop_dim.loop_width * 0.3f,
-                        parent.opening_center.y,
-                        exit_z
-                    );
-                    transition_points.push_back(YarnPathPoint(exit_parent_point, 0.3f));
+                    // Build transition based on travel direction
+                    std::vector<YarnPathPoint> transition_points;
+
+                    if (last_point) {
+                        transition_points.push_back(YarnPathPoint(*last_point, 0.3f));
+                    }
+
+                    if (traveling_left) {
+                        // Traveling left (knit on RS): yarn goes front to back through parent
+                        //
+                        // Path: last_point -> approach parent from front ->
+                        //       PASS THROUGH parent opening -> catch at apex ->
+                        //       back of new needle
+
+                        // 1. Approach parent from front (at opening level)
+                        Vec3 front_of_parent(
+                            parent.opening_center.x,
+                            parent.opening_center.y,
+                            front_z * 0.8f  // Front of parent
+                        );
+                        transition_points.push_back(YarnPathPoint(front_of_parent, 0.4f));
+
+                        // 2. Pass through parent opening (Z crosses 0)
+                        Vec3 pass_through(
+                            parent.opening_center.x,
+                            parent.opening_center.y + yarn_.radius,  // Slightly above center for clearance
+                            0.0f  // At Z=0, passing through
+                        );
+                        transition_points.push_back(YarnPathPoint(pass_through, 0.5f));
+
+                        // 3. Exit parent to back, rising to catch at apex
+                        Vec3 back_of_parent(
+                            parent.opening_center.x,
+                            parent.apex_point.y + yarn_.radius,  // At apex catch level
+                            back_z * 0.8f  // Back of parent
+                        );
+                        transition_points.push_back(YarnPathPoint(back_of_parent, 0.5f));
+
+                        // 4. Continue to back of new needle for wrap
+                        Vec3 back_entry(phys.center.x, phys.center.y, back_z);
+                        transition_points.push_back(YarnPathPoint(back_entry, 0.5f));
+
+                        log->debug("GeometryBuilder: loop {} transition (traveling_left): "
+                                   "front_of_parent=({},{},{}), pass_through=({},{},{}), "
+                                   "back_of_parent=({},{},{}), back_entry=({},{},{})",
+                                   *current_loop,
+                                   front_of_parent.x, front_of_parent.y, front_of_parent.z,
+                                   pass_through.x, pass_through.y, pass_through.z,
+                                   back_of_parent.x, back_of_parent.y, back_of_parent.z,
+                                   back_entry.x, back_entry.y, back_entry.z);
+
+                    } else {
+                        // Traveling right (purl on RS, or knit on WS): yarn goes back to front
+                        //
+                        // Path: last_point -> approach parent from back ->
+                        //       PASS THROUGH parent opening -> catch at apex ->
+                        //       front of new needle
+
+                        // 1. Approach parent from back (at opening level)
+                        Vec3 back_of_parent(
+                            parent.opening_center.x,
+                            parent.opening_center.y,
+                            back_z * 0.8f  // Back of parent
+                        );
+                        transition_points.push_back(YarnPathPoint(back_of_parent, 0.4f));
+
+                        // 2. Pass through parent opening (Z crosses 0)
+                        Vec3 pass_through(
+                            parent.opening_center.x,
+                            parent.opening_center.y + yarn_.radius,
+                            0.0f
+                        );
+                        transition_points.push_back(YarnPathPoint(pass_through, 0.5f));
+
+                        // 3. Exit parent to front, rising to catch at apex
+                        Vec3 front_of_parent(
+                            parent.opening_center.x,
+                            parent.apex_point.y + yarn_.radius,
+                            front_z * 0.8f
+                        );
+                        transition_points.push_back(YarnPathPoint(front_of_parent, 0.5f));
+
+                        // 4. Continue to front of new needle for wrap
+                        Vec3 front_entry(phys.center.x, phys.center.y, front_z);
+                        transition_points.push_back(YarnPathPoint(front_entry, 0.5f));
+                    }
+
+                    // Create transition spline
+                    if (transition_points.size() >= 2) {
+                        BezierSpline transition = BezierSpline::from_yarn_points(transition_points);
+                        for (const auto& seg : transition.segments()) {
+                            full_path.add_segment(seg);
+                        }
+                        last_point = transition.segments().back().end();
+                    }
                 }
             }
 
-            // Connect from last point through transition
-            if (last_point && !transition_points.empty()) {
-                transition_points.insert(transition_points.begin(),
-                    YarnPathPoint(*last_point, 0.3f));
-            }
+            // Add the appropriate portion of the loop shape based on travel direction
+            // The shape has 4 segments:
+            //   0: Front to Top
+            //   1: Top to Back
+            //   2: Back to Bottom
+            //   3: Bottom to Front
+            //
+            // After catching, the yarn wraps OVER the needle (not under):
+            // - Traveling left: entered at back -> wrap: back -> TOP -> front
+            // - Traveling right: entered at front -> wrap: front -> TOP -> back
+            const auto& segments = phys.shape.segments();
+            if (segments.size() >= 4) {
+                if (traveling_left) {
+                    // Entered at back, wrap OVER the top: back -> top -> front
+                    // Use segment 1 reversed (Back to Top), then segment 0 reversed (Top to Front)
+                    Vec3 back_point = segments[1].end();  // Back position
+                    Vec3 top_point = segments[1].start(); // Top position (= segments[0].end())
+                    Vec3 front_point = segments[0].start(); // Front position
 
-            // Create transition spline and add its segments
-            if (transition_points.size() >= 2) {
-                BezierSpline transition = BezierSpline::from_yarn_points(transition_points);
-                for (const auto& seg : transition.segments()) {
+                    log->debug("GeometryBuilder: loop {} wrap (traveling_left) back=({},{},{}), top=({},{},{}), front=({},{},{})",
+                               *current_loop,
+                               back_point.x, back_point.y, back_point.z,
+                               top_point.x, top_point.y, top_point.z,
+                               front_point.x, front_point.y, front_point.z);
+
+                    if (last_point) {
+                        Vec3 tangent = (back_point - *last_point) * 0.4f;
+                        CubicBezier connector = CubicBezier::from_hermite(
+                            *last_point, tangent, back_point, tangent);
+                        full_path.add_segment(connector);
+                    }
+                    full_path.add_segment(segments[1].reversed());  // Back to Top
+                    full_path.add_segment(segments[0].reversed());  // Top to Front
+                    last_point = segments[0].start();  // Front position
+                } else {
+                    // Entered at front, wrap OVER the top: front -> top -> back
+                    // Use segment 0 (Front to Top), then segment 1 (Top to Back)
+                    if (last_point) {
+                        Vec3 front_point = segments[0].start();  // Front position
+                        Vec3 tangent = (front_point - *last_point) * 0.4f;
+                        CubicBezier connector = CubicBezier::from_hermite(
+                            *last_point, tangent, front_point, tangent);
+                        full_path.add_segment(connector);
+                    }
+                    full_path.add_segment(segments[0]);  // Front to Top
+                    full_path.add_segment(segments[1]);  // Top to Back
+                    last_point = segments[1].end();  // Back position
+                }
+            } else {
+                // Fallback: use full shape
+                Vec3 entry = segments.empty()
+                    ? phys.entry_point
+                    : segments.front().start();
+                if (last_point) {
+                    Vec3 tangent = (entry - *last_point) * 0.4f;
+                    CubicBezier connector = CubicBezier::from_hermite(
+                        *last_point, tangent, entry, tangent);
+                    full_path.add_segment(connector);
+                }
+                for (const auto& seg : segments) {
                     full_path.add_segment(seg);
                 }
-                last_point = transition.segments().back().end();
-            }
-
-            // Connect to and add the loop shape
-            Vec3 entry = phys.shape.segments().empty()
-                ? phys.entry_point
-                : phys.shape.segments().front().start();
-            if (last_point) {
-                Vec3 tangent = (entry - *last_point) * 0.4f;
-                CubicBezier connector = CubicBezier::from_hermite(
-                    *last_point, tangent, entry, tangent);
-                full_path.add_segment(connector);
-            }
-
-            for (const auto& seg : phys.shape.segments()) {
-                full_path.add_segment(seg);
-            }
-
-            if (!phys.shape.segments().empty()) {
-                last_point = phys.shape.segments().back().end();
-            } else {
-                last_point = phys.exit_point;
+                if (!segments.empty()) {
+                    last_point = segments.back().end();
+                } else {
+                    last_point = phys.exit_point;
+                }
             }
         } else {
             // Other stitch types: use the pre-computed shape

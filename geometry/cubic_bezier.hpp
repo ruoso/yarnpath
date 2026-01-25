@@ -49,6 +49,12 @@ struct CubicBezier {
     static CubicBezier from_hermite(const Vec3& p0, const Vec3& tangent0,
                                      const Vec3& p1, const Vec3& tangent1);
 
+    // Return a reversed copy of this curve (same shape, opposite direction)
+    CubicBezier reversed() const {
+        return CubicBezier(control_points[3], control_points[2],
+                          control_points[1], control_points[0]);
+    }
+
     // Access control points by name
     const Vec3& start() const { return control_points[0]; }
     const Vec3& control1() const { return control_points[1]; }

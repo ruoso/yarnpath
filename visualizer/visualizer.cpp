@@ -376,6 +376,20 @@ static void render_geometry(const GeometryPath& geometry, const VisualizerConfig
                 BezierSpline last_segment;
                 last_segment.add_segment(segments.back());
                 render_spline(last_segment, config);
+
+                // Draw a green sphere at the endpoint of the spline
+                Vec3 endpoint = segments.back().end();
+                glEnable(GL_LIGHTING);
+                glColor3f(0.2f, 1.0f, 0.2f);  // Bright green for endpoint
+                draw_sphere(endpoint.x, endpoint.y, endpoint.z, config.node_size * 1.5f);
+                glDisable(GL_LIGHTING);
+
+                // Draw a cyan sphere at the start point of the latest segment
+                Vec3 startpoint = segments.back().start();
+                glEnable(GL_LIGHTING);
+                glColor3f(0.2f, 1.0f, 1.0f);  // Cyan for start of latest segment
+                draw_sphere(startpoint.x, startpoint.y, startpoint.z, config.node_size * 1.2f);
+                glDisable(GL_LIGHTING);
             }
         }
         return;
@@ -823,9 +837,14 @@ VisualizerResult visualize_with_geometry(
             g_current_geometry_snapshot < static_cast<int>(g_geometry_snapshots.size())) {
             if (g_current_geometry_snapshot != g_last_logged_geometry_snapshot) {
                 const auto& gsnap = g_geometry_snapshots[g_current_geometry_snapshot];
-                log->info("Geometry step {}/{}: seg {} - {}",
+                Vec3 endpoint = vec3::zero();
+                if (!gsnap.spline.empty()) {
+                    endpoint = gsnap.spline.segments().back().end();
+                }
+                log->info("Geometry step {}/{}: seg {} - {} | endpoint: ({:.2f}, {:.2f}, {:.2f})",
                          g_current_geometry_snapshot + 1, g_geometry_snapshots.size(),
-                         gsnap.segment_id, gsnap.description);
+                         gsnap.segment_id, gsnap.description,
+                         endpoint.x, endpoint.y, endpoint.z);
                 g_last_logged_geometry_snapshot = g_current_geometry_snapshot;
             }
         } else if (!g_viewing_geometry_history && g_last_logged_geometry_snapshot != -1) {

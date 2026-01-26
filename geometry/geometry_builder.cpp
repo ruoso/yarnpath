@@ -323,12 +323,21 @@ GeometryPath build_geometry_with_callback(
 
         // Report each curve segment via callback if provided
         if (callback_ptr) {
+            // Log key positions for debugging
+            log->info("  seg {} positions: curr=({:.1f},{:.1f},{:.1f}) next=({:.1f},{:.1f},{:.1f})",
+                     seg_id, curr_pos.x, curr_pos.y, curr_pos.z,
+                     next_pos.x, next_pos.y, next_pos.z);
+
             const auto& curve_segments = geom.curve.segments();
             for (size_t c = 0; c < curve_segments.size(); ++c) {
                 accumulated_spline.add_segment(curve_segments[c]);
                 std::string desc;
                 if (seg.forms_loop) {
-                    desc = (c == 0) ? "loop: base->apex (up)" : "loop: apex->next (down)";
+                    // Up to 6 curves, but straight sections may be skipped
+                    // Actual order depends on which conditionals pass
+                    char buf[64];
+                    snprintf(buf, sizeof(buf), "loop: curve %zu of %zu", c + 1, curve_segments.size());
+                    desc = buf;
                 } else {
                     desc = is_significant ? "connector (significant)" : "connector (flow)";
                 }

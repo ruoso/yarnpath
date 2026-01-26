@@ -6,6 +6,7 @@
 #include "yarn_path.hpp"
 #include <vector>
 #include <string>
+#include <functional>
 
 namespace yarnpath {
 
@@ -78,6 +79,13 @@ private:
                                         const SurfaceGraph& surface,
                                         const YarnProperties& yarn,
                                         const Gauge& gauge);
+
+    friend GeometryPath build_geometry_with_callback(
+        const YarnPath& yarn_path,
+        const SurfaceGraph& surface,
+        const YarnProperties& yarn,
+        const Gauge& gauge,
+        const std::function<void(SegmentId, const std::string&, const BezierSpline&)>& callback);
 
     std::vector<SegmentGeometry> segments_;
 };

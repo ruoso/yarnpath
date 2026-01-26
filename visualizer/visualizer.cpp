@@ -18,6 +18,13 @@ struct Snapshot {
     std::vector<Vec3> velocities;
 };
 
+// Geometry snapshot during build process
+struct GeometrySnapshot {
+    SegmentId segment_id;
+    std::string description;
+    BezierSpline spline;  // Accumulated spline at this point
+};
+
 // Camera state
 struct Camera {
     float distance = 20.0f;
@@ -53,6 +60,12 @@ static bool g_request_fit_camera = false;  // Request camera fit on next frame
 // Display toggles
 static bool g_show_nodes = true;
 static bool g_show_geometry = true;
+
+// Geometry build snapshots
+static std::vector<GeometrySnapshot> g_geometry_snapshots;
+static int g_current_geometry_snapshot = -1;  // -1 means show full geometry
+static bool g_viewing_geometry_history = false;
+static int g_last_logged_geometry_snapshot = -2;  // Track for logging
 
 static void mouse_button_callback(GLFWwindow* window, int button, int action, int mods) {
     (void)window;
@@ -108,6 +121,28 @@ static void navigate_history(int delta) {
     }
 }
 
+static void navigate_geometry_history(int delta) {
+    if (g_geometry_snapshots.empty()) return;
+
+    if (!g_viewing_geometry_history) {
+        // Enter geometry history mode at the first snapshot
+        g_viewing_geometry_history = true;
+        g_current_geometry_snapshot = 0;
+    }
+
+    g_current_geometry_snapshot += delta;
+
+    // Clamp to valid range
+    if (g_current_geometry_snapshot < 0) {
+        g_current_geometry_snapshot = 0;
+    }
+    if (g_current_geometry_snapshot >= static_cast<int>(g_geometry_snapshots.size())) {
+        // Going past the end exits geometry history mode (show full geometry)
+        g_viewing_geometry_history = false;
+        g_current_geometry_snapshot = -1;
+    }
+}
+
 static void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) {
     (void)scancode;
     (void)mods;
@@ -155,6 +190,16 @@ static void key_callback(GLFWwindow* window, int key, int scancode, int action, 
             // Go to last snapshot / live view
             g_viewing_history = false;
             g_current_snapshot = -1;
+        } else if (key == GLFW_KEY_B) {
+            // Step back in geometry build history
+            navigate_geometry_history(-1);
+        } else if (key == GLFW_KEY_F) {
+            // Step forward in geometry build history
+            navigate_geometry_history(1);
+        } else if (key == GLFW_KEY_0) {
+            // Reset geometry view to full geometry
+            g_viewing_geometry_history = false;
+            g_current_geometry_snapshot = -1;
         }
     }
 }
@@ -295,13 +340,48 @@ static void render_graph(const SurfaceGraph& graph, const VisualizerConfig& conf
     }
 }
 
+static void render_spline(const BezierSpline& spline, const VisualizerConfig& config) {
+    if (spline.empty()) return;
+
+    auto polyline = spline.to_polyline_fixed(config.spline_samples);
+    if (polyline.size() < 2) return;
+
+    glBegin(GL_LINE_STRIP);
+    for (const auto& pt : polyline) {
+        glVertex3f(pt.x, pt.y, pt.z);
+    }
+    glEnd();
+}
+
 static void render_geometry(const GeometryPath& geometry, const VisualizerConfig& config) {
     if (!g_show_geometry || !config.show_geometry) return;
 
     glDisable(GL_LIGHTING);
     glLineWidth(config.spline_line_width);
 
-    // Get polyline from geometry
+    // Check if we're viewing geometry history
+    if (g_viewing_geometry_history && g_current_geometry_snapshot >= 0 &&
+        g_current_geometry_snapshot < static_cast<int>(g_geometry_snapshots.size())) {
+        // Show the accumulated spline at the current snapshot
+        const auto& snap = g_geometry_snapshots[g_current_geometry_snapshot];
+        glColor3f(0.9f, 0.8f, 0.2f);  // Yellow/gold for yarn
+        render_spline(snap.spline, config);
+
+        // Also highlight the most recently added segment in a different color
+        if (!snap.spline.empty()) {
+            glColor3f(1.0f, 0.2f, 0.2f);  // Red for the latest curve
+            glLineWidth(config.spline_line_width + 2.0f);
+            const auto& segments = snap.spline.segments();
+            if (!segments.empty()) {
+                BezierSpline last_segment;
+                last_segment.add_segment(segments.back());
+                render_spline(last_segment, config);
+            }
+        }
+        return;
+    }
+
+    // Show full geometry
     auto polyline = geometry.to_polyline_fixed(config.spline_samples);
 
     if (polyline.size() < 2) return;
@@ -621,6 +701,7 @@ VisualizerResult visualize_with_geometry(
     log->info("  n=toggle nodes, g=toggle geometry");
     log->info("  left/right=frame by frame, pgup/pgdn=30 frames");
     log->info("  home=first frame, end=live view");
+    log->info("  b/f=step geometry build, 0=show full geometry");
 
     // Main loop
     while (!glfwWindowShouldClose(window)) {
@@ -684,9 +765,27 @@ VisualizerResult visualize_with_geometry(
             // Build geometry when converged
             if (converged && !geometry_built) {
                 log->info("Building geometry from relaxed surface...");
-                geometry = build_geometry(yarn_path, graph, yarn, gauge);
+
+                // Clear any previous geometry snapshots
+                g_geometry_snapshots.clear();
+                g_current_geometry_snapshot = -1;
+                g_viewing_geometry_history = false;
+
+                // Build geometry with callback to capture snapshots
+                geometry = build_geometry_with_callback(yarn_path, graph, yarn, gauge,
+                    [&log](SegmentId seg_id, const std::string& desc, const BezierSpline& spline) {
+                        GeometrySnapshot snap;
+                        snap.segment_id = seg_id;
+                        snap.description = desc;
+                        snap.spline = spline;
+                        g_geometry_snapshots.push_back(snap);
+                        log->debug("  geometry step: seg {} - {}", seg_id, desc);
+                    });
+
                 geometry_built = true;
-                log->info("Geometry built with {} segments", geometry.segments().size());
+                log->info("Geometry built with {} segments, {} curve steps recorded",
+                         geometry.segments().size(), g_geometry_snapshots.size());
+                log->info("  Press B/F to step through geometry build, 0 to show full geometry");
             }
 
             // Log progress periodically (every 100 iterations)
@@ -719,6 +818,21 @@ VisualizerResult visualize_with_geometry(
             }
         }
 
+        // Log geometry step when it changes
+        if (g_viewing_geometry_history && g_current_geometry_snapshot >= 0 &&
+            g_current_geometry_snapshot < static_cast<int>(g_geometry_snapshots.size())) {
+            if (g_current_geometry_snapshot != g_last_logged_geometry_snapshot) {
+                const auto& gsnap = g_geometry_snapshots[g_current_geometry_snapshot];
+                log->info("Geometry step {}/{}: seg {} - {}",
+                         g_current_geometry_snapshot + 1, g_geometry_snapshots.size(),
+                         gsnap.segment_id, gsnap.description);
+                g_last_logged_geometry_snapshot = g_current_geometry_snapshot;
+            }
+        } else if (!g_viewing_geometry_history && g_last_logged_geometry_snapshot != -1) {
+            log->info("Showing full geometry");
+            g_last_logged_geometry_snapshot = -1;
+        }
+
         // Render
         render_graph(graph, viz_config);
         if (geometry_built) {
@@ -743,11 +857,16 @@ VisualizerResult visualize_with_geometry(
     g_snapshots.clear();
     g_current_snapshot = -1;
     g_viewing_history = false;
+    g_geometry_snapshots.clear();
+    g_current_geometry_snapshot = -1;
+    g_viewing_geometry_history = false;
+    g_last_logged_geometry_snapshot = -2;
 
     glfwDestroyWindow(window);
     glfwTerminate();
 
-    log->info("Visualization ended. {} snapshots recorded.", frame_count + 1);
+    log->info("Visualization ended. {} snapshots recorded, {} geometry steps.",
+              frame_count + 1, g_geometry_snapshots.size());
 
     return result;
 }

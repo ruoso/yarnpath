@@ -5,34 +5,6 @@
 
 namespace yarnpath {
 
-// Helper: create smooth bezier curve between two points with tangent constraints
-BezierSpline make_connector(const YarnProperties& yarn,
-                            const Vec3& from, const Vec3& from_dir,
-                            const Vec3& to, const Vec3& to_dir) {
-    (void)yarn;  // Not currently used but kept for API consistency
-    BezierSpline spline;
-
-    Vec3 chord = to - from;
-    float dist = chord.length();
-
-    if (dist < 0.0001f) {
-        // Degenerate case: start and end are the same
-        spline.add_segment(CubicBezier(from, from, to, to));
-        return spline;
-    }
-
-    // Scale tangents based on distance - use ~1/3 of distance for smooth curves
-    float tangent_scale = dist * 0.4f;
-
-    Vec3 t0 = from_dir.normalized() * tangent_scale;
-    Vec3 t1 = to_dir.normalized() * tangent_scale;
-
-    auto bezier = CubicBezier::from_hermite(from, t0, to, -t1);
-    spline.add_segment(bezier);
-
-    return spline;
-}
-
 // Build the curve for a single segment
 //
 // For loop segments: creates a cylinder-wrap loop shape with Z-crossing
@@ -51,6 +23,7 @@ static BezierSpline build_segment_curve(
     bool forms_loop,
     const std::vector<Vec3>& child_positions,
     const YarnProperties& yarn,
+    bool has_parent,
     bool current_z_positive,
     bool first_of_row,
     bool end_of_row) {
@@ -144,27 +117,40 @@ static BezierSpline build_segment_curve(
         Vec3 apex_exit = apex + Vec3(0.0f, -wrap_offset, -z_sign * wrap_offset);
 
         if (!first_of_row) {
-            // Curve 1: Base wrap - curve dips down at base_center
-            // First half: base_entry to base_center (arriving from Z-side, curving down and in X direction)
-            auto base_wrap1 = CubicBezier::from_hermite(
-                base_entry, Vec3(0.0f, 0.0f, z_sign) * turn_tangent,   // Arriving from Z-side
-                base_center, Vec3(pc_x_dir, -1.0f, 0.0f).normalized() * turn_tangent);  // Curving down in X direction
-            spline.add_segment(base_wrap1);
+            if (has_parent) {
+                // Curve 1: Base wrap - curve dips down at base_center
+                // First half: base_entry to base_center (arriving from Z-side, curving down and in X direction)
+                auto base_wrap1 = CubicBezier::from_hermite(
+                    base_entry, Vec3(0.0f, 0.0f, z_sign) * turn_tangent,   // Arriving from Z-side
+                    base_center, Vec3(pc_x_dir, -1.0f, 0.0f).normalized() * turn_tangent);  // Curving down in X direction
+                spline.add_segment(base_wrap1);
 
-            // Second half: base_center to base_exit (curving up and in X direction)
-            auto base_wrap2 = CubicBezier::from_hermite(
-                base_center, Vec3(pc_x_dir, 1.0f, 0.0f).normalized() * turn_tangent,   // Curving up in X direction
-                base_exit, Vec3(0.0f, 1.0f, 0.0f) * turn_tangent);                  // Departing upward
-            spline.add_segment(base_wrap2);
+                // Second half: base_center to base_exit (curving up and in X direction)
+                auto base_wrap2 = CubicBezier::from_hermite(
+                    base_center, Vec3(pc_x_dir, 1.0f, 0.0f).normalized() * turn_tangent,   // Curving up in X direction
+                    base_exit, Vec3(0.0f, 1.0f, 0.0f) * turn_tangent);                  // Departing upward
+                spline.add_segment(base_wrap2);
 
-            // Curve 2: From base_exit up to apex_entry
-            Vec3 to_apex_entry = apex_entry - base_exit;
-            float to_apex_dist = to_apex_entry.length();
-            if (to_apex_dist > 0.01f) {
-                auto up_leg = CubicBezier::from_hermite(
-                    base_exit, Vec3(0.0f, 1.0f, 0.0f) * (to_apex_dist * 0.4f),  // Departing upward
-                    apex_entry, Vec3(0.0f, 1.0f, 0.0f) * (to_apex_dist * 0.4f)); // Arriving from below
-                spline.add_segment(up_leg);
+                // Curve 2: From base_exit up to apex_entry
+                Vec3 to_apex_entry = apex_entry - base_exit;
+                float to_apex_dist = to_apex_entry.length();
+                if (to_apex_dist > 0.01f) {
+                    auto up_leg = CubicBezier::from_hermite(
+                        base_exit, Vec3(0.0f, 1.0f, 0.0f) * (to_apex_dist * 0.4f),  // Departing upward
+                        apex_entry, Vec3(0.0f, 1.0f, 0.0f) * (to_apex_dist * 0.4f)); // Arriving from below
+                    spline.add_segment(up_leg);
+                }
+            } else {
+                // go from base_entry directly to apex_entry
+                Vec3 to_apex_entry = apex_entry - base_entry;
+                float to_apex_dist = to_apex_entry.length();
+                if (to_apex_dist > 0.01f) {
+                    Vec3 smooth_dir = to_apex_entry.normalized();
+                    auto up_leg = CubicBezier::from_hermite(
+                        base_entry, smooth_dir * (to_apex_dist * 0.4f),               // Smooth tangent toward apex
+                        apex_entry, smooth_dir * (to_apex_dist * 0.4f)); // Smooth tangent toward apex
+                    spline.add_segment(up_leg);
+                }
             }
         } else {
             // First segment of the row - directly connect from curr_pos to apex_entry
@@ -326,6 +312,15 @@ GeometryPath build_geometry_with_callback(
         positions.push_back(pos_opt.value());
     }
 
+    // create a cache of which segments have parents
+    std::vector<bool> segment_has_parent(segments.size(), false);
+    for (size_t i = 0; i < segments.size(); ++i) {
+        const auto& seg = segments[i];
+        if (!seg.through.empty()) {
+            segment_has_parent[i] = true;
+        }
+    }
+
     // Build reverse lookup: loop_segment_id -> positions of segments that pass through it
     // When segment A has segment B in its "through" list, segment A passes through loop B.
     // So B's apex is informed by A's position.
@@ -385,6 +380,7 @@ GeometryPath build_geometry_with_callback(
             seg.forms_loop,
             child_positions,
             yarn,
+            segment_has_parent[seg_id],
             current_z_positive,
             first_of_row,
             end_of_row);
@@ -422,9 +418,10 @@ GeometryPath build_geometry_with_callback(
         geom.arc_length = geom.curve.total_arc_length();
         geom.max_curvature = geom.curve.max_curvature();
 
-        log->debug("  segment {}: forms_loop={}, children={}, arc_length={:.3f}, max_curvature={:.3f}",
+        log->debug("  segment {}: forms_loop={}, children={}, arc_length={:.3f}, max_curvature={:.3f}, has_parent={}",
                    seg_id, seg.forms_loop, child_positions.size(),
-                   geom.arc_length, geom.max_curvature);
+                   geom.arc_length, geom.max_curvature,
+                   segment_has_parent[seg_id] ? "true" : "false");
 
         result.segments_.push_back(std::move(geom));
     }

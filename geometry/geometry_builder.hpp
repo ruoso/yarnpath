@@ -53,7 +53,7 @@ BezierSpline build_segment_curve(
     bool forms_loop,
     const std::vector<Vec3>& child_positions,
     const YarnProperties& yarn,
-    bool is_significant);
+    bool current_z_positive);
 
 }  // namespace yarnpath
 

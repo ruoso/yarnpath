@@ -35,7 +35,7 @@ BezierSpline make_connector(const YarnProperties& yarn,
 
 // Build the curve for a single segment
 //
-// For loop segments: creates a cylinder-wrap loop shape (front-to-back in Z)
+// For loop segments: creates a cylinder-wrap loop shape with Z-crossing
 // For non-loop segments: simple connector curve from prev to curr
 //
 // The physics simulation positions nodes at:
@@ -43,6 +43,7 @@ BezierSpline make_connector(const YarnProperties& yarn,
 // - The apex is determined by where child segments pass through
 //
 // is_significant: if true, allow direction changes (at passthrough/loop points)
+// current_z_positive: which side of Z the yarn is currently on (true = +Z/back)
 BezierSpline build_segment_curve(
     const Vec3& prev_pos,
     const Vec3& curr_pos,
@@ -50,7 +51,8 @@ BezierSpline build_segment_curve(
     bool forms_loop,
     const std::vector<Vec3>& child_positions,
     const YarnProperties& yarn,
-    bool is_significant) {
+    bool is_significant,
+    bool current_z_positive) {
 
     BezierSpline spline;
 
@@ -67,14 +69,17 @@ BezierSpline build_segment_curve(
     if (forms_loop) {
         // Loop segment: yarn curves from current base up to apex, then down to next base
         // Break into segments to control curvature at each critical point:
-        // 1. Base turn: curve at curr_pos turning from -Z toward up
+        // 1. Base turn: curve at curr_pos turning from current Z-side toward up
         // 2. Straight up: from base exit to apex entry
-        // 3. Apex wrap: curve crossing in +Z direction
+        // 3. Apex wrap: curve crossing to opposite Z-side
         // 4. Straight down: from apex exit to next base entry
-        // 5. Next base turn: curve turning from down toward -Z
+        // 5. Next base turn: curve turning from down toward original Z-side
 
-        // Wrap/bend radius based on yarn's ability to bend tightly
-        float bend_radius = std::max(yarn.min_bend_radius, yarn.radius * 2.0f);
+        // Z-direction based on current state (alternates along yarn path)
+        float z_sign = current_z_positive ? 1.0f : -1.0f;
+
+        // Wrap offset - small offset for entry/exit points to create curvature
+        float wrap_offset = yarn.radius * 0.5f;
 
         // Determine apex position - this is where children pass through
         Vec3 apex;
@@ -87,6 +92,10 @@ BezierSpline build_segment_curve(
                 apex += cp;
             }
             apex = apex * (1.0f / static_cast<float>(child_positions.size()));
+
+            // Offset apex higher in Y so the loop goes over the child segment
+            apex.y += yarn.radius;
+
             loop_height = (apex - curr_pos).length();
         } else {
             // No children yet (live loop) - use default height
@@ -94,16 +103,9 @@ BezierSpline build_segment_curve(
             apex = curr_pos + Vec3(0.0f, loop_height, 0.0f);
         }
 
-        // Ensure minimum loop height
-        if (loop_height < bend_radius * 2.0f) {
-            loop_height = bend_radius * 2.0f;
-            Vec3 up_dir = (apex - curr_pos);
-            if (up_dir.length() > 0.0001f) {
-                up_dir = up_dir.normalized();
-            } else {
-                up_dir = Vec3(0.0f, 1.0f, 0.0f);
-            }
-            apex = curr_pos + up_dir * loop_height;
+        // Adjust wrap offset if loop is too short
+        if (loop_height < wrap_offset * 2.0f) {
+            wrap_offset = loop_height * 0.4f;
         }
 
         // Direction from current base to apex
@@ -116,73 +118,70 @@ BezierSpline build_segment_curve(
         Vec3 down_dir = (apex_to_next_dist > 0.0001f) ? apex_to_next.normalized() : Vec3(0.0f, -1.0f, 0.0f);
 
         // Key positions for the loop segments
-        // Base exit: after turning at base, heading up (offset by bend_radius in up direction)
-        Vec3 base_exit = curr_pos + up_dir * bend_radius;
+        // Base center is offset down by yarn.radius to keep aligned with surface
+        Vec3 base_center = curr_pos - Vec3(0.0f, yarn.radius, 0.0f);
+        // Base entry/exit: offset in X, at surface level so curve dips DOWN at base_center
+        Vec3 base_entry = curr_pos + Vec3(-wrap_offset, 0.0f, 0.0f);
+        Vec3 base_exit = curr_pos + Vec3(wrap_offset, 0.0f, 0.0f);
 
-        // Apex entry: before the Z-wrap at apex (offset by bend_radius below apex)
-        Vec3 apex_entry = apex - up_dir * bend_radius;
+        // Apex entry/exit: offset in Z, slightly lower in Y so curve goes UP at apex
+        Vec3 apex_entry = apex + Vec3(0.0f, -wrap_offset, z_sign * wrap_offset);
+        Vec3 apex_exit = apex + Vec3(0.0f, -wrap_offset, -z_sign * wrap_offset);
 
-        // Apex exit: after the Z-wrap at apex (offset by bend_radius toward next)
-        Vec3 apex_exit = apex + down_dir * bend_radius;
+        // Next base entry: where the down_leg ends (at surface level)
+        Vec3 next_base_entry = next_pos + Vec3(-wrap_offset, 0.0f, 0.0f);
 
-        // Next base entry: before turning at next base (offset by bend_radius above next_pos)
-        Vec3 next_entry = next_pos - down_dir * bend_radius;
+        // Tangent magnitude for turns (quarter circle at wrap_offset)
+        float turn_tangent = wrap_offset * 1.5f;  // Larger tangent for smoother curvature
 
-        // Tangent magnitude for turns (quarter circle at bend_radius)
-        float turn_tangent = bend_radius * 0.55f;  // ~0.55 for smooth quarter circle
+        // Curve 1: Base wrap - curve dips down at base_center
+        // First half: base_entry to base_center (arriving from Z-side, curving down and in +X)
+        auto base_wrap1 = CubicBezier::from_hermite(
+            base_entry, Vec3(0.0f, 0.0f, z_sign) * turn_tangent,   // Arriving from Z-side
+            base_center, Vec3(1.0f, -1.0f, 0.0f).normalized() * turn_tangent);  // Curving down-right
+        spline.add_segment(base_wrap1);
 
-        // Curve 1: Base turn - from curr_pos (arriving in -Z) curving up
-        Vec3 base_in_tangent = Vec3(0.0f, 0.0f, -1.0f) * turn_tangent;
-        Vec3 base_out_tangent = up_dir * turn_tangent;
-        auto base_turn = CubicBezier::from_hermite(
-            curr_pos, base_in_tangent,
-            base_exit, base_out_tangent);
-        spline.add_segment(base_turn);
+        // Second half: base_center to base_exit (curving up and in +X)
+        auto base_wrap2 = CubicBezier::from_hermite(
+            base_center, Vec3(1.0f, 1.0f, 0.0f).normalized() * turn_tangent,   // Curving up-right
+            base_exit, Vec3(0.0f, 1.0f, 0.0f) * turn_tangent);                 // Departing upward
+        spline.add_segment(base_wrap2);
 
-        // Curve 2: Straight up from base_exit to apex_entry
-        float up_dist = (apex_entry - base_exit).length();
-        if (up_dist > 0.01f) {
-            Vec3 up_tangent = up_dir * (up_dist * 0.4f);
-            auto straight_up = CubicBezier::from_hermite(
-                base_exit, up_tangent,
-                apex_entry, up_tangent);
-            spline.add_segment(straight_up);
+        // Curve 2: From base_exit up to apex_entry
+        Vec3 to_apex_entry = apex_entry - base_exit;
+        float to_apex_dist = to_apex_entry.length();
+        if (to_apex_dist > 0.01f) {
+            auto up_leg = CubicBezier::from_hermite(
+                base_exit, Vec3(0.0f, 1.0f, 0.0f) * (to_apex_dist * 0.4f),  // Departing upward
+                apex_entry, Vec3(0.0f, 1.0f, 0.0f) * (to_apex_dist * 0.4f)); // Arriving from below
+            spline.add_segment(up_leg);
         }
 
-        // Curve 3: Apex wrap - curving from up direction to +Z to down direction
-        Vec3 apex_in_tangent = up_dir * turn_tangent;
-        Vec3 apex_cross_tangent = Vec3(0.0f, 0.0f, 1.0f) * turn_tangent;
-        Vec3 apex_out_tangent = down_dir * turn_tangent;
+        // Curve 3: Apex wrap - curve goes up at apex
+        // apex_entry is at +z_sign side and below, apex is center and highest, apex_exit is at -z_sign side and below
 
-        // First half: entry to apex center (up to +Z)
+        // First half: entry to apex center (arriving from below, curving up and across Z)
         auto apex_wrap1 = CubicBezier::from_hermite(
-            apex_entry, apex_in_tangent,
-            apex, apex_cross_tangent);
+            apex_entry, Vec3(0.0f, 1.0f, 0.0f) * turn_tangent,  // Arriving from below
+            apex, Vec3(0.0f, 1.0f, -z_sign).normalized() * turn_tangent);  // Curving up and across Z
         spline.add_segment(apex_wrap1);
 
-        // Second half: apex center to exit (+Z to down)
+        // Second half: apex center to exit (curving down and across Z)
         auto apex_wrap2 = CubicBezier::from_hermite(
-            apex, apex_cross_tangent,
-            apex_exit, apex_out_tangent);
+            apex, Vec3(0.0f, -1.0f, -z_sign).normalized() * turn_tangent,  // Curving down and across Z
+            apex_exit, Vec3(0.0f, -1.0f, 0.0f) * turn_tangent);            // Departing downward
         spline.add_segment(apex_wrap2);
 
-        // Curve 4: Straight down from apex_exit to next_entry
-        float down_dist = (next_entry - apex_exit).length();
-        if (down_dist > 0.01f) {
-            Vec3 down_tangent = down_dir * (down_dist * 0.4f);
-            auto straight_down = CubicBezier::from_hermite(
-                apex_exit, down_tangent,
-                next_entry, down_tangent);
-            spline.add_segment(straight_down);
+        // Curve 4: From apex_exit down to next_base_entry
+        // This ends at the base_entry of the next segment's loop
+        Vec3 to_next_base = next_base_entry - apex_exit;
+        float to_next_dist = to_next_base.length();
+        if (to_next_dist > 0.01f) {
+            auto down_leg = CubicBezier::from_hermite(
+                apex_exit, Vec3(0.0f, -1.0f, 0.0f) * (to_next_dist * 0.4f),      // Departing downward
+                next_base_entry, Vec3(0.0f, -1.0f, 0.0f) * (to_next_dist * 0.4f)); // Arriving from above
+            spline.add_segment(down_leg);
         }
-
-        // Curve 5: Next base turn - from down direction curving to -Z
-        Vec3 next_in_tangent = down_dir * turn_tangent;
-        Vec3 next_out_tangent = Vec3(0.0f, 0.0f, -1.0f) * turn_tangent;
-        auto next_turn = CubicBezier::from_hermite(
-            next_entry, next_in_tangent,
-            next_pos, next_out_tangent);
-        spline.add_segment(next_turn);
 
     } else {
         // Non-loop segment: simple connector from prev to curr
@@ -266,8 +265,9 @@ GeometryPath build_geometry_with_callback(
     log->debug("build_geometry: built reverse lookup for {} loops",
                loop_apex_positions.size());
 
-    // Track alternation state for passthrough Z-offset
-    bool next_passthrough_positive_z = true;  // Start with +Z (behind)
+    // Track Z-state along yarn path - which side of Z the yarn is currently on
+    // This alternates each time yarn crosses Z (at passthrough points)
+    bool current_z_positive = true;  // Start on +Z (back) side
 
     // Accumulated spline for callback visualization
     BezierSpline accumulated_spline;
@@ -285,16 +285,17 @@ GeometryPath build_geometry_with_callback(
         Vec3 curr_pos = positions[i];
         Vec3 next_pos = (i < positions.size() - 1) ? positions[i + 1] : positions[i];
 
-        // Phase 3: Apply alternating Z-offset at passthrough points
+        // Apply Z-offset at passthrough points based on current Z-state
+        // Passthrough segments cross Z once, inverting the state
         if (!seg.through.empty()) {
-            float z_offset = next_passthrough_positive_z
+            float z_offset = current_z_positive
                 ? +yarn.radius * 1.5f   // Behind (+Z)
                 : -yarn.radius * 1.5f;  // In front (-Z)
 
             curr_pos.z += z_offset;
 
-            // Alternate for next passthrough
-            next_passthrough_positive_z = !next_passthrough_positive_z;
+            // Passthrough crosses Z once, invert state
+            current_z_positive = !current_z_positive;
         }
 
         // Get child positions if this is a loop (segments that pass through this one)
@@ -319,7 +320,8 @@ GeometryPath build_geometry_with_callback(
             seg.forms_loop,
             child_positions,
             yarn,
-            is_significant);
+            is_significant,
+            current_z_positive);
 
         // Report each curve segment via callback if provided
         if (callback_ptr) {

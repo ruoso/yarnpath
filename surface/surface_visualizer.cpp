@@ -47,6 +47,7 @@ static float g_zoom_speed = 1.1f;
 static std::vector<Snapshot> g_snapshots;
 static int g_current_snapshot = -1;  // -1 means live view
 static bool g_viewing_history = false;
+static bool g_request_fit_camera = false;  // Request camera fit on next frame
 
 static void mouse_button_callback(GLFWwindow* window, int button, int action, int mods) {
     (void)window;
@@ -116,9 +117,10 @@ static void key_callback(GLFWwindow* window, int key, int scancode, int action, 
             }
             g_paused = !g_paused;
         } else if (key == GLFW_KEY_R) {
-            // Reset camera
+            // Reset camera (orientation and request fit)
             g_camera.yaw = 0.0f;
             g_camera.pitch = 0.3f;
+            g_request_fit_camera = true;
         } else if (key == GLFW_KEY_LEFT) {
             // Previous frame
             navigate_history(-1);
@@ -396,9 +398,10 @@ VisualizerResult visualize_relaxation(
         float right = top * aspect;
         glFrustum(-right, right, -top, top, near, far);
 
-        // Auto-fit camera to show all nodes (if enabled and not dragging)
-        if (viz_config.auto_fit && !g_mouse_dragging) {
+        // Fit camera when requested (R key)
+        if (g_request_fit_camera) {
             fit_camera_to_graph(graph, g_camera);
+            g_request_fit_camera = false;
         }
 
         // Set up modelview

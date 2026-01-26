@@ -2,6 +2,7 @@
 #include "logging.hpp"
 #include <random>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <set>
 
@@ -187,13 +188,16 @@ void SurfaceBuilder::initialize_positions() {
     auto log = yarnpath::logging::get_logger();
 
     // Initialize positions incrementally:
-    // 1. Add nodes one at a time
-    // 2. Position each based on edge constraints
+    // 1. Compute row levels based on graph structure
+    // 2. Add nodes one at a time, using level for row direction
     // 3. If constraints can't be satisfied, run local relaxation
 
     std::mt19937 rng(config_.random_seed);
     float noise_amplitude = gauge_.stitch_width() * config_.position_noise;
     std::uniform_real_distribution<float> noise_dist(-noise_amplitude, noise_amplitude);
+    // Z noise for initial perturbation - use yarn radius as scale for realistic thickness
+    float z_noise_amplitude = yarn_.radius * 0.5f;  // Half yarn radius
+    std::uniform_real_distribution<float> z_noise_dist(-z_noise_amplitude, z_noise_amplitude);
 
     const auto& segments = path_.segments();
     const auto& edges = graph_.edges();
@@ -207,98 +211,123 @@ void SurfaceBuilder::initialize_positions() {
         }
     }
 
-    // Build lookup for passthrough edges: child -> [(parent, rest_length), ...]
+    // Build lookup for passthrough from original YarnPath segments
+    // (This ensures we're using the source data, not potentially filtered edges)
     std::map<NodeId, std::vector<std::pair<NodeId, float>>> passthrough_info;
-    for (const auto& edge : edges) {
-        if (edge.type == EdgeType::PassThrough) {
-            passthrough_info[edge.node_a].push_back({edge.node_b, edge.rest_length});
+    float default_passthrough_length = gauge_.loop_height(yarn_.radius, yarn_.loop_aspect_ratio) + yarn_.min_clearance();
+    for (size_t i = 0; i < segments.size(); ++i) {
+        const auto& seg = segments[i];
+        for (SegmentId parent_id : seg.through) {
+            passthrough_info[static_cast<NodeId>(i)].push_back({static_cast<NodeId>(parent_id), default_passthrough_length});
         }
     }
 
-    // Position node 0 at origin
-    if (graph_.node_count() > 0) {
-        graph_.node(0).position = Vec3(
-            noise_dist(rng),
-            noise_dist(rng),
-            noise_dist(rng) * 0.5f
-        );
+    // Compute row levels by traversing segments in order:
+    // - Rows only increase (never decrease) as we traverse
+    // - When we see a passthrough to a node at the current row level, advance to next row
+    // - Otherwise, stay at current row
+    std::vector<int> node_levels(graph_.node_count(), 0);
+    int current_row = 0;
+
+    for (size_t i = 0; i < segments.size(); ++i) {
+        NodeId node_id = static_cast<NodeId>(i);
+        const auto& seg = segments[i];
+
+        // Check if this segment passes through any node at the current row level
+        bool passes_through_current_row = false;
+        for (SegmentId parent_id : seg.through) {
+            if (node_levels[parent_id] == current_row) {
+                passes_through_current_row = true;
+                break;
+            }
+        }
+
+        if (passes_through_current_row) {
+            // Advance to next row
+            current_row++;
+        }
+
+        node_levels[node_id] = current_row;
     }
 
-    // Track current Y position (always increasing - going "up" in fabric terms means down/+Y)
-    float current_row_y = 0.0f;
-    // Track X position within row (always go right/positive X)
-    float current_x = 0.0f;
+    // Log level distribution and details
+    int max_level = 0;
+    std::map<int, int> level_counts;
+    for (int level : node_levels) {
+        max_level = std::max(max_level, level);
+        level_counts[level]++;
+    }
+    log->debug("Node levels computed: {} rows (levels 0-{})", max_level + 1, max_level);
+    for (const auto& [level, count] : level_counts) {
+        log->debug("  Level {}: {} nodes", level, count);
+    }
 
-    // Position each subsequent node incrementally
+    // Log first few segments with their levels and passthrough info
+    for (size_t i = 0; i < std::min(size_t(20), segments.size()); ++i) {
+        auto pt_it = passthrough_info.find(static_cast<NodeId>(i));
+        std::string pt_str = "none";
+        if (pt_it != passthrough_info.end() && !pt_it->second.empty()) {
+            pt_str = "";
+            for (const auto& [pid, len] : pt_it->second) {
+                if (!pt_str.empty()) pt_str += ",";
+                pt_str += std::to_string(pid) + "(L" + std::to_string(node_levels[pid]) + ")";
+            }
+        }
+        log->debug("  Seg {}: level={}, forms_loop={}, through=[{}]",
+                   i, node_levels[i], segments[i].forms_loop, pt_str);
+    }
+
+    // Simple positioning:
+    // - Row 0 (cast-on): go right
+    // - Row N: start above end of row N-1, go opposite direction
+    // All nodes stay at Z=0 for a flat initial layout
+
+    // Use constraint-based spacing to ensure minimum distances are satisfied
+    // Continuity edge rest length (X spacing within row)
+    float stitch_offset = yarn_.radius * 2.0f * (1.0f + (1.0f - yarn_.tension) * 0.25f);
+    // Passthrough edge rest length (Y spacing between rows)
+    float row_offset = gauge_.loop_height(yarn_.radius, yarn_.loop_aspect_ratio) + yarn_.min_clearance();
+
+    // Position node 0 at origin
+    if (graph_.node_count() > 0) {
+        graph_.node(0).position = Vec3(0.0f, 0.0f, 0.0f);
+    }
+
+    // Track current position
+    float current_x = 0.0f;
+    float current_y = 0.0f;
+    int current_level = 0;
+    int row_direction = 1;  // +1 = right, -1 = left
+
+    // Position each subsequent node
     for (size_t i = 1; i < segments.size(); ++i) {
         NodeId node_id = static_cast<NodeId>(i);
         NodeId prev_id = static_cast<NodeId>(i - 1);
         auto& node = graph_.node(node_id);
-        const auto& prev_node = graph_.node(prev_id);
 
-        // Check if this segment has passthrough edges to parents
-        auto pt_it = passthrough_info.find(node_id);
-        bool has_passthrough = (pt_it != passthrough_info.end() && !pt_it->second.empty());
+        int node_level = node_levels[node_id];
+        int prev_level = node_levels[prev_id];
 
-        if (has_passthrough) {
-            // This node passes through parent loop(s)
-            // Use first parent for initial positioning
-            NodeId parent_id = pt_it->second[0].first;
-            float passthrough_length = pt_it->second[0].second;
-            const auto& parent_node = graph_.node(parent_id);
+        if (node_level != prev_level) {
+            // New row: start directly above the previous node, reverse direction
+            current_y += row_offset;
+            row_direction = -row_direction;
+            current_level = node_level;
 
-            // Position below the parent at passthrough_length distance (positive Y = down)
-            node.position = Vec3(
-                parent_node.position.x + noise_dist(rng),
-                parent_node.position.y + passthrough_length + noise_dist(rng),
-                parent_node.position.z + noise_dist(rng) * 0.5f
-            );
-
-            // Update row tracking - new row starts at this Y
-            current_row_y = node.position.y;
-            current_x = node.position.x;
+            log->debug("Row {}: y={}, direction={}",
+                       node_level, current_y, row_direction > 0 ? "right" : "left");
         } else {
-            // Use continuity edge to position relative to previous node
-            auto cont_it = continuity_lengths.find({prev_id, node_id});
-            float continuity_length = (cont_it != continuity_lengths.end())
-                ? cont_it->second
-                : gauge_.stitch_width();
-
-            // Always move right (positive X direction) within a row
-            current_x += continuity_length;
-            node.position = Vec3(
-                current_x + noise_dist(rng),
-                current_row_y + noise_dist(rng),
-                prev_node.position.z + noise_dist(rng) * 0.5f
-            );
+            // Same row: move in current direction
+            current_x += row_direction * stitch_offset;
         }
 
-        // Compute current plane normal from nodes placed so far
-        Vec3 plane_normal = compute_plane_normal(node_id);
-
-        // Check and fix angular constraint to prevent sharp bends/folds
-        // Max bend angle of ~60 degrees (about 1 radian) to allow natural curvature
-        // but prevent folding back
-        const float max_bend_angle = 1.0f;  // radians (~57 degrees)
-        check_and_fix_angle(node_id, plane_normal, max_bend_angle);
-
-        // Check for collisions with non-connected existing nodes
-        // and push away if too close
-        resolve_collisions(node_id, passthrough_info);
-
-        // Check if all constraints involving this node and earlier nodes are satisfied
-        bool constraints_ok = check_node_constraints(node_id, continuity_lengths, passthrough_info);
-
-        if (!constraints_ok) {
-            // Run local relaxation with nodes 0..i to satisfy constraints
-            relax_partial(node_id, continuity_lengths, passthrough_info);
-
-            // After relaxation, re-check angles for all affected nodes
-            for (NodeId j = 2; j <= node_id; ++j) {
-                plane_normal = compute_plane_normal(j);
-                check_and_fix_angle(j, plane_normal, max_bend_angle);
-            }
-        }
+        // Place node at current position with small Z perturbation
+        // Z perturbation allows the fabric to develop natural thickness
+        node.position = Vec3(
+            current_x + noise_dist(rng) * 0.1f,  // Small XY noise
+            current_y + noise_dist(rng) * 0.1f,
+            z_noise_dist(rng)  // Small Z perturbation
+        );
     }
 
     log->debug("SurfaceBuilder: initialized {} node positions incrementally",

@@ -347,4 +347,139 @@ std::vector<Vec3> BezierSpline::to_polyline_fixed(int samples_per_segment) const
     return points;
 }
 
+void BezierSpline::merge_short_segments(float min_length) {
+    if (segments_.size() < 2) {
+        return;
+    }
+
+    std::vector<CubicBezier> new_segments;
+
+    size_t i = 0;
+    while (i < segments_.size()) {
+        float arc_len = segments_[i].arc_length();
+
+        if (arc_len >= min_length || i + 1 >= segments_.size()) {
+            // Keep this segment as-is
+            new_segments.push_back(segments_[i]);
+            i++;
+        } else {
+            // Merge with next segment
+            // Create a new Bezier curve from start of current to end of next
+            // preserving the tangent directions at the outer endpoints
+            const auto& curr = segments_[i];
+            const auto& next = segments_[i + 1];
+
+            Vec3 start_pos = curr.start();
+            Vec3 end_pos = next.end();
+
+            // Get tangent directions at endpoints
+            Vec3 start_tangent = curr.derivative(0.0f);
+            Vec3 end_tangent = next.derivative(1.0f);
+
+            // Scale tangents based on the combined segment length
+            float combined_arc = curr.arc_length() + next.arc_length();
+            float start_tangent_len = start_tangent.length();
+            float end_tangent_len = end_tangent.length();
+
+            if (start_tangent_len > 1e-6f) {
+                start_tangent = start_tangent * (combined_arc * 0.33f / start_tangent_len);
+            }
+            if (end_tangent_len > 1e-6f) {
+                end_tangent = end_tangent * (combined_arc * 0.33f / end_tangent_len);
+            }
+
+            CubicBezier merged = CubicBezier::from_hermite(start_pos, start_tangent,
+                                                           end_pos, end_tangent);
+            new_segments.push_back(merged);
+            i += 2;
+        }
+    }
+
+    segments_ = std::move(new_segments);
+}
+
+BezierSpline BezierSpline::to_adaptive_spline(float max_k, int min_samples, int max_samples) const {
+    if (segments_.empty()) {
+        return BezierSpline();
+    }
+
+    // Sample the entire spline at fine intervals
+    std::vector<Vec3> positions;
+    std::vector<Vec3> tangents;
+    std::vector<float> curvatures;
+
+    int total_samples = static_cast<int>(segments_.size()) * max_samples;
+    float dt = static_cast<float>(segments_.size()) / static_cast<float>(total_samples);
+
+    for (int i = 0; i <= total_samples; ++i) {
+        float t = static_cast<float>(i) * dt;
+        if (t > static_cast<float>(segments_.size())) {
+            t = static_cast<float>(segments_.size());
+        }
+
+        positions.push_back(evaluate(t));
+        tangents.push_back(tangent(t));
+
+        // Compute curvature at this point
+        size_t seg_idx = static_cast<size_t>(t);
+        if (seg_idx >= segments_.size()) {
+            seg_idx = segments_.size() - 1;
+        }
+        float local_t = t - static_cast<float>(seg_idx);
+        curvatures.push_back(segments_[seg_idx].curvature(local_t));
+    }
+
+    // Select points based on curvature
+    // High curvature regions: keep more points
+    // Low curvature regions: keep fewer points
+    std::vector<size_t> selected_indices;
+    selected_indices.push_back(0);
+
+    float accumulated_score = 0.0f;
+    float threshold = 1.0f / static_cast<float>(min_samples);
+
+    for (size_t i = 1; i < positions.size() - 1; ++i) {
+        // Score based on curvature relative to max_k
+        float curvature_ratio = std::min(1.0f, curvatures[i] / max_k);
+        accumulated_score += (1.0f + curvature_ratio * 2.0f) * dt;
+
+        if (accumulated_score >= threshold) {
+            selected_indices.push_back(i);
+            accumulated_score = 0.0f;
+        }
+    }
+
+    selected_indices.push_back(positions.size() - 1);
+
+    // Ensure minimum number of points
+    if (selected_indices.size() < static_cast<size_t>(min_samples + 1)) {
+        // Uniformly add more points
+        size_t target_count = static_cast<size_t>(min_samples + 1);
+        std::vector<size_t> uniform_indices;
+        for (size_t i = 0; i < target_count; ++i) {
+            size_t idx = (i * (positions.size() - 1)) / (target_count - 1);
+            uniform_indices.push_back(idx);
+        }
+        selected_indices = std::move(uniform_indices);
+    }
+
+    // Build new spline from selected points using Hermite interpolation
+    std::vector<YarnPathPoint> selected_points;
+    for (size_t idx : selected_indices) {
+        YarnPathPoint pt;
+        pt.position = positions[idx];
+        // Use inverse curvature as tension (high curvature = high tension)
+        float curvature_ratio = std::min(1.0f, curvatures[idx] / max_k);
+        pt.tension = curvature_ratio;
+        selected_points.push_back(pt);
+    }
+
+    return BezierSpline::from_yarn_points(selected_points);
+}
+
+void BezierSpline::cleanup(float min_segment_length) {
+    merge_short_segments(min_segment_length);
+    enforce_c1_continuity();
+}
+
 }  // namespace yarnpath

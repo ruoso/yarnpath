@@ -27,6 +27,11 @@ struct VisualizerConfig {
     float spline_line_width = 3.0f;   // Line width for splines
     int spline_samples = 20;          // Samples per Bezier segment
 
+    // Tube/extrusion rendering
+    float yarn_radius = 0.3f;         // Tube radius (from YarnProperties)
+    int tube_radial_segments = 8;     // Vertices around circumference
+    bool render_as_tube = true;       // false = legacy line mode
+
     // Camera
     float camera_distance = 20.0f;    // Initial camera distance
     float rotation_speed = 0.5f;      // Mouse rotation speed

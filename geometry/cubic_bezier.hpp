@@ -121,6 +121,16 @@ public:
     // Convert to polyline with fixed number of samples per Bezier segment
     std::vector<Vec3> to_polyline_fixed(int samples_per_segment) const;
 
+    // Merge segments shorter than min_length into adjacent segments
+    void merge_short_segments(float min_length);
+
+    // Create a smoothed spline with curvature-adaptive sampling
+    // Returns a new spline with more segments at high curvature, fewer at low
+    BezierSpline to_adaptive_spline(float max_curvature, int min_samples, int max_samples) const;
+
+    // Combined cleanup: merge short segments, enforce continuity
+    void cleanup(float min_segment_length);
+
 private:
     std::vector<CubicBezier> segments_;
 };

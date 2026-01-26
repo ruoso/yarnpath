@@ -25,6 +25,14 @@ struct GeometrySnapshot {
     BezierSpline spline;  // Accumulated spline at this point
 };
 
+// Local coordinate frame at a point along a curve
+struct CurveFrame {
+    Vec3 position;
+    Vec3 tangent;
+    Vec3 normal;
+    Vec3 binormal;
+};
+
 // Camera state
 struct Camera {
     float distance = 20.0f;
@@ -295,6 +303,133 @@ static void draw_line(float x1, float y1, float z1, float x2, float y2, float z2
     glEnd();
 }
 
+// Find a vector perpendicular to the given vector
+static Vec3 find_perpendicular(const Vec3& v) {
+    // Choose the axis that is least aligned with v
+    if (std::abs(v.x) < std::abs(v.y) && std::abs(v.x) < std::abs(v.z)) {
+        return v.cross(vec3::unit_x()).normalized();
+    } else if (std::abs(v.y) < std::abs(v.z)) {
+        return v.cross(vec3::unit_y()).normalized();
+    } else {
+        return v.cross(vec3::unit_z()).normalized();
+    }
+}
+
+// Compute parallel transport frames along a spline
+// This avoids the singularities of the Frenet frame at inflection points
+static std::vector<CurveFrame> compute_parallel_transport_frames(
+    const BezierSpline& spline, int samples_per_segment) {
+
+    std::vector<CurveFrame> frames;
+    if (spline.empty()) {
+        return frames;
+    }
+
+    int total_samples = static_cast<int>(spline.segment_count()) * samples_per_segment;
+    float dt = static_cast<float>(spline.segment_count()) / static_cast<float>(total_samples);
+
+    // First frame: choose initial normal perpendicular to tangent
+    CurveFrame first_frame;
+    first_frame.position = spline.evaluate(0.0f);
+    first_frame.tangent = spline.tangent(0.0f);
+    first_frame.normal = find_perpendicular(first_frame.tangent);
+    first_frame.binormal = first_frame.tangent.cross(first_frame.normal).normalized();
+    frames.push_back(first_frame);
+
+    // Subsequent frames: parallel transport the frame along the curve
+    for (int i = 1; i <= total_samples; ++i) {
+        float t = static_cast<float>(i) * dt;
+        if (t > static_cast<float>(spline.segment_count())) {
+            t = static_cast<float>(spline.segment_count());
+        }
+
+        CurveFrame frame;
+        frame.position = spline.evaluate(t);
+        frame.tangent = spline.tangent(t);
+
+        const CurveFrame& prev = frames.back();
+
+        // Compute rotation from previous tangent to current tangent
+        Vec3 axis = prev.tangent.cross(frame.tangent);
+        float axis_len = axis.length();
+
+        if (axis_len > 1e-6f) {
+            // Normalize the axis
+            axis = axis / axis_len;
+
+            // Compute rotation angle
+            float cos_angle = prev.tangent.dot(frame.tangent);
+            cos_angle = std::max(-1.0f, std::min(1.0f, cos_angle));
+            float angle = std::acos(cos_angle);
+
+            // Rodrigues' rotation formula: rotate normal and binormal
+            float c = std::cos(angle);
+            float s = std::sin(angle);
+
+            // Rotate the normal
+            frame.normal = prev.normal * c +
+                          axis.cross(prev.normal) * s +
+                          axis * (axis.dot(prev.normal)) * (1.0f - c);
+
+            // Rotate the binormal
+            frame.binormal = prev.binormal * c +
+                            axis.cross(prev.binormal) * s +
+                            axis * (axis.dot(prev.binormal)) * (1.0f - c);
+        } else {
+            // Tangents are parallel (or nearly so), keep previous frame orientation
+            frame.normal = prev.normal;
+            frame.binormal = prev.binormal;
+        }
+
+        // Re-orthonormalize to prevent drift
+        frame.normal = frame.normal.normalized();
+        frame.binormal = frame.tangent.cross(frame.normal).normalized();
+        frame.normal = frame.binormal.cross(frame.tangent).normalized();
+
+        frames.push_back(frame);
+    }
+
+    return frames;
+}
+
+// Render a tube by extruding a circle along curve frames
+static void render_extruded_tube(const std::vector<CurveFrame>& frames,
+                                  float radius, int radial_segments) {
+    if (frames.size() < 2) {
+        return;
+    }
+
+    const float pi = 3.14159265358979f;
+
+    for (size_t i = 0; i + 1 < frames.size(); ++i) {
+        const CurveFrame& frame0 = frames[i];
+        const CurveFrame& frame1 = frames[i + 1];
+
+        glBegin(GL_QUAD_STRIP);
+        for (int j = 0; j <= radial_segments; ++j) {
+            float angle = 2.0f * pi * static_cast<float>(j) / static_cast<float>(radial_segments);
+            float c = std::cos(angle);
+            float s = std::sin(angle);
+
+            // Offset from center of tube
+            Vec3 offset0 = frame0.normal * c + frame0.binormal * s;
+            Vec3 offset1 = frame1.normal * c + frame1.binormal * s;
+
+            // Vertex positions
+            Vec3 pos0 = frame0.position + offset0 * radius;
+            Vec3 pos1 = frame1.position + offset1 * radius;
+
+            // Normals point outward (same as offset direction)
+            glNormal3f(offset0.x, offset0.y, offset0.z);
+            glVertex3f(pos0.x, pos0.y, pos0.z);
+
+            glNormal3f(offset1.x, offset1.y, offset1.z);
+            glVertex3f(pos1.x, pos1.y, pos1.z);
+        }
+        glEnd();
+    }
+}
+
 static void render_graph(const SurfaceGraph& graph, const VisualizerConfig& config) {
     if (!g_show_nodes) return;
 
@@ -340,23 +475,33 @@ static void render_graph(const SurfaceGraph& graph, const VisualizerConfig& conf
     }
 }
 
-static void render_spline(const BezierSpline& spline, const VisualizerConfig& config) {
+static void render_spline(const BezierSpline& spline, const VisualizerConfig& config,
+                           bool use_tube = true) {
     if (spline.empty()) return;
 
-    auto polyline = spline.to_polyline_fixed(config.spline_samples);
-    if (polyline.size() < 2) return;
+    if (use_tube && config.render_as_tube) {
+        // Render as extruded tube
+        auto frames = compute_parallel_transport_frames(spline, config.spline_samples);
+        glEnable(GL_LIGHTING);
+        render_extruded_tube(frames, config.yarn_radius, config.tube_radial_segments);
+    } else {
+        // Legacy line rendering
+        glDisable(GL_LIGHTING);
+        auto polyline = spline.to_polyline_fixed(config.spline_samples);
+        if (polyline.size() < 2) return;
 
-    glBegin(GL_LINE_STRIP);
-    for (const auto& pt : polyline) {
-        glVertex3f(pt.x, pt.y, pt.z);
+        glBegin(GL_LINE_STRIP);
+        for (const auto& pt : polyline) {
+            glVertex3f(pt.x, pt.y, pt.z);
+        }
+        glEnd();
     }
-    glEnd();
 }
 
 static void render_geometry(const GeometryPath& geometry, const VisualizerConfig& config) {
     if (!g_show_geometry || !config.show_geometry) return;
 
-    glDisable(GL_LIGHTING);
+    // Set up for rendering (line width for fallback mode)
     glLineWidth(config.spline_line_width);
 
     // Check if we're viewing geometry history
@@ -365,7 +510,7 @@ static void render_geometry(const GeometryPath& geometry, const VisualizerConfig
         // Show the accumulated spline at the current snapshot
         const auto& snap = g_geometry_snapshots[g_current_geometry_snapshot];
         glColor3f(0.9f, 0.8f, 0.2f);  // Yellow/gold for yarn
-        render_spline(snap.spline, config);
+        render_spline(snap.spline, config, true);
 
         // Also highlight the most recently added segment in a different color
         if (!snap.spline.empty()) {
@@ -375,38 +520,42 @@ static void render_geometry(const GeometryPath& geometry, const VisualizerConfig
             if (!segments.empty()) {
                 BezierSpline last_segment;
                 last_segment.add_segment(segments.back());
-                render_spline(last_segment, config);
+                // Render latest segment with slightly larger radius for visibility
+                VisualizerConfig highlight_config = config;
+                highlight_config.yarn_radius = config.yarn_radius * 1.1f;
+                render_spline(last_segment, highlight_config, true);
 
                 // Draw a green sphere at the endpoint of the spline
-                Vec3 endpoint = segments.back().end();
                 glEnable(GL_LIGHTING);
                 glColor3f(0.2f, 1.0f, 0.2f);  // Bright green for endpoint
+                Vec3 endpoint = segments.back().end();
                 draw_sphere(endpoint.x, endpoint.y, endpoint.z, config.node_size * 1.5f);
-                glDisable(GL_LIGHTING);
 
                 // Draw a cyan sphere at the start point of the latest segment
-                Vec3 startpoint = segments.back().start();
-                glEnable(GL_LIGHTING);
                 glColor3f(0.2f, 1.0f, 1.0f);  // Cyan for start of latest segment
+                Vec3 startpoint = segments.back().start();
                 draw_sphere(startpoint.x, startpoint.y, startpoint.z, config.node_size * 1.2f);
-                glDisable(GL_LIGHTING);
             }
         }
         return;
     }
 
     // Show full geometry
-    auto polyline = geometry.to_polyline_fixed(config.spline_samples);
+    if (geometry.segments().empty()) return;
 
-    if (polyline.size() < 2) return;
-
-    // Draw the yarn path as a thick line
-    glColor3f(0.9f, 0.8f, 0.2f);  // Yellow/gold for yarn
-    glBegin(GL_LINE_STRIP);
-    for (const auto& pt : polyline) {
-        glVertex3f(pt.x, pt.y, pt.z);
+    // Build a combined spline from all segments for continuous rendering
+    BezierSpline combined_spline;
+    for (const auto& seg : geometry.segments()) {
+        for (const auto& bez : seg.curve.segments()) {
+            combined_spline.add_segment(bez);
+        }
     }
-    glEnd();
+
+    if (combined_spline.empty()) return;
+
+    // Draw the yarn path as extruded tube or line
+    glColor3f(0.9f, 0.8f, 0.2f);  // Yellow/gold for yarn
+    render_spline(combined_spline, config, true);
 }
 
 static void setup_lighting() {
@@ -678,13 +827,17 @@ VisualizerResult visualize_with_geometry(
     glfwSetScrollCallback(window, scroll_callback);
     glfwSetKeyCallback(window, key_callback);
 
+    // Create a mutable config with yarn radius from properties
+    VisualizerConfig config = viz_config;
+    //config.yarn_radius = yarn.radius;
+
     // Initialize camera
-    g_camera.distance = viz_config.camera_distance;
-    g_rotation_speed = viz_config.rotation_speed;
-    g_zoom_speed = viz_config.zoom_speed;
-    g_paused = !viz_config.auto_run;
+    g_camera.distance = config.camera_distance;
+    g_rotation_speed = config.rotation_speed;
+    g_zoom_speed = config.zoom_speed;
+    g_paused = !config.auto_run;
     g_show_nodes = true;
-    g_show_geometry = viz_config.show_geometry;
+    g_show_geometry = config.show_geometry;
 
     // Initialize history
     g_snapshots.clear();
@@ -754,7 +907,7 @@ VisualizerResult visualize_with_geometry(
             float prev_energy = energy;
             bool converged = false;
 
-            for (int i = 0; i < viz_config.steps_per_frame; ++i) {
+            for (int i = 0; i < config.steps_per_frame; ++i) {
                 SurfaceSolver::step(graph, yarn, solve_config);
                 iteration++;
 
@@ -810,8 +963,8 @@ VisualizerResult visualize_with_geometry(
 
             // Take snapshot at configured interval
             frame_count++;
-            if (frame_count % viz_config.snapshot_interval == 0) {
-                if (static_cast<int>(g_snapshots.size()) < viz_config.max_snapshots) {
+            if (frame_count % config.snapshot_interval == 0) {
+                if (static_cast<int>(g_snapshots.size()) < config.max_snapshots) {
                     g_snapshots.push_back(take_snapshot(graph, iteration, energy));
                 }
             }
@@ -853,9 +1006,9 @@ VisualizerResult visualize_with_geometry(
         }
 
         // Render
-        render_graph(graph, viz_config);
+        render_graph(graph, config);
         if (geometry_built) {
-            render_geometry(geometry, viz_config);
+            render_geometry(geometry, config);
         }
 
         // Swap buffers and poll events

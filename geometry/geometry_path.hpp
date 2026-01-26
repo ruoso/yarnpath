@@ -9,6 +9,9 @@
 
 namespace yarnpath {
 
+// Forward declarations
+class SurfaceGraph;
+
 // Geometry for a yarn segment (Bezier spline)
 struct SegmentGeometry {
     SegmentId segment_id;
@@ -40,9 +43,10 @@ struct Gauge;
 // Main output: 3D geometry for a yarn path
 class GeometryPath {
 public:
-    // Construction from YarnPath
+    // Construction from YarnPath using relaxed surface positions
     static GeometryPath from_yarn_path(
         const YarnPath& yarn_path,
+        const SurfaceGraph& surface,
         const YarnProperties& yarn,
         const Gauge& gauge
     );
@@ -71,6 +75,7 @@ public:
 
 private:
     friend GeometryPath build_geometry(const YarnPath& yarn_path,
+                                        const SurfaceGraph& surface,
                                         const YarnProperties& yarn,
                                         const Gauge& gauge);
 

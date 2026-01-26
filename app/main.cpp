@@ -6,7 +6,7 @@
 
 #include "geometry.hpp"
 #include "surface/surface.hpp"
-#include "surface/surface_visualizer.hpp"
+#include "visualizer/visualizer.hpp"
 #include "tokenizer.hpp"
 #include "parser.hpp"
 #include "emitter.hpp"
@@ -259,12 +259,16 @@ int main(int argc, char* argv[]) {
             solve_config.force_config.enable_floor = false;
 
             yarnpath::VisualizerConfig viz_config;
-            viz_config.steps_per_frame = 10;  // 10 iterations per frame = snapshot every 10 iterations
+            viz_config.window_title = "YarnPath - Surface & Geometry";
+            viz_config.steps_per_frame = 10;
             viz_config.auto_run = true;
+            viz_config.show_geometry = true;
 
-            log->info("Starting visualization...");
+            log->info("Starting visualization (surface + geometry)...");
+            log->info("Controls: n=toggle nodes, g=toggle geometry, space=pause, q=quit");
             yarnpath::VisualizerResult result =
-                yarnpath::visualize_relaxation(surface_graph, yarn, solve_config, viz_config);
+                yarnpath::visualize_with_geometry(
+                    surface_graph, yarn_path, yarn, gauge, solve_config, viz_config);
 
             log->info("Visualization complete: {} iterations, final energy = {}",
                       result.total_iterations, result.final_energy);
@@ -276,8 +280,30 @@ int main(int argc, char* argv[]) {
         yarnpath::YarnProperties yarn = yarnpath::YarnProperties::worsted();
         yarnpath::Gauge gauge = yarnpath::Gauge::worsted();
 
+        // Build and solve surface for geometry
+        log->debug("Building surface graph for geometry");
+        yarnpath::SurfaceBuildConfig build_config;
+        build_config.random_seed = 42;
+
+        yarnpath::SurfaceGraph surface_graph =
+            yarnpath::SurfaceBuilder::from_yarn_path(yarn_path, yarn, gauge, build_config);
+
+        log->debug("Solving surface relaxation for geometry");
+        yarnpath::SolveConfig solve_config;
+        solve_config.max_iterations = max_iterations;
+        solve_config.pre_solve_iterations = pre_solve_iterations;
+        solve_config.convergence_threshold = threshold;
+        solve_config.force_config.damping = damping;
+
+        yarnpath::SolveResult solve_result =
+            yarnpath::SurfaceSolver::solve(surface_graph, yarn, solve_config);
+
+        log->info("Surface relaxation: {} after {} iterations",
+                  solve_result.converged ? "converged" : "did not converge",
+                  solve_result.iterations);
+
         yarnpath::GeometryPath geometry = yarnpath::GeometryPath::from_yarn_path(
-            yarn_path, yarn, gauge);
+            yarn_path, surface_graph, yarn, gauge);
         log->debug("Built geometry with {} segment geometries",
                    geometry.segments().size());
 

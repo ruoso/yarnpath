@@ -1,5 +1,6 @@
-#include "surface_visualizer.hpp"
+#include "visualizer.hpp"
 #include "logging.hpp"
+#include <geometry/geometry_builder.hpp>
 
 #ifdef YARNPATH_HAS_VISUALIZATION
 
@@ -48,6 +49,10 @@ static std::vector<Snapshot> g_snapshots;
 static int g_current_snapshot = -1;  // -1 means live view
 static bool g_viewing_history = false;
 static bool g_request_fit_camera = false;  // Request camera fit on next frame
+
+// Display toggles
+static bool g_show_nodes = true;
+static bool g_show_geometry = true;
 
 static void mouse_button_callback(GLFWwindow* window, int button, int action, int mods) {
     (void)window;
@@ -121,6 +126,12 @@ static void key_callback(GLFWwindow* window, int key, int scancode, int action, 
             g_camera.yaw = 0.0f;
             g_camera.pitch = 0.3f;
             g_request_fit_camera = true;
+        } else if (key == GLFW_KEY_N) {
+            // Toggle node display
+            g_show_nodes = !g_show_nodes;
+        } else if (key == GLFW_KEY_G) {
+            // Toggle geometry display
+            g_show_geometry = !g_show_geometry;
         } else if (key == GLFW_KEY_LEFT) {
             // Previous frame
             navigate_history(-1);
@@ -240,6 +251,8 @@ static void draw_line(float x1, float y1, float z1, float x2, float y2, float z2
 }
 
 static void render_graph(const SurfaceGraph& graph, const VisualizerConfig& config) {
+    if (!g_show_nodes) return;
+
     // Draw edges first (behind nodes)
     glDisable(GL_LIGHTING);
     glLineWidth(2.0f);
@@ -280,6 +293,26 @@ static void render_graph(const SurfaceGraph& graph, const VisualizerConfig& conf
         }
         draw_sphere(node.position.x, node.position.y, node.position.z, config.node_size);
     }
+}
+
+static void render_geometry(const GeometryPath& geometry, const VisualizerConfig& config) {
+    if (!g_show_geometry || !config.show_geometry) return;
+
+    glDisable(GL_LIGHTING);
+    glLineWidth(config.spline_line_width);
+
+    // Get polyline from geometry
+    auto polyline = geometry.to_polyline_fixed(config.spline_samples);
+
+    if (polyline.size() < 2) return;
+
+    // Draw the yarn path as a thick line
+    glColor3f(0.9f, 0.8f, 0.2f);  // Yellow/gold for yarn
+    glBegin(GL_LINE_STRIP);
+    for (const auto& pt : polyline) {
+        glVertex3f(pt.x, pt.y, pt.z);
+    }
+    glEnd();
 }
 
 static void setup_lighting() {
@@ -336,7 +369,7 @@ VisualizerResult visualize_relaxation(
     glfwShowWindow(window);
     glfwFocusWindow(window);
 
-    // Do an initial
+    // Do an initial clear
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glfwSwapBuffers(window);
     glfwPollEvents();
@@ -352,6 +385,8 @@ VisualizerResult visualize_relaxation(
     g_rotation_speed = viz_config.rotation_speed;
     g_zoom_speed = viz_config.zoom_speed;
     g_paused = !viz_config.auto_run;
+    g_show_nodes = true;
+    g_show_geometry = false;  // No geometry in surface-only mode
 
     // Initialize history
     g_snapshots.clear();
@@ -377,6 +412,7 @@ VisualizerResult visualize_relaxation(
     log->info("Visualizer started. Controls:");
     log->info("  mouse drag=rotate, scroll=zoom");
     log->info("  space=pause/resume, q=quit, r=reset camera");
+    log->info("  n=toggle nodes, g=toggle geometry");
     log->info("  left/right=frame by frame, pgup/pgdn=30 frames");
     log->info("  home=first frame, end=live view");
 
@@ -496,6 +532,226 @@ VisualizerResult visualize_relaxation(
     return result;
 }
 
+VisualizerResult visualize_with_geometry(
+    SurfaceGraph& graph,
+    const YarnPath& yarn_path,
+    const YarnProperties& yarn,
+    const Gauge& gauge,
+    const SolveConfig& solve_config,
+    const VisualizerConfig& viz_config) {
+
+    auto log = yarnpath::logging::get_logger();
+    VisualizerResult result;
+
+    // Initialize GLFW
+    if (!glfwInit()) {
+        log->error("Failed to initialize GLFW");
+        return result;
+    }
+
+    // Window hints for visibility
+    glfwWindowHint(GLFW_VISIBLE, GLFW_TRUE);
+    glfwWindowHint(GLFW_FOCUSED, GLFW_TRUE);
+
+    // Create window
+    GLFWwindow* window = glfwCreateWindow(
+        viz_config.window_width,
+        viz_config.window_height,
+        viz_config.window_title.c_str(),
+        nullptr, nullptr);
+
+    if (!window) {
+        log->error("Failed to create GLFW window");
+        glfwTerminate();
+        return result;
+    }
+
+    glfwMakeContextCurrent(window);
+    glfwSwapInterval(1);  // Enable vsync
+
+    // Show window and ensure it's visible
+    glfwShowWindow(window);
+    glfwFocusWindow(window);
+
+    // Do an initial clear
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glfwSwapBuffers(window);
+    glfwPollEvents();
+
+    // Set up callbacks
+    glfwSetMouseButtonCallback(window, mouse_button_callback);
+    glfwSetCursorPosCallback(window, cursor_position_callback);
+    glfwSetScrollCallback(window, scroll_callback);
+    glfwSetKeyCallback(window, key_callback);
+
+    // Initialize camera
+    g_camera.distance = viz_config.camera_distance;
+    g_rotation_speed = viz_config.rotation_speed;
+    g_zoom_speed = viz_config.zoom_speed;
+    g_paused = !viz_config.auto_run;
+    g_show_nodes = true;
+    g_show_geometry = viz_config.show_geometry;
+
+    // Initialize history
+    g_snapshots.clear();
+    g_current_snapshot = -1;
+    g_viewing_history = false;
+
+    // Initial camera fit
+    fit_camera_to_graph(graph, g_camera);
+
+    // Set up OpenGL
+    glEnable(GL_DEPTH_TEST);
+    setup_lighting();
+    glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
+
+    int iteration = 0;
+    int frame_count = 0;
+    float energy = graph.compute_energy();
+    int last_logged_snapshot = -1;
+    bool geometry_built = false;
+    GeometryPath geometry;
+
+    // Take initial snapshot
+    g_snapshots.push_back(take_snapshot(graph, iteration, energy));
+
+    log->info("Visualizer started (with geometry). Controls:");
+    log->info("  mouse drag=rotate, scroll=zoom");
+    log->info("  space=pause/resume, q=quit, r=reset camera");
+    log->info("  n=toggle nodes, g=toggle geometry");
+    log->info("  left/right=frame by frame, pgup/pgdn=30 frames");
+    log->info("  home=first frame, end=live view");
+
+    // Main loop
+    while (!glfwWindowShouldClose(window)) {
+        // Handle window resize
+        int width, height;
+        glfwGetFramebufferSize(window, &width, &height);
+        glViewport(0, 0, width, height);
+
+        // Set up projection
+        glMatrixMode(GL_PROJECTION);
+        glLoadIdentity();
+        float aspect = static_cast<float>(width) / static_cast<float>(height);
+        float fov = 45.0f * 3.14159f / 180.0f;
+        float near = 0.1f;
+        float far = 1000.0f;
+        float top = near * std::tan(fov / 2.0f);
+        float right = top * aspect;
+        glFrustum(-right, right, -top, top, near, far);
+
+        // Fit camera when requested (R key)
+        if (g_request_fit_camera) {
+            fit_camera_to_graph(graph, g_camera);
+            g_request_fit_camera = false;
+        }
+
+        // Set up modelview
+        glMatrixMode(GL_MODELVIEW);
+        glLoadIdentity();
+        g_camera.apply();
+
+        // Clear
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        // Run solver steps if not paused and not viewing history
+        if (!g_paused && !g_viewing_history) {
+            float prev_energy = energy;
+            bool converged = false;
+
+            for (int i = 0; i < viz_config.steps_per_frame; ++i) {
+                SurfaceSolver::step(graph, yarn, solve_config);
+                iteration++;
+
+                // Check convergence
+                float new_energy = graph.compute_energy();
+                if (std::abs(new_energy - energy) < solve_config.convergence_threshold) {
+                    g_paused = true;
+                    converged = true;
+                    log->info("Converged at iteration {}, energy={}", iteration, new_energy);
+                    break;
+                }
+                energy = new_energy;
+
+                if (iteration >= solve_config.max_iterations) {
+                    g_paused = true;
+                    converged = true;
+                    log->info("Max iterations reached, energy={}", energy);
+                    break;
+                }
+            }
+
+            // Build geometry when converged
+            if (converged && !geometry_built) {
+                log->info("Building geometry from relaxed surface...");
+                geometry = build_geometry(yarn_path, graph, yarn, gauge);
+                geometry_built = true;
+                log->info("Geometry built with {} segments", geometry.segments().size());
+            }
+
+            // Log progress periodically (every 100 iterations)
+            if (iteration % 100 == 0) {
+                float delta = energy - prev_energy;
+                log->debug("Iteration {}: energy={:.6f}, delta={:.6f}", iteration, energy, delta);
+            }
+
+            // Take snapshot at configured interval
+            frame_count++;
+            if (frame_count % viz_config.snapshot_interval == 0) {
+                if (static_cast<int>(g_snapshots.size()) < viz_config.max_snapshots) {
+                    g_snapshots.push_back(take_snapshot(graph, iteration, energy));
+                }
+            }
+        }
+
+        // If viewing history, apply the snapshot to the graph for rendering
+        if (g_viewing_history && g_current_snapshot >= 0 &&
+            g_current_snapshot < static_cast<int>(g_snapshots.size())) {
+            apply_snapshot(graph, g_snapshots[g_current_snapshot]);
+
+            // Log frame info when snapshot changes
+            if (g_current_snapshot != last_logged_snapshot) {
+                const auto& snap = g_snapshots[g_current_snapshot];
+                log->info("Frame {}/{}: iteration={}, energy={}",
+                         g_current_snapshot + 1, g_snapshots.size(),
+                         snap.iteration, snap.energy);
+                last_logged_snapshot = g_current_snapshot;
+            }
+        }
+
+        // Render
+        render_graph(graph, viz_config);
+        if (geometry_built) {
+            render_geometry(geometry, viz_config);
+        }
+
+        // Swap buffers and poll events
+        glfwSwapBuffers(window);
+        glfwPollEvents();
+    }
+
+    // If we were viewing history, restore the final state
+    if (g_viewing_history && !g_snapshots.empty()) {
+        apply_snapshot(graph, g_snapshots.back());
+    }
+
+    result.completed = true;
+    result.total_iterations = iteration;
+    result.final_energy = energy;
+
+    // Clean up global state
+    g_snapshots.clear();
+    g_current_snapshot = -1;
+    g_viewing_history = false;
+
+    glfwDestroyWindow(window);
+    glfwTerminate();
+
+    log->info("Visualization ended. {} snapshots recorded.", frame_count + 1);
+
+    return result;
+}
+
 bool visualization_available() {
     return true;
 }
@@ -509,6 +765,19 @@ namespace yarnpath {
 VisualizerResult visualize_relaxation(
     SurfaceGraph&,
     const YarnProperties&,
+    const SolveConfig&,
+    const VisualizerConfig&) {
+
+    auto log = yarnpath::logging::get_logger();
+    log->error("Visualization not available - compile with GLFW and OpenGL");
+    return VisualizerResult{};
+}
+
+VisualizerResult visualize_with_geometry(
+    SurfaceGraph&,
+    const YarnPath&,
+    const YarnProperties&,
+    const Gauge&,
     const SolveConfig&,
     const VisualizerConfig&) {
 

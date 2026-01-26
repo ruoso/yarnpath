@@ -1,5 +1,6 @@
 #include "geometry_path.hpp"
 #include "geometry_builder.hpp"
+#include <surface/surface_graph.hpp>
 #include <yarn/yarn_properties.hpp>
 #include <yarn/gauge.hpp>
 #include "logging.hpp"
@@ -11,10 +12,11 @@ namespace yarnpath {
 
 GeometryPath GeometryPath::from_yarn_path(
     const YarnPath& yarn_path,
+    const SurfaceGraph& surface,
     const YarnProperties& yarn,
     const Gauge& gauge) {
 
-    return build_geometry(yarn_path, yarn, gauge);
+    return build_geometry(yarn_path, surface, yarn, gauge);
 }
 
 const SegmentGeometry* GeometryPath::get_segment(SegmentId id) const {

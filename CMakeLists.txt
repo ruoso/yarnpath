@@ -44,6 +44,7 @@ add_subdirectory(stitch_graph)
 add_subdirectory(yarn_path)
 add_subdirectory(geometry)
 add_subdirectory(surface)
+add_subdirectory(visualizer)
 
 # Application
 add_subdirectory(app)

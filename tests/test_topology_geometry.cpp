@@ -1,10 +1,29 @@
 #include <gtest/gtest.h>
 #include "geometry.hpp"
 #include "yarn_path.hpp"
+#include "surface/surface.hpp"
 #include "test_helpers.hpp"
 
 using namespace yarnpath;
 using namespace yarnpath::test;
+
+// Helper to build surface graph for testing
+static SurfaceGraph build_test_surface(const YarnPath& yarn_path,
+                                        const YarnProperties& yarn,
+                                        const Gauge& gauge) {
+    SurfaceBuildConfig build_config;
+    build_config.random_seed = 42;
+
+    SurfaceGraph surface = SurfaceBuilder::from_yarn_path(yarn_path, yarn, gauge, build_config);
+
+    SolveConfig solve_config;
+    solve_config.max_iterations = 1000;
+    solve_config.convergence_threshold = 1e-4f;
+
+    SurfaceSolver::solve(surface, yarn, solve_config);
+
+    return surface;
+}
 
 // Topology-geometry integration tests verify that the topology
 // (parent-child relationships) maps correctly to geometry.
@@ -44,10 +63,15 @@ TEST(TopologyGeometryTest, GeometryFromTopology) {
     StitchGraph graph = StitchGraph::from_instructions(pattern);
     YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
 
+    YarnProperties yarn = YarnProperties::worsted();
+    Gauge gauge = Gauge::worsted();
+    SurfaceGraph surface = build_test_surface(yarn_path, yarn, gauge);
+
     GeometryPath geometry = GeometryPath::from_yarn_path(
         yarn_path,
-        YarnProperties::worsted(),
-        Gauge::worsted()
+        surface,
+        yarn,
+        gauge
     );
 
     // Geometry should have same number of segments as topology
@@ -63,10 +87,15 @@ TEST(TopologyGeometryTest, VerticalStacking) {
     StitchGraph graph = StitchGraph::from_instructions(pattern);
     YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
 
+    YarnProperties yarn = YarnProperties::worsted();
+    Gauge gauge = Gauge::worsted();
+    SurfaceGraph surface = build_test_surface(yarn_path, yarn, gauge);
+
     GeometryPath geometry = GeometryPath::from_yarn_path(
         yarn_path,
-        YarnProperties::worsted(),
-        Gauge::worsted()
+        surface,
+        yarn,
+        gauge
     );
 
     // Get bounding box - should have vertical extent

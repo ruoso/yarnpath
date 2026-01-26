@@ -1,8 +1,9 @@
-#ifndef YARNPATH_SURFACE_VISUALIZER_HPP
-#define YARNPATH_SURFACE_VISUALIZER_HPP
+#ifndef YARNPATH_VISUALIZER_HPP
+#define YARNPATH_VISUALIZER_HPP
 
-#include "surface_graph.hpp"
-#include "surface_solver.hpp"
+#include <surface/surface_graph.hpp>
+#include <surface/surface_solver.hpp>
+#include <geometry/geometry_path.hpp>
 #include <yarn/yarn_properties.hpp>
 #include <functional>
 #include <string>
@@ -13,13 +14,18 @@ namespace yarnpath {
 struct VisualizerConfig {
     int window_width = 800;
     int window_height = 600;
-    std::string window_title = "YarnPath Surface Relaxation";
+    std::string window_title = "YarnPath Visualization";
 
     // Rendering options
     float node_size = 0.1f;           // Size of node spheres
     bool show_continuity = true;      // Show continuity edges
     bool show_passthrough = true;     // Show passthrough edges
     bool color_by_type = true;        // Color nodes by type
+
+    // Geometry rendering
+    bool show_geometry = true;        // Show geometry splines
+    float spline_line_width = 3.0f;   // Line width for splines
+    int spline_samples = 20;          // Samples per Bezier segment
 
     // Camera
     float camera_distance = 20.0f;    // Initial camera distance
@@ -43,11 +49,22 @@ struct VisualizerResult {
     float final_energy = 0.0f;        // Final system energy
 };
 
-// Run the interactive visualizer
+// Run the interactive visualizer for surface relaxation
 // Returns when window is closed
 VisualizerResult visualize_relaxation(
     SurfaceGraph& graph,
     const YarnProperties& yarn,
+    const SolveConfig& solve_config,
+    const VisualizerConfig& viz_config = VisualizerConfig{}
+);
+
+// Run the interactive visualizer showing both surface and geometry
+// The geometry is rebuilt after surface relaxation converges
+VisualizerResult visualize_with_geometry(
+    SurfaceGraph& graph,
+    const YarnPath& yarn_path,
+    const YarnProperties& yarn,
+    const Gauge& gauge,
     const SolveConfig& solve_config,
     const VisualizerConfig& viz_config = VisualizerConfig{}
 );
@@ -57,4 +74,4 @@ bool visualization_available();
 
 }  // namespace yarnpath
 
-#endif // YARNPATH_SURFACE_VISUALIZER_HPP
+#endif // YARNPATH_VISUALIZER_HPP

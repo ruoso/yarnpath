@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include "geometry.hpp"
 #include "yarn_path.hpp"
+#include "surface/surface.hpp"
 #include "test_helpers.hpp"
 #include <algorithm>
 #include <cmath>
@@ -9,6 +10,24 @@
 using namespace yarnpath;
 using namespace yarnpath::test;
 
+// Helper to build surface graph for testing
+static SurfaceGraph build_test_surface(const YarnPath& yarn_path,
+                                        const YarnProperties& yarn,
+                                        const Gauge& gauge) {
+    SurfaceBuildConfig build_config;
+    build_config.random_seed = 42;
+
+    SurfaceGraph surface = SurfaceBuilder::from_yarn_path(yarn_path, yarn, gauge, build_config);
+
+    SolveConfig solve_config;
+    solve_config.max_iterations = 1000;
+    solve_config.convergence_threshold = 1e-4f;
+
+    SurfaceSolver::solve(surface, yarn, solve_config);
+
+    return surface;
+}
+
 // ============================================
 // GeometryPath Integration Tests
 // ============================================
@@ -16,8 +35,12 @@ using namespace yarnpath::test;
 TEST(GeometryPathTest, EmptyYarnPath) {
     YarnPath empty_yarn_path;
 
+    // Build an empty surface for empty yarn path
+    SurfaceGraph surface;
+
     GeometryPath geometry = GeometryPath::from_yarn_path(
         empty_yarn_path,
+        surface,
         YarnProperties::worsted(),
         Gauge::worsted()
     );
@@ -30,10 +53,15 @@ TEST(GeometryPathTest, CastOnOnly) {
     StitchGraph graph = StitchGraph::from_instructions(pattern);
     YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
 
+    YarnProperties yarn = YarnProperties::worsted();
+    Gauge gauge = Gauge::worsted();
+    SurfaceGraph surface = build_test_surface(yarn_path, yarn, gauge);
+
     GeometryPath geometry = GeometryPath::from_yarn_path(
         yarn_path,
-        YarnProperties::worsted(),
-        Gauge::worsted()
+        surface,
+        yarn,
+        gauge
     );
 
     // Should have geometry segments
@@ -54,10 +82,15 @@ TEST(GeometryPathTest, StockinettePattern) {
     StitchGraph graph = StitchGraph::from_instructions(pattern);
     YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
 
+    YarnProperties yarn = YarnProperties::worsted();
+    Gauge gauge = Gauge::worsted();
+    SurfaceGraph surface = build_test_surface(yarn_path, yarn, gauge);
+
     GeometryPath geometry = GeometryPath::from_yarn_path(
         yarn_path,
-        YarnProperties::worsted(),
-        Gauge::worsted()
+        surface,
+        yarn,
+        gauge
     );
 
     // Should have geometry segments
@@ -76,10 +109,15 @@ TEST(GeometryPathTest, PolylineGeneration) {
     StitchGraph graph = StitchGraph::from_instructions(pattern);
     YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
 
+    YarnProperties yarn = YarnProperties::worsted();
+    Gauge gauge = Gauge::worsted();
+    SurfaceGraph surface = build_test_surface(yarn_path, yarn, gauge);
+
     GeometryPath geometry = GeometryPath::from_yarn_path(
         yarn_path,
-        YarnProperties::worsted(),
-        Gauge::worsted()
+        surface,
+        yarn,
+        gauge
     );
 
     // Test fixed samples polyline
@@ -100,10 +138,15 @@ TEST(GeometryPathTest, BoundingBox) {
     StitchGraph graph = StitchGraph::from_instructions(pattern);
     YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
 
+    YarnProperties yarn = YarnProperties::worsted();
+    Gauge gauge = Gauge::worsted();
+    SurfaceGraph surface = build_test_surface(yarn_path, yarn, gauge);
+
     GeometryPath geometry = GeometryPath::from_yarn_path(
         yarn_path,
-        YarnProperties::worsted(),
-        Gauge::worsted()
+        surface,
+        yarn,
+        gauge
     );
 
     auto [min_pt, max_pt] = geometry.bounding_box();
@@ -121,10 +164,15 @@ TEST(GeometryPathTest, TotalArcLength) {
     StitchGraph graph = StitchGraph::from_instructions(pattern);
     YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
 
+    YarnProperties yarn = YarnProperties::worsted();
+    Gauge gauge = Gauge::worsted();
+    SurfaceGraph surface = build_test_surface(yarn_path, yarn, gauge);
+
     GeometryPath geometry = GeometryPath::from_yarn_path(
         yarn_path,
-        YarnProperties::worsted(),
-        Gauge::worsted()
+        surface,
+        yarn,
+        gauge
     );
 
     float total_length = geometry.total_arc_length();
@@ -140,8 +188,11 @@ TEST(GeometryPathTest, Validation) {
     YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
 
     YarnProperties yarn = YarnProperties::worsted();
+    Gauge gauge = Gauge::worsted();
+    SurfaceGraph surface = build_test_surface(yarn_path, yarn, gauge);
+
     GeometryPath geometry = GeometryPath::from_yarn_path(
-        yarn_path, yarn, Gauge::worsted()
+        yarn_path, surface, yarn, gauge
     );
 
     ValidationResult result = geometry.validate(yarn);
@@ -157,10 +208,15 @@ TEST(GeometryPathTest, ObjExport) {
     StitchGraph graph = StitchGraph::from_instructions(pattern);
     YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
 
+    YarnProperties yarn = YarnProperties::worsted();
+    Gauge gauge = Gauge::worsted();
+    SurfaceGraph surface = build_test_surface(yarn_path, yarn, gauge);
+
     GeometryPath geometry = GeometryPath::from_yarn_path(
         yarn_path,
-        YarnProperties::worsted(),
-        Gauge::worsted()
+        surface,
+        yarn,
+        gauge
     );
 
     std::string obj = geometry.to_obj(5);
@@ -179,11 +235,19 @@ TEST(GeometryPathTest, DifferentYarnProperties) {
     YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
 
     // Generate with different yarn types
+    YarnProperties yarn_worsted = YarnProperties::worsted();
+    Gauge gauge_worsted = Gauge::worsted();
+    SurfaceGraph surface_worsted = build_test_surface(yarn_path, yarn_worsted, gauge_worsted);
+
     auto geom_worsted = GeometryPath::from_yarn_path(
-        yarn_path, YarnProperties::worsted(), Gauge::worsted());
+        yarn_path, surface_worsted, yarn_worsted, gauge_worsted);
+
+    YarnProperties yarn_fingering = YarnProperties::fingering();
+    Gauge gauge_fingering = Gauge::fingering();
+    SurfaceGraph surface_fingering = build_test_surface(yarn_path, yarn_fingering, gauge_fingering);
 
     auto geom_fingering = GeometryPath::from_yarn_path(
-        yarn_path, YarnProperties::fingering(), Gauge::fingering());
+        yarn_path, surface_fingering, yarn_fingering, gauge_fingering);
 
     // Both should generate geometry
     EXPECT_FALSE(geom_worsted.segments().empty());
@@ -201,10 +265,15 @@ TEST(GeometryPathTest, SegmentGeometryAccess) {
     StitchGraph graph = StitchGraph::from_instructions(pattern);
     YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
 
+    YarnProperties yarn = YarnProperties::worsted();
+    Gauge gauge = Gauge::worsted();
+    SurfaceGraph surface = build_test_surface(yarn_path, yarn, gauge);
+
     GeometryPath geometry = GeometryPath::from_yarn_path(
         yarn_path,
-        YarnProperties::worsted(),
-        Gauge::worsted()
+        surface,
+        yarn,
+        gauge
     );
 
     // Access individual segments

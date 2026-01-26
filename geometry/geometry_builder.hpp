@@ -42,18 +42,6 @@ BezierSpline make_connector(const YarnProperties& yarn,
                             const Vec3& from, const Vec3& from_dir,
                             const Vec3& to, const Vec3& to_dir);
 
-// Helper: build the curve for a single segment
-// - For loop segments: creates cylinder-wrap loop shape (front-to-back in Z)
-// - For non-loop segments: simple connector curve
-// - is_significant: if true, allow direction changes (passthrough/loop points)
-BezierSpline build_segment_curve(
-    const Vec3& prev_pos,
-    const Vec3& curr_pos,
-    const Vec3& next_pos,
-    bool forms_loop,
-    const std::vector<Vec3>& child_positions,
-    const YarnProperties& yarn,
-    bool current_z_positive);
 
 }  // namespace yarnpath
 

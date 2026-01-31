@@ -9,7 +9,7 @@ void print_usage(const char* program_name) {
     std::cerr << "YarnPath - Convert knitting patterns to 3D geometry\n";
     std::cerr << "\n";
     std::cerr << "Commands:\n";
-    std::cerr << "  generate-makefile  Create Makefile for pipeline\n";
+    std::cerr << "  generate-makefile  Create Makefile for pipeline (use -C <dir>, optionally -c <config>)\n";
     std::cerr << "  parse              Convert pattern text to instructions JSON\n";
     std::cerr << "  stitch             Build stitch graph from instructions JSON\n";
     std::cerr << "  yarn               Build yarn path topology from stitch graph JSON\n";

@@ -53,11 +53,13 @@ struct Camera {
 // Global state for callbacks
 static Camera g_camera;
 static bool g_mouse_dragging = false;
+static bool g_mouse_panning = false;  // true when shift is held during drag
 static double g_last_mouse_x = 0;
 static double g_last_mouse_y = 0;
 static bool g_paused = false;
 static float g_rotation_speed = 0.5f;
 static float g_zoom_speed = 1.1f;
+static float g_pan_speed = 0.01f;
 
 // History navigation
 static std::vector<Snapshot> g_snapshots;
@@ -77,9 +79,9 @@ static int g_last_logged_geometry_snapshot = -2;  // Track for logging
 
 static void mouse_button_callback(GLFWwindow* window, int button, int action, int mods) {
     (void)window;
-    (void)mods;
     if (button == GLFW_MOUSE_BUTTON_LEFT) {
         g_mouse_dragging = (action == GLFW_PRESS);
+        g_mouse_panning = (action == GLFW_PRESS) && (mods & GLFW_MOD_SHIFT);
     }
 }
 
@@ -88,11 +90,42 @@ static void cursor_position_callback(GLFWwindow* window, double xpos, double ypo
     if (g_mouse_dragging) {
         float dx = static_cast<float>(xpos - g_last_mouse_x);
         float dy = static_cast<float>(ypos - g_last_mouse_y);
-        g_camera.yaw += dx * g_rotation_speed * 0.01f;
-        g_camera.pitch += dy * g_rotation_speed * 0.01f;
-        // Clamp pitch
-        if (g_camera.pitch > 1.5f) g_camera.pitch = 1.5f;
-        if (g_camera.pitch < -1.5f) g_camera.pitch = -1.5f;
+        
+        if (g_mouse_panning) {
+            // Pan: move camera target in screen-aligned directions
+            // Calculate right and up vectors based on current camera orientation
+            float cos_yaw = std::cos(g_camera.yaw);
+            float sin_yaw = std::sin(g_camera.yaw);
+            float cos_pitch = std::cos(g_camera.pitch);
+            float sin_pitch = std::sin(g_camera.pitch);
+            
+            // Right vector (perpendicular to view direction, always horizontal)
+            float right_x = cos_yaw;
+            float right_z = -sin_yaw;
+            
+            // Up vector (perpendicular to both view and right, accounts for pitch)
+            // When pitch=0, up is (0,1,0). As pitch increases, up tilts.
+            float up_x = -sin_yaw * sin_pitch;
+            float up_y = cos_pitch;
+            float up_z = -cos_yaw * sin_pitch;
+            
+            // Scale pan by distance for consistent feel
+            float pan_scale = g_camera.distance * g_pan_speed;
+            
+            // Move target: right for +dx, up for -dy
+            g_camera.target_x -= dx * right_x * pan_scale;
+            g_camera.target_z -= dx * right_z * pan_scale;
+            g_camera.target_x += dy * up_x * pan_scale;
+            g_camera.target_y += dy * up_y * pan_scale;
+            g_camera.target_z += dy * up_z * pan_scale;
+        } else {
+            // Rotate
+            g_camera.yaw += dx * g_rotation_speed * 0.01f;
+            g_camera.pitch += dy * g_rotation_speed * 0.01f;
+            // Clamp pitch
+            if (g_camera.pitch > 1.5f) g_camera.pitch = 1.5f;
+            if (g_camera.pitch < -1.5f) g_camera.pitch = -1.5f;
+        }
     }
     g_last_mouse_x = xpos;
     g_last_mouse_y = ypos;

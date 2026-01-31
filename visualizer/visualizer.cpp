@@ -336,6 +336,102 @@ static void draw_line(float x1, float y1, float z1, float x2, float y2, float z2
     glEnd();
 }
 
+// Render XYZ orientation gizmo in the corner of the screen
+static void render_axis_gizmo(int window_width, int window_height, const Camera& camera) {
+    int gizmo_size = 80;  // Size of the gizmo viewport in pixels
+    int margin = 10;      // Margin from corner
+    
+    // Save current state
+    glPushAttrib(GL_ALL_ATTRIB_BITS);
+    glMatrixMode(GL_PROJECTION);
+    glPushMatrix();
+    glMatrixMode(GL_MODELVIEW);
+    glPushMatrix();
+    
+    // Set up viewport in bottom-left corner
+    glViewport(margin, margin, gizmo_size, gizmo_size);
+    
+    // Set up orthographic projection
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    float ortho_size = 1.5f;
+    glOrtho(-ortho_size, ortho_size, -ortho_size, ortho_size, -10.0f, 10.0f);
+    
+    // Apply only the rotation part of the camera (no translation or zoom)
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+    glRotatef(camera.pitch * 180.0f / 3.14159f, 1, 0, 0);
+    glRotatef(camera.yaw * 180.0f / 3.14159f, 0, 1, 0);
+    
+    // Clear depth buffer for this region so gizmo is always visible
+    glClear(GL_DEPTH_BUFFER_BIT);
+    
+    // Disable lighting for simple colored lines
+    glDisable(GL_LIGHTING);
+    glLineWidth(2.0f);
+    
+    float axis_length = 1.0f;
+    float arrow_size = 0.15f;
+    
+    // X axis - Red
+    glColor3f(1.0f, 0.2f, 0.2f);
+    glBegin(GL_LINES);
+    glVertex3f(0, 0, 0);
+    glVertex3f(axis_length, 0, 0);
+    glEnd();
+    // Arrow head
+    glBegin(GL_TRIANGLES);
+    glVertex3f(axis_length, 0, 0);
+    glVertex3f(axis_length - arrow_size, arrow_size * 0.5f, 0);
+    glVertex3f(axis_length - arrow_size, -arrow_size * 0.5f, 0);
+    glVertex3f(axis_length, 0, 0);
+    glVertex3f(axis_length - arrow_size, 0, arrow_size * 0.5f);
+    glVertex3f(axis_length - arrow_size, 0, -arrow_size * 0.5f);
+    glEnd();
+    
+    // Y axis - Green
+    glColor3f(0.2f, 1.0f, 0.2f);
+    glBegin(GL_LINES);
+    glVertex3f(0, 0, 0);
+    glVertex3f(0, axis_length, 0);
+    glEnd();
+    // Arrow head
+    glBegin(GL_TRIANGLES);
+    glVertex3f(0, axis_length, 0);
+    glVertex3f(arrow_size * 0.5f, axis_length - arrow_size, 0);
+    glVertex3f(-arrow_size * 0.5f, axis_length - arrow_size, 0);
+    glVertex3f(0, axis_length, 0);
+    glVertex3f(0, axis_length - arrow_size, arrow_size * 0.5f);
+    glVertex3f(0, axis_length - arrow_size, -arrow_size * 0.5f);
+    glEnd();
+    
+    // Z axis - Blue
+    glColor3f(0.2f, 0.4f, 1.0f);
+    glBegin(GL_LINES);
+    glVertex3f(0, 0, 0);
+    glVertex3f(0, 0, axis_length);
+    glEnd();
+    // Arrow head
+    glBegin(GL_TRIANGLES);
+    glVertex3f(0, 0, axis_length);
+    glVertex3f(arrow_size * 0.5f, 0, axis_length - arrow_size);
+    glVertex3f(-arrow_size * 0.5f, 0, axis_length - arrow_size);
+    glVertex3f(0, 0, axis_length);
+    glVertex3f(0, arrow_size * 0.5f, axis_length - arrow_size);
+    glVertex3f(0, -arrow_size * 0.5f, axis_length - arrow_size);
+    glEnd();
+    
+    // Restore state
+    glMatrixMode(GL_MODELVIEW);
+    glPopMatrix();
+    glMatrixMode(GL_PROJECTION);
+    glPopMatrix();
+    glPopAttrib();
+    
+    // Restore full viewport
+    glViewport(0, 0, window_width, window_height);
+}
+
 // Find a vector perpendicular to the given vector
 static Vec3 find_perpendicular(const Vec3& v) {
     // Choose the axis that is least aligned with v
@@ -781,6 +877,9 @@ VisualizerResult visualize_relaxation(
         // Render
         render_graph(graph, viz_config);
 
+        // Render XYZ orientation gizmo
+        render_axis_gizmo(width, height, g_camera);
+
         // Swap buffers and poll events
         glfwSwapBuffers(window);
         glfwPollEvents();
@@ -1043,6 +1142,9 @@ VisualizerResult visualize_with_geometry(
         if (geometry_built) {
             render_geometry(geometry, config);
         }
+
+        // Render XYZ orientation gizmo
+        render_axis_gizmo(width, height, g_camera);
 
         // Swap buffers and poll events
         glfwSwapBuffers(window);

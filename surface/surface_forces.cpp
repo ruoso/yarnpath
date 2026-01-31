@@ -475,13 +475,16 @@ void compute_collision_forces(SurfaceGraph& graph, float min_distance, float str
             NodeId b = static_cast<NodeId>(j);
             if (connected.count({a, b})) continue;
 
-            // Check distance
+            // Check distance using squared distance first (avoids sqrt)
             Vec3 delta = nodes[j].position - nodes[i].position;
-            float dist = delta.length();
+            float dist_sq = delta.length_squared();
+            float min_dist_sq = min_distance * min_distance;
 
             // Apply repulsion force when closer than min_distance
             // Force falls off with distance: F = strength * (1 - dist/min_distance)^2
-            if (dist < min_distance && dist > 1e-6f) {
+            if (dist_sq < min_dist_sq && dist_sq > 1e-12f) {
+                // Only compute sqrt when we know we need it
+                float dist = std::sqrt(dist_sq);
                 float overlap_ratio = 1.0f - dist / min_distance;
                 float force_magnitude = strength * overlap_ratio * overlap_ratio;
 

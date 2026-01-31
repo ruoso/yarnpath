@@ -61,30 +61,45 @@ SolveResult SurfaceSolver::solve(SurfaceGraph& graph,
     }
 
     float prev_energy = graph.compute_energy();
+    int energy_check_interval = 10;  // Adaptive: check every N iterations
 
     for (int iter = 0; iter < config.max_iterations; ++iter) {
         // Single solver step
         step(graph, yarn, config);
 
-        // Check convergence
-        float current_energy = graph.compute_energy();
-        float energy_change = std::abs(current_energy - prev_energy);
+        // Check convergence periodically (not every iteration to save compute)
+        bool should_check = ((iter + 1) % energy_check_interval == 0) ||
+                           (iter == config.max_iterations - 1);
 
-        if (energy_change < config.convergence_threshold) {
-            result.converged = true;
-            result.iterations = iter + 1;
-            result.final_energy = current_energy;
+        if (should_check) {
+            float current_energy = graph.compute_energy();
+            float energy_change = std::abs(current_energy - prev_energy);
 
-            log->info("SurfaceSolver: converged at iteration {} with energy = {}",
-                      result.iterations, result.final_energy);
-            return result;
-        }
+            if (energy_change < config.convergence_threshold) {
+                result.converged = true;
+                result.iterations = iter + 1;
+                result.final_energy = current_energy;
 
-        prev_energy = current_energy;
+                log->info("SurfaceSolver: converged at iteration {} with energy = {}",
+                          result.iterations, result.final_energy);
+                return result;
+            }
 
-        // Log progress periodically
-        if ((iter + 1) % 100 == 0) {
-            log->debug("SurfaceSolver: iteration {}, energy = {}", iter + 1, current_energy);
+            prev_energy = current_energy;
+
+            // Log progress periodically
+            if ((iter + 1) % 100 == 0) {
+                log->debug("SurfaceSolver: iteration {}, energy = {}", iter + 1, current_energy);
+            }
+
+            // Adaptive interval: if energy change is large, check more frequently
+            if (energy_change > config.convergence_threshold * 10.0f) {
+                energy_check_interval = 5;   // Check frequently when far from convergence
+            } else if (energy_change > config.convergence_threshold * 2.0f) {
+                energy_check_interval = 10;  // Moderate checking
+            } else {
+                energy_check_interval = 20;  // Check infrequently when close to convergence
+            }
         }
     }
 
@@ -246,22 +261,27 @@ bool SurfaceSolver::constraints_satisfied(const SurfaceGraph& graph, float toler
         const auto& node_b = graph.node(constraint.node_b);
 
         Vec3 delta = node_b.position - node_a.position;
-        float current_dist = delta.length();
+        // Use squared distance to avoid sqrt() - much faster
+        float dist_sq = delta.length_squared();
 
         switch (constraint.type) {
-            case ConstraintType::MaxStretch:
+            case ConstraintType::MaxStretch: {
                 // Check if distance exceeds limit (with tolerance)
-                if (current_dist > constraint.limit + tolerance) {
+                float max_dist = constraint.limit + tolerance;
+                if (dist_sq > max_dist * max_dist) {
                     return false;
                 }
                 break;
+            }
 
-            case ConstraintType::MinDistance:
+            case ConstraintType::MinDistance: {
                 // Check if distance is less than limit (with tolerance)
-                if (current_dist < constraint.limit - tolerance) {
+                float min_dist = constraint.limit - tolerance;
+                if (dist_sq < min_dist * min_dist) {
                     return false;
                 }
                 break;
+            }
         }
     }
     return true;

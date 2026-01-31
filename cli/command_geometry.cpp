@@ -1,5 +1,6 @@
 #include "cli_common.hpp"
 #include <geometry/geometry_path.hpp>
+#include <visualizer/visualizer.hpp>
 #include <serialization/json_serialization.hpp>
 #include <serialization/config_json.hpp>
 #include <serialization/yarn_path_json.hpp>
@@ -15,8 +16,14 @@ int command_geometry(int argc, char** argv) {
     try {
         auto [ctx, _] = parse_common_args(argc, argv, 2);
 
-        if (ctx.input_path.empty() || ctx.output_path.empty()) {
-            std::cerr << "Usage: yarnpath geometry <surface.json> -o <geometry.json>\n";
+        if (ctx.input_path.empty()) {
+            std::cerr << "Usage: yarnpath geometry <surface.json> -o <geometry.json> [--visualize]\n";
+            return 1;
+        }
+
+        if (!ctx.visualize && ctx.output_path.empty()) {
+            std::cerr << "Usage: yarnpath geometry <surface.json> -o <geometry.json> [--visualize]\n";
+            std::cerr << "Error: -o <output> is required (unless --visualize is used)\n";
             return 1;
         }
 
@@ -36,6 +43,41 @@ int command_geometry(int argc, char** argv) {
         YarnPath yarn_path = yarn_path_from_json(input_data.config["yarn_path"]);
         YarnProperties yarn = input_data.config["yarn"].get<YarnProperties>();
         Gauge gauge = input_data.config["gauge"].get<Gauge>();
+
+        // Visualize or build geometry
+        if (ctx.visualize) {
+            if (!visualization_available()) {
+                log->error("Visualization not available - recompile with GLFW and OpenGL");
+                std::cerr << "Error: Visualization not available\n";
+                return 1;
+            }
+
+            log->info("Starting visualization (surface + geometry)...");
+            log->info("Controls: n=toggle nodes, g=toggle geometry, space=pause, q=quit");
+
+            // We need SolveConfig for the visualizer (even though surface is already solved)
+            SolveConfig solve_config;
+            if (input_data.config.contains("solve")) {
+                solve_config = input_data.config["solve"].get<SolveConfig>();
+            }
+            solve_config.max_iterations = 0;  // Surface already solved
+
+            VisualizerConfig viz_config;
+            viz_config.window_title = "YarnPath - Surface & Geometry";
+            viz_config.steps_per_frame = 1;
+            viz_config.auto_run = true;
+            viz_config.show_geometry = true;
+
+            VisualizerResult viz_result = visualize_with_geometry(
+                surface_graph, yarn_path, yarn, gauge, solve_config, viz_config);
+
+            log->info("Visualization complete");
+        }
+
+        // Skip building/saving if no output path provided (visualization-only mode)
+        if (ctx.output_path.empty()) {
+            return 0;
+        }
 
         // Build geometry path
         log->debug("Building geometry path");

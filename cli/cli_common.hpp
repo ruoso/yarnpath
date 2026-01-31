@@ -15,6 +15,9 @@ struct CommandContext {
     std::string output_path;
     std::optional<std::string> config_path;
     bool verbose = false;
+    bool visualize = false;
+    std::optional<int> max_iterations;
+    std::optional<float> threshold;
 };
 
 // Parse common arguments from command line
@@ -30,6 +33,23 @@ inline std::pair<CommandContext, int> parse_common_args(int argc, char** argv, i
         if (arg == "-v" || arg == "--verbose") {
             ctx.verbose = true;
             ++i;
+        } else if (arg == "--visualize") {
+            ctx.visualize = true;
+            ++i;
+        } else if (arg == "--iterations") {
+            if (i + 1 < argc) {
+                ctx.max_iterations = std::stoi(argv[++i]);
+                ++i;
+            } else {
+                throw std::runtime_error("--iterations requires an argument");
+            }
+        } else if (arg == "--threshold") {
+            if (i + 1 < argc) {
+                ctx.threshold = std::stof(argv[++i]);
+                ++i;
+            } else {
+                throw std::runtime_error("--threshold requires an argument");
+            }
         } else if (arg == "-o" || arg == "--output") {
             if (i + 1 < argc) {
                 ctx.output_path = argv[++i];

@@ -18,8 +18,11 @@ void print_usage(const char* program_name) {
     std::cerr << "  obj                Export geometry JSON to OBJ format\n";
     std::cerr << "\n";
     std::cerr << "Options:\n";
-    std::cerr << "  -o, --output FILE   Output file (required)\n";
-    std::cerr << "  -c, --config FILE   Load configuration from FILE (surface command only)\n";
+    std::cerr << "  -o, --output FILE   Output file (required for most commands)\n";
+    std::cerr << "  -c, --config FILE   Load configuration from FILE (surface command)\n";
+    std::cerr << "  --iterations N      Max solver iterations (surface command, default: 100000)\n";
+    std::cerr << "  --threshold N       Convergence threshold (surface command, default: 1e-6)\n";
+    std::cerr << "  --visualize         Open interactive visualization (surface/geometry)\n";
     std::cerr << "  -v, --verbose       Enable verbose logging\n";
     std::cerr << "  -h, --help          Show this help message\n";
     std::cerr << "\n";
@@ -31,6 +34,10 @@ void print_usage(const char* program_name) {
     std::cerr << "  " << program_name << " surface pattern.yarn.json -o pattern.surface.json\n";
     std::cerr << "  " << program_name << " geometry pattern.surface.json -o pattern.geometry.json\n";
     std::cerr << "  " << program_name << " obj pattern.geometry.json -o pattern.obj\n";
+    std::cerr << "\n";
+    std::cerr << "  # With visualization:\n";
+    std::cerr << "  " << program_name << " surface pattern.yarn.json --visualize\n";
+    std::cerr << "  " << program_name << " geometry pattern.surface.json --visualize\n";
     std::cerr << "\n";
     std::cerr << "  # With custom configuration:\n";
     std::cerr << "  " << program_name << " surface pattern.yarn.json -o pattern.surface.json -c custom.json\n";

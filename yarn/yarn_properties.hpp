@@ -102,6 +102,17 @@ struct YarnProperties {
             .friction = 0.35f
         };
     }
+
+    static YarnProperties thin() {
+        return YarnProperties{
+            .radius = 0.3f,
+            .min_bend_radius = 1.0f,
+            .loop_aspect_ratio = 1.3f,
+            .loop_slack = 0.07f,
+            .stiffness = 0.35f,
+            .friction = 0.25f
+        };
+    }
 };
 
 }  // namespace yarnpath

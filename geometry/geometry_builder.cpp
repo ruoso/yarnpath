@@ -219,7 +219,7 @@ static BezierSpline build_loop_segment(
     // behind the current position, according to the direction of travel.
     Vec3 to_next = next_pos - curr_pos;
     Vec3 travel_dir = (to_next.length() > 0.0001f) ? to_next.normalized() : Vec3(1.0f, 0.0f, 0.0f);
-    float apex_offset_x = travel_dir.x * state.yarn_diameter;
+    float apex_offset_x = travel_dir.x * state.yarn_radius;
     Vec3 travel_dir_unit = apex_offset_x > 0.0f ? Vec3::unit_x() : Vec3(-1.0f, 0.0f, 0.0f);
 
     // Entry/exit points offset in Z for the crossover

@@ -186,8 +186,8 @@ int main(int argc, char* argv[]) {
         // If --surface, output surface relaxation OBJ and exit early
         if (output_surface) {
             log->debug("Building surface graph");
-            yarnpath::YarnProperties yarn = yarnpath::YarnProperties::worsted();
-            yarnpath::Gauge gauge = yarnpath::Gauge::worsted();
+            yarnpath::YarnProperties yarn = yarnpath::YarnProperties::thin();
+            yarnpath::Gauge gauge = yarnpath::Gauge::bulky();
 
             // Build and solve surface
             yarnpath::SurfaceBuildConfig build_config;

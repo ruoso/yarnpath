@@ -234,4 +234,4 @@ See the `examples/` directory for sample patterns:
 
 ## License
 
-[Your license here]
+This project is licensed under the GNU General Public License v2.0 (GPLv2). See the LICENSE file for details.

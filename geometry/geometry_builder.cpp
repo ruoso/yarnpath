@@ -5,213 +5,244 @@
 
 namespace yarnpath {
 
-// Build the curve for a single segment
-//
-// For loop segments: creates a cylinder-wrap loop shape with Z-crossing
-// For non-loop segments: simple connector curve from prev to curr
-//
-// The physics simulation positions nodes at:
-// - Loop segments: the interlocking point (base of the loop)
-// - The apex is determined by where child segments pass through
-//
-// is_significant: if true, allow direction changes (at passthrough/loop points)
-// current_z_positive: which side of Z the yarn is currently on (true = +Z/back)
-static BezierSpline build_segment_curve(
-    const Vec3& prev_pos,
+// Helper struct to track state during geometry building
+struct GeometryBuildState {
+    BezierSpline running_spline;
+    bool current_z_positive = true;
+    float max_curvature;
+    float yarn_radius;       // Radius of the yarn
+    float yarn_diameter;     // Diameter = 2 * radius, minimum distance between yarn centers
+    float wrap_offset;       // Offset for entry/exit points at apex
+    
+    GeometryBuildState(const YarnProperties& yarn)
+        : max_curvature(yarn.max_curvature())
+        , yarn_radius(yarn.radius)
+        , yarn_diameter(yarn.radius * 2.0f)
+        , wrap_offset(yarn.radius)  // Full radius for entry/exit separation
+    {}
+    
+    float z_sign() const { return current_z_positive ? 1.0f : -1.0f; }
+    void flip_z() { current_z_positive = !current_z_positive; }
+};
+
+// Callback type for reporting each curve as it's added
+// Parameters: description of the curve, the running spline after adding
+using CurveAddedCallback = std::function<void(const std::string& description)>;
+
+// Calculate apex position from child positions or default height
+// yarn_diameter is the minimum clearance needed between yarn centers
+static Vec3 calculate_apex_position(
+    const Vec3& curr_pos,
+    const std::vector<Vec3>& child_positions,
+    float yarn_diameter) {
+    
+    if (!child_positions.empty()) {
+        Vec3 apex = vec3::zero();
+        for (const auto& cp : child_positions) {
+            apex += cp;
+        }
+        apex = apex * (1.0f / static_cast<float>(child_positions.size()));
+        apex.y += yarn_diameter;  // Full diameter above children so yarns don't touch
+        return apex;
+    } else {
+        // No children - small loop above current position
+        float loop_height = yarn_diameter;  // One diameter height
+        return curr_pos + Vec3(0.0f, loop_height, 0.0f);
+    }
+}
+
+// Calculate average position of child segments
+static Vec3 calculate_avg_child_position(const std::vector<Vec3>& child_positions) {
+    Vec3 avg = vec3::zero();
+    for (const auto& cp : child_positions) {
+        avg += cp;
+    }
+    return avg * (1.0f / static_cast<float>(child_positions.size()));
+}
+
+// Build the upward leg of a loop (from current position to apex entry)
+static void build_loop_up_leg(
+    GeometryBuildState& state,
+    BezierSpline& segment_spline,
+    const Vec3& apex_entry,
+    const std::vector<Vec3>& child_positions,
+    const CurveAddedCallback& on_curve_added) {
+    
+    if (!child_positions.empty()) {
+        // Use clearance to go around the child positions
+        Vec3 avg_child = calculate_avg_child_position(child_positions);
+        
+        auto up_curve = create_continuation_segment_with_clearance(
+            state.running_spline,
+            apex_entry,
+            Vec3(0.0f, 1.0f, 0.0f),  // Going up
+            avg_child,
+            state.yarn_diameter,  // Diameter clearance to prevent overlap
+            state.max_curvature);
+        state.running_spline.add_segment(up_curve);
+        segment_spline.add_segment(up_curve);
+        if (on_curve_added) on_curve_added("up_leg (with clearance)");
+    } else {
+        auto up_curve = create_continuation_segment(
+            state.running_spline,
+            apex_entry,
+            Vec3(0.0f, 1.0f, 0.0f),  // Going up
+            state.max_curvature);
+        state.running_spline.add_segment(up_curve);
+        segment_spline.add_segment(up_curve);
+        if (on_curve_added) on_curve_added("up_leg");
+    }
+}
+
+// Build the apex crossover (entry -> exit, curving around children)
+// The crossover curves around the child segments that pass through this loop
+static void build_apex_crossover(
+    GeometryBuildState& state,
+    BezierSpline& segment_spline,
+    const Vec3& apex_entry,
+    const Vec3& apex_exit,
+    const std::vector<Vec3>& child_positions,
+    const CurveAddedCallback& on_curve_added) {
+    
+    // Calculate clearance point - the children pass through below the apex
+    Vec3 clearance_point;
+    if (!child_positions.empty()) {
+        clearance_point = calculate_avg_child_position(child_positions);
+    } else {
+        // Default to midpoint between entry and exit, offset down by diameter
+        clearance_point = (apex_entry + apex_exit) * 0.5f - Vec3(0.0f, state.yarn_diameter, 0.0f);
+    }
+    
+    // Single curve from entry to exit, arcing around the clearance point
+    // Use yarn_diameter as clearance to prevent overlap
+    auto apex_curve = create_continuation_segment_with_clearance(
+        state.running_spline,
+        apex_exit,
+        Vec3(0.0f, -1.0f, 0.0f),  // Exiting downward
+        clearance_point,
+        state.yarn_diameter,
+        state.max_curvature);
+    state.running_spline.add_segment(apex_curve);
+    segment_spline.add_segment(apex_curve);
+    if (on_curve_added) on_curve_added("apex_crossover");
+}
+
+// Build the downward leg of a loop (from apex exit to next entry)
+static void build_loop_down_leg(
+    GeometryBuildState& state,
+    BezierSpline& segment_spline,
+    const Vec3& next_entry,
+    const std::vector<Vec3>& child_positions,
+    const CurveAddedCallback& on_curve_added) {
+    
+    if (!child_positions.empty()) {
+        Vec3 avg_child = calculate_avg_child_position(child_positions);
+
+        auto down_curve = create_continuation_segment_with_clearance(
+            state.running_spline,
+            next_entry,
+            Vec3(0.0f, -1.0f, 0.0f),  // Going down
+            avg_child,
+            state.yarn_diameter,  // Diameter clearance to prevent overlap
+            state.max_curvature);
+        state.running_spline.add_segment(down_curve);
+        segment_spline.add_segment(down_curve);
+        if (on_curve_added) on_curve_added("down_leg (with clearance)");
+    } else {
+        auto down_curve = create_continuation_segment(
+            state.running_spline,
+            next_entry,
+            Vec3(0.0f, -1.0f, 0.0f),  // Going down
+            state.max_curvature);
+        state.running_spline.add_segment(down_curve);
+        segment_spline.add_segment(down_curve);
+        if (on_curve_added) on_curve_added("down_leg");
+    }
+}
+
+// Build a complete loop segment curve
+static BezierSpline build_loop_segment(
+    GeometryBuildState& state,
     const Vec3& curr_pos,
     const Vec3& next_pos,
-    bool forms_loop,
     const std::vector<Vec3>& child_positions,
-    const YarnProperties& yarn,
-    bool has_parent,
-    bool current_z_positive,
-    bool first_of_row,
-    bool end_of_row) {
+    const CurveAddedCallback& on_curve_added) {
+    
+    BezierSpline segment_spline;
+    
+    // Calculate apex position (using diameter for proper clearance)
+    Vec3 apex = calculate_apex_position(curr_pos, child_positions, state.yarn_diameter);
+    
+    // Entry/exit points offset in Z for the crossover
+    // Use wrap_offset (= yarn_radius) for separation
+    float z_sign = state.z_sign();
+    Vec3 apex_entry = apex + Vec3(0.0f, -state.wrap_offset, z_sign * state.wrap_offset);
+    Vec3 apex_exit = apex + Vec3(0.0f, -state.wrap_offset, -z_sign * state.wrap_offset);
+    
+    // Build upward leg
+    build_loop_up_leg(state, segment_spline, apex_entry, child_positions, on_curve_added);
+    
+    // Build apex crossover
+    build_apex_crossover(state, segment_spline, apex_entry, apex_exit, child_positions, on_curve_added);
+    
+    // Calculate next entry point - offset by wrap_offset (yarn_radius) in Y and Z
+    Vec3 next_entry = next_pos + Vec3(0.0f, state.wrap_offset, -z_sign * state.wrap_offset);
+    
+    // Build downward leg
+    build_loop_down_leg(state, segment_spline, next_entry, child_positions, on_curve_added);
+    
+    // Flip Z for next segment after crossover
+    state.flip_z();
+    
+    return segment_spline;
+}
 
-    BezierSpline spline;
+// Build a simple connector segment (non-loop or end-of-row)
+static BezierSpline build_connector_segment(
+    GeometryBuildState& state,
+    const Vec3& curr_pos,
+    const Vec3& next_pos,
+    bool end_of_row,
+    const CurveAddedCallback& on_curve_added) {
+    
+    BezierSpline segment_spline;
+    
+    Vec3 to_next = next_pos - curr_pos;
+    Vec3 target_dir = (to_next.length() > 0.0001f) ? to_next.normalized() : Vec3(1.0f, 0.0f, 0.0f);
 
-    // Calculate incoming direction
-    Vec3 in_vec = curr_pos - prev_pos;
-    float in_dist = in_vec.length();
-    Vec3 in_dir = (in_dist > 0.0001f) ? in_vec.normalized() : Vec3(1.0f, 0.0f, 0.0f);
+    auto connect_curve = create_continuation_segment(
+        state.running_spline,
+        next_pos,
+        target_dir,
+        state.max_curvature);
+    state.running_spline.add_segment(connect_curve);
+    segment_spline.add_segment(connect_curve);
+    if (on_curve_added) on_curve_added("connector");
 
-    // Calculate outgoing direction
-    Vec3 out_vec = next_pos - curr_pos;
-    float out_dist = out_vec.length();
-    Vec3 out_dir = (out_dist > 0.0001f) ? out_vec.normalized() : in_dir;
-    // Wrap offset - small offset for entry/exit points to create curvature
-    float wrap_offset = yarn.radius * 0.5f;
-
-    // direction from previous to current
-    Vec3 prev_to_curr = curr_pos - prev_pos;
-    float pc_x_dir = (prev_to_curr.x >= 0.0f) ? 1.0f : -1.0f;
-    float pc_y_dir = (prev_to_curr.y >= 0.0f) ? 1.0f : -1.0f;
-    float pc_z_dir = (prev_to_curr.z >= 0.0f) ? 1.0f : -1.0f;
-
-    // direction from current to next
-    Vec3 curr_to_next = next_pos - curr_pos;
-    float cn_x_dir = (curr_to_next.x >= 0.0f) ? 1.0f : -1.0f;
-    float cn_y_dir = (curr_to_next.y >= 0.0f) ? 1.0f : -1.0f;
-    float cn_z_dir = (curr_to_next.z >= 0.0f) ? 1.0f : -1.0f;
-
-    Vec3 base_entry = curr_pos + Vec3(-pc_x_dir * wrap_offset, 0.0f, 0.0f);
-    Vec3 base_center = curr_pos - Vec3(0.0f, yarn.radius, 0.0f);
-    Vec3 base_exit = curr_pos + Vec3(pc_x_dir * wrap_offset, 0.0f, 0.0f);
-    Vec3 next_base_entry = next_pos + Vec3(-cn_x_dir * wrap_offset, 0.0f, 0.0f);
-
-    // Z-direction based on current state (alternates along yarn path)
-    float z_sign = current_z_positive ? 1.0f : -1.0f;
-
-    // Tangent magnitude for turns (quarter circle at wrap_offset)
-    float turn_tangent = wrap_offset * 1.5f;  // Larger tangent for smoother curvature
-
-    if (forms_loop && !end_of_row) {
-        // Loop segment: yarn curves from current base up to apex, then down to next base
-        // Break into segments to control curvature at each critical point:
-        // 1. Base turn: curve at curr_pos turning from current Z-side toward up
-        // 2. Straight up: from base exit to apex entry
-        // 3. Apex wrap: curve crossing to opposite Z-side
-        // 4. Straight down: from apex exit to next base entry
-        // 5. Next base turn: curve turning from down toward original Z-side
-
-
-
-        // Determine apex position - this is where children pass through
-        Vec3 apex;
-        float loop_height;
-
-        if (!child_positions.empty()) {
-            // Apex is the average position of children passing through
-            apex = vec3::zero();
-            for (const auto& cp : child_positions) {
-                apex += cp;
-            }
-            apex = apex * (1.0f / static_cast<float>(child_positions.size()));
-
-            // Offset apex higher in Y so the loop goes over the child segment
-            apex.y += yarn.radius;
-
-            loop_height = (apex - curr_pos).length();
-        } else {
-            // No children, this is the last row, should just form a small loop
-            loop_height = yarn.radius * 2.0f;
-            apex = curr_pos + Vec3(0.0f, loop_height, 0.0f);
-        }
-
-        // Adjust wrap offset if loop is too short
-        if (loop_height < wrap_offset * 2.0f) {
-            wrap_offset = loop_height * 0.4f;
-        }
-
-        // Direction from current base to apex
-        Vec3 base_to_apex = apex - curr_pos;
-        Vec3 up_dir = base_to_apex.normalized();
-
-        // Direction from apex to next base
-        Vec3 apex_to_next = next_pos - apex;
-        float apex_to_next_dist = apex_to_next.length();
-        Vec3 down_dir = (apex_to_next_dist > 0.0001f) ? apex_to_next.normalized() : Vec3(0.0f, -1.0f, 0.0f);
-
-        // Apex entry/exit: offset in Z, slightly lower in Y so curve goes UP at apex
-        Vec3 apex_entry = apex + Vec3(0.0f, -wrap_offset, z_sign * wrap_offset);
-        Vec3 apex_exit = apex + Vec3(0.0f, -wrap_offset, -z_sign * wrap_offset);
-
-        if (!first_of_row) {
-            if (has_parent) {
-                // Curve 1: Base wrap - curve dips down at base_center
-                // First half: base_entry to base_center (arriving from Z-side, curving down and in X direction)
-                auto base_wrap1 = CubicBezier::from_hermite(
-                    base_entry, Vec3(0.0f, 0.0f, z_sign) * turn_tangent,   // Arriving from Z-side
-                    base_center, Vec3(pc_x_dir, -1.0f, 0.0f).normalized() * turn_tangent);  // Curving down in X direction
-                spline.add_segment(base_wrap1);
-
-                // Second half: base_center to base_exit (curving up and in X direction)
-                auto base_wrap2 = CubicBezier::from_hermite(
-                    base_center, Vec3(pc_x_dir, 1.0f, 0.0f).normalized() * turn_tangent,   // Curving up in X direction
-                    base_exit, Vec3(0.0f, 1.0f, 0.0f) * turn_tangent);                  // Departing upward
-                spline.add_segment(base_wrap2);
-
-                // Curve 2: From base_exit up to apex_entry
-                Vec3 to_apex_entry = apex_entry - base_exit;
-                float to_apex_dist = to_apex_entry.length();
-                if (to_apex_dist > 0.01f) {
-                    auto up_leg = CubicBezier::from_hermite(
-                        base_exit, Vec3(0.0f, 1.0f, 0.0f) * (to_apex_dist * 0.4f),  // Departing upward
-                        apex_entry, Vec3(0.0f, 1.0f, 0.0f) * (to_apex_dist * 0.4f)); // Arriving from below
-                    spline.add_segment(up_leg);
-                }
-            } else {
-                // go from base_entry directly to apex_entry
-                Vec3 to_apex_entry = apex_entry - base_entry;
-                float to_apex_dist = to_apex_entry.length();
-                if (to_apex_dist > 0.01f) {
-                    Vec3 smooth_dir = to_apex_entry.normalized();
-                    auto up_leg = CubicBezier::from_hermite(
-                        base_entry, smooth_dir * (to_apex_dist * 0.4f),               // Smooth tangent toward apex
-                        apex_entry, smooth_dir * (to_apex_dist * 0.4f)); // Smooth tangent toward apex
-                    spline.add_segment(up_leg);
-                }
-            }
-        } else {
-            // First segment of the row - directly connect from curr_pos to apex_entry
-            Vec3 to_apex_entry = apex_entry - curr_pos;
-            float to_apex_dist = to_apex_entry.length();
-            if (to_apex_dist > 0.01f) {
-                auto up_leg = CubicBezier::from_hermite(
-                    curr_pos, in_dir * (to_apex_dist * 0.4f),               // Arriving from previous segment
-                    apex_entry, Vec3(0.0f, 1.0f, 0.0f) * (to_apex_dist * 0.4f)); // Arriving from below
-                spline.add_segment(up_leg);
-            }
-        }
-
-        // Curve 3: Apex wrap - curve goes up at apex
-        // apex_entry is at +z_sign side and below, apex is center and highest, apex_exit is at -z_sign side and below
-
-        // First half: entry to apex center (arriving from below, curving up and across Z)
-        auto apex_wrap1 = CubicBezier::from_hermite(
-            apex_entry, Vec3(0.0f, 1.0f, 0.0f) * turn_tangent,  // Arriving from below
-            apex, Vec3(0.0f, 1.0f, -z_sign).normalized() * turn_tangent);  // Curving up and across Z
-        spline.add_segment(apex_wrap1);
-
-        // Second half: apex center to exit (curving down and across Z)
-        auto apex_wrap2 = CubicBezier::from_hermite(
-            apex, Vec3(0.0f, -1.0f, -z_sign).normalized() * turn_tangent,  // Curving down and across Z
-            apex_exit, Vec3(0.0f, -1.0f, 0.0f) * turn_tangent);            // Departing downward
-        spline.add_segment(apex_wrap2);
-
-        // Curve 4: From apex_exit down to next_base_entry
-        // This ends at the base_entry of the next segment's loop
-        Vec3 to_next_base = next_base_entry - apex_exit;
-        float to_next_dist = to_next_base.length();
-        if (to_next_dist > 0.01f) {
-            auto down_leg = CubicBezier::from_hermite(
-                apex_exit, Vec3(0.0f, -1.0f, 0.0f) * (to_next_dist * 0.4f),      // Departing downward
-                next_base_entry, Vec3(0.0f, -1.0f, 0.0f) * (to_next_dist * 0.4f)); // Arriving from above
-            spline.add_segment(down_leg);
-        }
-
-    } else {
-
-        // Base entry/exit: offset in X following yarn direction, at surface level
-        auto base_wrap1 = CubicBezier::from_hermite(
-            base_entry, Vec3(0.0f, 0.0f, z_sign) * turn_tangent,   // Arriving from Z-side
-            base_center, Vec3(pc_x_dir, -1.0f, 0.0f).normalized() * turn_tangent);  // Curving down in X direction
-        spline.add_segment(base_wrap1);
-
-        // Second half: base_center to base_exit (curving up and in X direction)
-        auto base_wrap2 = CubicBezier::from_hermite(
-            base_center, Vec3(pc_x_dir, 1.0f, 0.0f).normalized() * turn_tangent,   // Curving up in X direction
-            base_exit, Vec3(0.0f, 1.0f, 0.0f) * turn_tangent);                  // Departing upward
-        spline.add_segment(base_wrap2);
-
-        auto leg = CubicBezier::from_hermite(
-            base_exit, (base_exit - base_center).normalized(),
-            next_pos, (next_pos - base_exit).normalized());
-        spline.add_segment(leg);
-
+    if (end_of_row) {
+        state.flip_z();
     }
+    
+    return segment_spline;
+}
 
-    return spline;
+// Initialize the running spline with a starting segment
+static void initialize_running_spline(
+    GeometryBuildState& state,
+    const std::vector<Vec3>& positions) {
+    
+    if (positions.empty()) return;
+    
+    Vec3 start_pos = positions[0];
+    Vec3 initial_dir = (positions.size() > 1) 
+        ? (positions[1] - positions[0]).normalized() 
+        : Vec3(1.0f, 0.0f, 0.0f);
+    
+    // Create a minimal segment to establish the starting point and direction
+    auto init_seg = CubicBezier::from_hermite(
+        start_pos - initial_dir * 0.01f, initial_dir * 0.01f,
+        start_pos, initial_dir * 0.01f);
+    state.running_spline.add_segment(init_seg);
 }
 
 static std::optional<Vec3> get_segment_base_position(
@@ -335,13 +366,9 @@ GeometryPath build_geometry_with_callback(
     log->debug("build_geometry: built reverse lookup for {} loops",
                loop_apex_positions.size());
 
-    // Track Z-state along yarn path - which side of Z the yarn is currently on
-    // This alternates each time yarn crosses Z (at passthrough points)
-    bool current_z_positive = true;  // Start on +Z (back) side
-    bool first_of_row = true;
-
-    // Accumulated spline for callback visualization
-    BezierSpline accumulated_spline;
+    // Initialize geometry build state
+    GeometryBuildState state(yarn);
+    initialize_running_spline(state, positions);
 
     // Build geometry segment by segment
     for (size_t i = 0; i < segments.size(); ++i) {
@@ -351,8 +378,6 @@ GeometryPath build_geometry_with_callback(
         SegmentGeometry geom;
         geom.segment_id = seg_id;
 
-        // Get positions for this segment and neighbors
-        Vec3 prev_pos = (i > 0) ? positions[i - 1] : positions[i];
         Vec3 curr_pos = positions[i];
         Vec3 next_pos = (i < positions.size() - 1) ? positions[i + 1] : positions[i];
 
@@ -363,55 +388,28 @@ GeometryPath build_geometry_with_callback(
             child_positions = it->second;
         }
 
-        // if the next segment is a child of this segment, we need to flip
-        // current_z_positive for the next segment, as that is the end of the row
+        // Determine if this is end of row (next segment passes through this one)
         bool end_of_row = false;
         if (i < segments.size() - 1) {
             const auto& next_seg = segments[i + 1];
             if (std::find(next_seg.through.begin(), next_seg.through.end(), seg_id) != next_seg.through.end()) {
-                current_z_positive = !current_z_positive;
                 end_of_row = true;
             }
         }
 
-        // Build the curve for this segment
-        geom.curve = build_segment_curve(
-            prev_pos, curr_pos, next_pos,
-            seg.forms_loop,
-            child_positions,
-            yarn,
-            segment_has_parent[seg_id],
-            current_z_positive,
-            first_of_row,
-            end_of_row);
-        
-        if (end_of_row) {
-            first_of_row = true;
-        } else {
-            first_of_row = false;
-        }
-        // Report each curve segment via callback if provided
+        // Create callback for reporting each curve as it's added
+        CurveAddedCallback on_curve_added = nullptr;
         if (callback_ptr) {
-            // Log key positions for debugging
-            log->info("  seg {} positions: curr=({:.1f},{:.1f},{:.1f}) next=({:.1f},{:.1f},{:.1f})",
-                     seg_id, curr_pos.x, curr_pos.y, curr_pos.z,
-                     next_pos.x, next_pos.y, next_pos.z);
+            on_curve_added = [&](const std::string& description) {
+                (*callback_ptr)(seg_id, description, state.running_spline);
+            };
+        }
 
-            const auto& curve_segments = geom.curve.segments();
-            for (size_t c = 0; c < curve_segments.size(); ++c) {
-                accumulated_spline.add_segment(curve_segments[c]);
-                std::string desc;
-                if (seg.forms_loop) {
-                    // Up to 6 curves, but straight sections may be skipped
-                    // Actual order depends on which conditionals pass
-                    char buf[64];
-                    snprintf(buf, sizeof(buf), "loop: curve %zu of %zu", c + 1, curve_segments.size());
-                    desc = buf;
-                } else {
-                    desc = "connector";
-                }
-                (*callback_ptr)(seg_id, desc, accumulated_spline);
-            }
+        // Build curve for this segment
+        if (seg.forms_loop && !end_of_row) {
+            geom.curve = build_loop_segment(state, curr_pos, next_pos, child_positions, on_curve_added);
+        } else {
+            geom.curve = build_connector_segment(state, curr_pos, next_pos, end_of_row, on_curve_added);
         }
 
         // Calculate arc length and max curvature

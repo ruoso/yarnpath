@@ -52,6 +52,13 @@ public:
     // Clear all forces on all nodes
     void clear_all_forces();
 
+    // Build adjacency index for fast neighbor lookup (O(1) instead of O(E))
+    void build_adjacency_index();
+
+    // Get continuity neighbors (prev/next along yarn path)
+    // Returns {prev_node_id, next_node_id}, where -1 indicates no neighbor
+    std::pair<NodeId, NodeId> get_continuity_neighbors(NodeId node) const;
+
 private:
     std::vector<SurfaceNode> nodes_;
     std::vector<SurfaceEdge> edges_;
@@ -59,6 +66,11 @@ private:
 
     // Mapping from SegmentId to NodeId for quick lookup
     std::unordered_map<SegmentId, NodeId> segment_to_node_;
+
+    // Adjacency index: node_id -> (prev_node_id, next_node_id)
+    // -1 indicates no neighbor in that direction
+    std::vector<std::pair<NodeId, NodeId>> continuity_neighbors_;
+    bool adjacency_built_ = false;
 };
 
 }  // namespace yarnpath

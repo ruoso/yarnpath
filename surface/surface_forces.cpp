@@ -106,34 +106,27 @@ void compute_loop_curvature_forces(SurfaceGraph& graph,
         return;  // Skip if strength is negligible
     }
 
-    // For each node that forms a loop, compute curvature-related forces
-    // This is a simplified model: we look at the node's neighbors and
-    // encourage a certain angle between incoming and outgoing edges
+    // Build adjacency index once if not already built
+    // This eliminates O(N×E) nested loop by providing O(1) neighbor lookup
+    static bool index_built = false;
+    if (!index_built) {
+        graph.build_adjacency_index();
+        index_built = true;
+    }
 
     auto& nodes = graph.nodes();
-    auto& edges = graph.edges();
 
-    for (auto& node : nodes) {
+    // NOW PARALLELIZABLE - no nested edge search!
+    // Each loop node independently looks up its neighbors in O(1)
+    #pragma omp parallel for schedule(static) if(nodes.size() > 100)
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        auto& node = nodes[i];
         if (!node.forms_loop) {
             continue;
         }
 
-        // Find the previous and next nodes (if they exist via continuity edges)
-        NodeId prev_id = static_cast<NodeId>(-1);
-        NodeId next_id = static_cast<NodeId>(-1);
-
-        for (const auto& edge : edges) {
-            if (edge.type != EdgeType::YarnContinuity) {
-                continue;
-            }
-
-            if (edge.node_b == node.id) {
-                prev_id = edge.node_a;
-            }
-            if (edge.node_a == node.id) {
-                next_id = edge.node_b;
-            }
-        }
+        // Fast O(1) neighbor lookup instead of O(E) edge search
+        auto [prev_id, next_id] = graph.get_continuity_neighbors(node.id);
 
         // If we have both neighbors, apply curvature force
         if (prev_id != static_cast<NodeId>(-1) && next_id != static_cast<NodeId>(-1)) {

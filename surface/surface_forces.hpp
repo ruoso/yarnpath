@@ -28,7 +28,7 @@ struct ForceConfig {
     bool enable_floor = false;          // Whether to enforce floor constraint
 
     // Collision configuration
-    bool enable_collision = true;       // Whether to apply collision repulsion
+    bool enable_collision = false;      // Whether to apply collision repulsion (opt-in for performance)
     float collision_strength = 100.0f;  // Repulsion force strength
 };
 

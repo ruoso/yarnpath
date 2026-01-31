@@ -120,4 +120,33 @@ void SurfaceGraph::clear_all_forces() {
     }
 }
 
+void SurfaceGraph::build_adjacency_index() {
+    // Initialize with no neighbors (-1 indicates no neighbor)
+    continuity_neighbors_.clear();
+    continuity_neighbors_.resize(nodes_.size(), {static_cast<NodeId>(-1), static_cast<NodeId>(-1)});
+
+    // Scan edges once to build index
+    for (const auto& edge : edges_) {
+        if (edge.type != EdgeType::YarnContinuity) continue;
+
+        // edge.node_a -> edge.node_b means:
+        // - node_b.prev = node_a
+        // - node_a.next = node_b
+        continuity_neighbors_[edge.node_b].first = edge.node_a;
+        continuity_neighbors_[edge.node_a].second = edge.node_b;
+    }
+
+    adjacency_built_ = true;
+}
+
+std::pair<NodeId, NodeId> SurfaceGraph::get_continuity_neighbors(NodeId node) const {
+    if (!adjacency_built_) {
+        throw std::runtime_error("Adjacency index not built. Call build_adjacency_index() first.");
+    }
+    if (node >= continuity_neighbors_.size()) {
+        throw std::out_of_range("Node ID out of range");
+    }
+    return continuity_neighbors_[node];
+}
+
 }  // namespace yarnpath

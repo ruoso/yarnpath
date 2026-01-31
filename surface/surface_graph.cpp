@@ -101,7 +101,7 @@ float SurfaceGraph::compute_energy() const {
 
     // Spring potential energy: 0.5 * k * (x - rest_length)^2
     // Parallelize over edges - each edge computes energy independently
-    #pragma omp parallel for schedule(static) reduction(+:energy) if(edges_.size() > 100)
+    #pragma omp parallel for schedule(static) reduction(+:energy) if(edges_.size() > 50)
     for (size_t i = 0; i < edges_.size(); ++i) {
         const auto& edge = edges_[i];
         const auto& a = nodes_[edge.node_a];

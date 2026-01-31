@@ -40,9 +40,15 @@ void compute_forces(SurfaceGraph& graph,
 }
 
 void compute_spring_forces(SurfaceGraph& graph) {
-    for (const auto& edge : graph.edges()) {
-        auto& node_a = graph.node(edge.node_a);
-        auto& node_b = graph.node(edge.node_b);
+    auto& nodes = graph.nodes();
+    const auto& edges = graph.edges();
+
+    // Parallelize over edges - use atomic operations for shared node writes
+    #pragma omp parallel for schedule(dynamic, 64) if(edges.size() > 50)
+    for (size_t i = 0; i < edges.size(); ++i) {
+        const auto& edge = edges[i];
+        auto& node_a = nodes[edge.node_a];
+        auto& node_b = nodes[edge.node_b];
 
         Vec3 delta = node_b.position - node_a.position;
         float length = delta.length();
@@ -57,9 +63,21 @@ void compute_spring_forces(SurfaceGraph& graph) {
         Vec3 direction = delta / length;
         Vec3 force = direction * (edge.stiffness * displacement);
 
-        // Apply force to both nodes (Newton's third law)
-        node_a.add_force(force);
-        node_b.add_force(-force);
+        // Atomic force accumulation to avoid race conditions
+        // Multiple edges can share endpoints, so we need thread-safe updates
+        #pragma omp atomic
+        node_a.force.x += force.x;
+        #pragma omp atomic
+        node_a.force.y += force.y;
+        #pragma omp atomic
+        node_a.force.z += force.z;
+
+        #pragma omp atomic
+        node_b.force.x -= force.x;
+        #pragma omp atomic
+        node_b.force.y -= force.y;
+        #pragma omp atomic
+        node_b.force.z -= force.z;
     }
 }
 
@@ -70,14 +88,19 @@ void compute_passthrough_tension(SurfaceGraph& graph,
     // Higher yarn tension = stronger straightening force
 
     float tension_strength = yarn.tension * tension_factor;
+    auto& nodes = graph.nodes();
+    const auto& edges = graph.edges();
 
-    for (const auto& edge : graph.edges()) {
+    // Parallelize over edges - use atomic operations for shared node writes
+    #pragma omp parallel for schedule(dynamic, 64) if(edges.size() > 50)
+    for (size_t i = 0; i < edges.size(); ++i) {
+        const auto& edge = edges[i];
         if (edge.type != EdgeType::PassThrough) {
             continue;
         }
 
-        auto& node_a = graph.node(edge.node_a);
-        auto& node_b = graph.node(edge.node_b);
+        auto& node_a = nodes[edge.node_a];
+        auto& node_b = nodes[edge.node_b];
 
         Vec3 delta = node_b.position - node_a.position;
         float length = delta.length();
@@ -91,8 +114,20 @@ void compute_passthrough_tension(SurfaceGraph& graph,
         Vec3 direction = delta / length;
         Vec3 force = direction * tension_strength;
 
-        node_a.add_force(force);
-        node_b.add_force(-force);
+        // Atomic force accumulation for thread safety
+        #pragma omp atomic
+        node_a.force.x += force.x;
+        #pragma omp atomic
+        node_a.force.y += force.y;
+        #pragma omp atomic
+        node_a.force.z += force.z;
+
+        #pragma omp atomic
+        node_b.force.x -= force.x;
+        #pragma omp atomic
+        node_b.force.y -= force.y;
+        #pragma omp atomic
+        node_b.force.z -= force.z;
     }
 }
 
@@ -118,7 +153,7 @@ void compute_loop_curvature_forces(SurfaceGraph& graph,
 
     // NOW PARALLELIZABLE - no nested edge search!
     // Each loop node independently looks up its neighbors in O(1)
-    #pragma omp parallel for schedule(static) if(nodes.size() > 100)
+    #pragma omp parallel for schedule(static) if(nodes.size() > 50)
     for (size_t i = 0; i < nodes.size(); ++i) {
         auto& node = nodes[i];
         if (!node.forms_loop) {
@@ -201,7 +236,7 @@ void apply_damping(SurfaceGraph& graph, float damping) {
     auto& nodes = graph.nodes();
 
     // Parallelize over nodes - each node is independent
-    #pragma omp parallel for schedule(static) if(nodes.size() > 100)
+    #pragma omp parallel for schedule(static) if(nodes.size() > 50)
     for (size_t i = 0; i < nodes.size(); ++i) {
         nodes[i].force -= nodes[i].velocity * damping;
     }
@@ -340,19 +375,13 @@ void compute_planar_forces(SurfaceGraph& graph,
 void compute_gravity_force(SurfaceGraph& graph,
                            float strength,
                            const Vec3& direction) {
-    auto log = yarnpath::logging::get_logger();
-
     // F = m * g * direction
     Vec3 gravity_dir = direction.normalized();
-
-    static int log_counter = 0;
-    bool should_log = (log_counter++ % 1000 == 0);  // Log every 1000 calls
-
-    float total_force = 0.0f;
     auto& nodes = graph.nodes();
 
     // Parallelize over nodes - each node is independent
-    #pragma omp parallel for schedule(static) reduction(+:total_force) if(nodes.size() > 100)
+    // Removed reduction overhead for total_force calculation
+    #pragma omp parallel for schedule(static) if(nodes.size() > 50)
     for (size_t i = 0; i < nodes.size(); ++i) {
         auto& node = nodes[i];
         if (node.is_pinned) {
@@ -365,12 +394,6 @@ void compute_gravity_force(SurfaceGraph& graph,
         float gravity_in_mm = strength;
         Vec3 gravity_force = gravity_dir * (node.mass * gravity_in_mm);
         node.add_force(gravity_force);
-        total_force += gravity_force.length();
-    }
-
-    if (should_log) {
-        log->debug("Gravity: strength={}, dir=({},{},{}), total_force={}",
-                   strength, gravity_dir.x, gravity_dir.y, gravity_dir.z, total_force);
     }
 }
 
@@ -390,7 +413,7 @@ void apply_floor_constraint(SurfaceGraph& graph, float floor_dist, const Vec3& d
     // Parallelize over nodes - each node checked independently
     // Use reduction for statistics
     #pragma omp parallel for schedule(static) reduction(+:nodes_on_floor) \
-            reduction(min:min_dist) reduction(max:max_dist) if(nodes.size() > 100)
+            reduction(min:min_dist) reduction(max:max_dist) if(nodes.size() > 50)
     for (size_t i = 0; i < nodes.size(); ++i) {
         auto& node = nodes[i];
         // Compute signed distance along floor direction

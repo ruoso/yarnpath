@@ -127,7 +127,7 @@ void SurfaceSolver::integrate_verlet(SurfaceGraph& graph, float dt) {
     auto& nodes = graph.nodes();
 
     // Parallelize over nodes - each node update is independent
-    #pragma omp parallel for schedule(static) if(nodes.size() > 100)
+    #pragma omp parallel for schedule(static) if(nodes.size() > 50)
     for (size_t i = 0; i < nodes.size(); ++i) {
         auto& node = nodes[i];
         if (node.is_pinned) {

@@ -94,20 +94,23 @@ void compute_passthrough_tension(SurfaceGraph& graph,
     float tension_strength = yarn.tension * tension_factor;
     auto& nodes = graph.nodes();
     const auto& edges = graph.edges();
+    const auto& passthrough_ids = graph.passthrough_edge_ids();
     const size_t num_nodes = nodes.size();
 
+    // Skip if no passthrough edges
+    if (passthrough_ids.empty()) {
+        return;
+    }
+
     // Thread-local force accumulation - eliminates atomic operations
-    #pragma omp parallel if(edges.size() > 50)
+    #pragma omp parallel if(passthrough_ids.size() > 50)
     {
         // Each thread has its own force buffer
         std::vector<Vec3> thread_forces(num_nodes, Vec3::zero());
 
         #pragma omp for schedule(static)
-        for (size_t i = 0; i < edges.size(); ++i) {
-            const auto& edge = edges[i];
-            if (edge.type != EdgeType::PassThrough) {
-                continue;
-            }
+        for (size_t i = 0; i < passthrough_ids.size(); ++i) {
+            const auto& edge = edges[passthrough_ids[i]];
 
             // Read positions (const access, thread-safe)
             const Vec3& pos_a = nodes[edge.node_a].position;

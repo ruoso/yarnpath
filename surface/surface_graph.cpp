@@ -37,6 +37,14 @@ EdgeId SurfaceGraph::add_edge(const SurfaceEdge& edge) {
     SurfaceEdge new_edge = edge;
     new_edge.id = id;
     edges_.push_back(new_edge);
+
+    // Add to filtered collections by type for efficient iteration
+    if (edge.type == EdgeType::YarnContinuity) {
+        continuity_edge_ids_.push_back(id);
+    } else if (edge.type == EdgeType::PassThrough) {
+        passthrough_edge_ids_.push_back(id);
+    }
+
     return id;
 }
 

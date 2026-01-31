@@ -74,6 +74,10 @@ public:
     // Check if constraint coloring has been built
     bool has_constraint_colors() const { return !constraint_colors_.empty(); }
 
+    // Get filtered edge collections by type (for efficient iteration)
+    const std::vector<EdgeId>& continuity_edge_ids() const { return continuity_edge_ids_; }
+    const std::vector<EdgeId>& passthrough_edge_ids() const { return passthrough_edge_ids_; }
+
 private:
     std::vector<SurfaceNode> nodes_;
     std::vector<SurfaceEdge> edges_;
@@ -90,6 +94,10 @@ private:
     // Constraints grouped by color (each color is an independent set)
     // Constraints in the same color don't share any nodes
     std::vector<std::vector<ConstraintId>> constraint_colors_;
+
+    // Filtered edge collections by type (for efficient iteration)
+    std::vector<EdgeId> continuity_edge_ids_;   // YarnContinuity edges
+    std::vector<EdgeId> passthrough_edge_ids_;  // PassThrough edges
 };
 
 }  // namespace yarnpath

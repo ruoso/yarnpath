@@ -1,6 +1,8 @@
 #include "surface_graph.hpp"
 #include "logging.hpp"
 #include <stdexcept>
+#include <algorithm>
+#include <set>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -147,6 +149,65 @@ std::pair<NodeId, NodeId> SurfaceGraph::get_continuity_neighbors(NodeId node) co
         throw std::out_of_range("Node ID out of range");
     }
     return continuity_neighbors_[node];
+}
+
+void SurfaceGraph::build_constraint_colors() {
+    auto log = yarnpath::logging::get_logger();
+
+    if (constraints_.empty()) {
+        log->debug("No constraints to color");
+        return;
+    }
+
+    // Greedy graph coloring algorithm
+    // Assign each constraint the smallest color that doesn't conflict with its neighbors
+    std::vector<int> constraint_color(constraints_.size(), -1);
+
+    for (size_t i = 0; i < constraints_.size(); ++i) {
+        const auto& c_i = constraints_[i];
+
+        // Find colors used by conflicting constraints
+        // Two constraints conflict if they share any nodes
+        std::set<int> used_colors;
+        for (size_t j = 0; j < i; ++j) {
+            const auto& c_j = constraints_[j];
+
+            // Check if constraints share any nodes
+            bool conflicts = (c_i.node_a == c_j.node_a || c_i.node_a == c_j.node_b ||
+                             c_i.node_b == c_j.node_a || c_i.node_b == c_j.node_b);
+
+            if (conflicts && constraint_color[j] >= 0) {
+                used_colors.insert(constraint_color[j]);
+            }
+        }
+
+        // Assign smallest available color
+        int color = 0;
+        while (used_colors.count(color)) {
+            color++;
+        }
+        constraint_color[i] = color;
+    }
+
+    // Group constraints by color
+    int num_colors = 0;
+    for (int c : constraint_color) {
+        num_colors = std::max(num_colors, c + 1);
+    }
+
+    constraint_colors_.clear();
+    constraint_colors_.resize(num_colors);
+
+    for (size_t i = 0; i < constraints_.size(); ++i) {
+        int color = constraint_color[i];
+        constraint_colors_[color].push_back(static_cast<ConstraintId>(i));
+    }
+
+    log->info("Constraint coloring: {} constraints partitioned into {} colors",
+              constraints_.size(), num_colors);
+    for (size_t i = 0; i < constraint_colors_.size(); ++i) {
+        log->debug("  Color {}: {} constraints", i, constraint_colors_[i].size());
+    }
 }
 
 }  // namespace yarnpath

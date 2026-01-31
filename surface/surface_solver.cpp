@@ -149,9 +149,29 @@ void SurfaceSolver::integrate_verlet(SurfaceGraph& graph, float dt) {
 }
 
 void SurfaceSolver::project_constraints(SurfaceGraph& graph, int iterations) {
-    for (int i = 0; i < iterations; ++i) {
-        for (const auto& constraint : graph.constraints()) {
-            project_constraint(graph, constraint);
+    // Build constraint colors once for parallel projection
+    // This partitions constraints into independent sets
+    if (!graph.has_constraint_colors() && graph.constraint_count() > 0) {
+        graph.build_constraint_colors();
+    }
+
+    const auto& colors = graph.constraint_colors();
+
+    // If no colors (no constraints), nothing to do
+    if (colors.empty()) {
+        return;
+    }
+
+    for (int iter = 0; iter < iterations; ++iter) {
+        // Process each color level sequentially
+        // Constraints within the same color are independent and can be parallelized
+        for (const auto& color_set : colors) {
+            // Parallelize within each color - constraints don't conflict
+            #pragma omp parallel for schedule(static) if(color_set.size() > 20)
+            for (size_t i = 0; i < color_set.size(); ++i) {
+                const auto& constraint = graph.constraint(color_set[i]);
+                project_constraint(graph, constraint);
+            }
         }
     }
 }

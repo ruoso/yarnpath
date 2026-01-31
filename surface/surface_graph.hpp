@@ -59,6 +59,18 @@ public:
     // Returns {prev_node_id, next_node_id}, where -1 indicates no neighbor
     std::pair<NodeId, NodeId> get_continuity_neighbors(NodeId node) const;
 
+    // Build constraint color sets for parallel projection
+    // Partitions constraints into independent sets using graph coloring
+    void build_constraint_colors();
+
+    // Get constraints grouped by color (each color is an independent set)
+    const std::vector<std::vector<ConstraintId>>& constraint_colors() const {
+        return constraint_colors_;
+    }
+
+    // Check if constraint coloring has been built
+    bool has_constraint_colors() const { return !constraint_colors_.empty(); }
+
 private:
     std::vector<SurfaceNode> nodes_;
     std::vector<SurfaceEdge> edges_;
@@ -71,6 +83,10 @@ private:
     // -1 indicates no neighbor in that direction
     std::vector<std::pair<NodeId, NodeId>> continuity_neighbors_;
     bool adjacency_built_ = false;
+
+    // Constraints grouped by color (each color is an independent set)
+    // Constraints in the same color don't share any nodes
+    std::vector<std::vector<ConstraintId>> constraint_colors_;
 };
 
 }  // namespace yarnpath

@@ -138,13 +138,12 @@ std::string GeometryPath::to_obj(int samples_per_segment) const {
         ss << "v " << p.x << " " << p.y << " " << p.z << "\n";
     }
 
-    // Create line elements
+    // Create line segments (not closed loop)
     if (points.size() > 1) {
-        ss << "\n# Yarn path\nl";
-        for (size_t i = 1; i <= points.size(); ++i) {
-            ss << " " << i;
+        ss << "\n# Yarn path\n";
+        for (size_t i = 1; i < points.size(); ++i) {
+            ss << "l " << i << " " << (i + 1) << "\n";
         }
-        ss << "\n";
     }
 
     return ss.str();

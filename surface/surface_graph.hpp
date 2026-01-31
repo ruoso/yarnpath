@@ -55,6 +55,9 @@ public:
     // Build adjacency index for fast neighbor lookup (O(1) instead of O(E))
     void build_adjacency_index();
 
+    // Check if adjacency index has been built
+    bool has_adjacency_index() const { return adjacency_built_; }
+
     // Get continuity neighbors (prev/next along yarn path)
     // Returns {prev_node_id, next_node_id}, where -1 indicates no neighbor
     std::pair<NodeId, NodeId> get_continuity_neighbors(NodeId node) const;

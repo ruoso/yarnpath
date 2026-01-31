@@ -42,42 +42,46 @@ void compute_forces(SurfaceGraph& graph,
 void compute_spring_forces(SurfaceGraph& graph) {
     auto& nodes = graph.nodes();
     const auto& edges = graph.edges();
+    const size_t num_nodes = nodes.size();
 
-    // Parallelize over edges - use atomic operations for shared node writes
-    #pragma omp parallel for schedule(dynamic, 64) if(edges.size() > 50)
-    for (size_t i = 0; i < edges.size(); ++i) {
-        const auto& edge = edges[i];
-        auto& node_a = nodes[edge.node_a];
-        auto& node_b = nodes[edge.node_b];
+    // Thread-local force accumulation - eliminates atomic operations
+    #pragma omp parallel if(edges.size() > 50)
+    {
+        // Each thread has its own force buffer
+        std::vector<Vec3> thread_forces(num_nodes, Vec3::zero());
 
-        Vec3 delta = node_b.position - node_a.position;
-        float length = delta.length();
+        #pragma omp for schedule(static)
+        for (size_t i = 0; i < edges.size(); ++i) {
+            const auto& edge = edges[i];
 
-        // Avoid division by zero
-        if (length < 1e-6f) {
-            continue;
+            // Read positions (const access, thread-safe)
+            const Vec3& pos_a = nodes[edge.node_a].position;
+            const Vec3& pos_b = nodes[edge.node_b].position;
+
+            Vec3 delta = pos_b - pos_a;
+            float length = delta.length();
+
+            // Avoid division by zero
+            if (length < 1e-6f) {
+                continue;
+            }
+
+            // Spring force: F = -k * (length - rest_length) * direction
+            float displacement = length - edge.rest_length;
+            Vec3 force = (delta / length) * (edge.stiffness * displacement);
+
+            // Write to thread-local buffer (no atomics needed!)
+            thread_forces[edge.node_a] += force;
+            thread_forces[edge.node_b] -= force;
         }
 
-        // Spring force: F = -k * (length - rest_length) * direction
-        float displacement = length - edge.rest_length;
-        Vec3 direction = delta / length;
-        Vec3 force = direction * (edge.stiffness * displacement);
-
-        // Atomic force accumulation to avoid race conditions
-        // Multiple edges can share endpoints, so we need thread-safe updates
-        #pragma omp atomic
-        node_a.force.x += force.x;
-        #pragma omp atomic
-        node_a.force.y += force.y;
-        #pragma omp atomic
-        node_a.force.z += force.z;
-
-        #pragma omp atomic
-        node_b.force.x -= force.x;
-        #pragma omp atomic
-        node_b.force.y -= force.y;
-        #pragma omp atomic
-        node_b.force.z -= force.z;
+        // Merge thread-local forces into global forces (single critical section)
+        #pragma omp critical
+        {
+            for (size_t i = 0; i < num_nodes; ++i) {
+                nodes[i].force += thread_forces[i];
+            }
+        }
     }
 }
 
@@ -90,44 +94,48 @@ void compute_passthrough_tension(SurfaceGraph& graph,
     float tension_strength = yarn.tension * tension_factor;
     auto& nodes = graph.nodes();
     const auto& edges = graph.edges();
+    const size_t num_nodes = nodes.size();
 
-    // Parallelize over edges - use atomic operations for shared node writes
-    #pragma omp parallel for schedule(dynamic, 64) if(edges.size() > 50)
-    for (size_t i = 0; i < edges.size(); ++i) {
-        const auto& edge = edges[i];
-        if (edge.type != EdgeType::PassThrough) {
-            continue;
+    // Thread-local force accumulation - eliminates atomic operations
+    #pragma omp parallel if(edges.size() > 50)
+    {
+        // Each thread has its own force buffer
+        std::vector<Vec3> thread_forces(num_nodes, Vec3::zero());
+
+        #pragma omp for schedule(static)
+        for (size_t i = 0; i < edges.size(); ++i) {
+            const auto& edge = edges[i];
+            if (edge.type != EdgeType::PassThrough) {
+                continue;
+            }
+
+            // Read positions (const access, thread-safe)
+            const Vec3& pos_a = nodes[edge.node_a].position;
+            const Vec3& pos_b = nodes[edge.node_b].position;
+
+            Vec3 delta = pos_b - pos_a;
+            float length = delta.length();
+
+            if (length < 1e-6f) {
+                continue;
+            }
+
+            // Extra force pulling nodes together based on tension
+            // This simulates the yarn being pulled taut through the loop
+            Vec3 force = (delta / length) * tension_strength;
+
+            // Write to thread-local buffer (no atomics needed!)
+            thread_forces[edge.node_a] += force;
+            thread_forces[edge.node_b] -= force;
         }
 
-        auto& node_a = nodes[edge.node_a];
-        auto& node_b = nodes[edge.node_b];
-
-        Vec3 delta = node_b.position - node_a.position;
-        float length = delta.length();
-
-        if (length < 1e-6f) {
-            continue;
+        // Merge thread-local forces into global forces (single critical section)
+        #pragma omp critical
+        {
+            for (size_t i = 0; i < num_nodes; ++i) {
+                nodes[i].force += thread_forces[i];
+            }
         }
-
-        // Extra force pulling nodes together based on tension
-        // This simulates the yarn being pulled taut through the loop
-        Vec3 direction = delta / length;
-        Vec3 force = direction * tension_strength;
-
-        // Atomic force accumulation for thread safety
-        #pragma omp atomic
-        node_a.force.x += force.x;
-        #pragma omp atomic
-        node_a.force.y += force.y;
-        #pragma omp atomic
-        node_a.force.z += force.z;
-
-        #pragma omp atomic
-        node_b.force.x -= force.x;
-        #pragma omp atomic
-        node_b.force.y -= force.y;
-        #pragma omp atomic
-        node_b.force.z -= force.z;
     }
 }
 
@@ -141,12 +149,13 @@ void compute_loop_curvature_forces(SurfaceGraph& graph,
         return;  // Skip if strength is negligible
     }
 
-    // Build adjacency index once if not already built
+    // Build adjacency index once if not already built (thread-safe)
     // This eliminates O(N×E) nested loop by providing O(1) neighbor lookup
-    static bool index_built = false;
-    if (!index_built) {
-        graph.build_adjacency_index();
-        index_built = true;
+    #pragma omp single
+    {
+        if (!graph.has_adjacency_index()) {
+            graph.build_adjacency_index();
+        }
     }
 
     auto& nodes = graph.nodes();

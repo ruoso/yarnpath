@@ -2,6 +2,9 @@
 #include "surface_forces.hpp"
 #include "logging.hpp"
 #include <cmath>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 namespace yarnpath {
 
@@ -9,6 +12,16 @@ SolveResult SurfaceSolver::solve(SurfaceGraph& graph,
                                   const YarnProperties& yarn,
                                   const SolveConfig& config) {
     auto log = yarnpath::logging::get_logger();
+
+    // Configure OpenMP thread count
+    #ifdef _OPENMP
+    int max_threads = omp_get_max_threads();
+    int use_threads = (config.num_threads > 0) ? config.num_threads : max_threads;
+    omp_set_num_threads(use_threads);
+    log->info("Surface solver using {} OpenMP threads", use_threads);
+    #else
+    log->info("Surface solver running single-threaded (OpenMP not available)");
+    #endif
 
     SolveResult result;
     result.initial_energy = graph.compute_energy();
@@ -111,7 +124,12 @@ void SurfaceSolver::integrate_verlet(SurfaceGraph& graph, float dt) {
     // v(t + dt) = v(t) + a * dt
     // x(t + dt) = x(t) + v(t + dt) * dt
 
-    for (auto& node : graph.nodes()) {
+    auto& nodes = graph.nodes();
+
+    // Parallelize over nodes - each node update is independent
+    #pragma omp parallel for schedule(static) if(nodes.size() > 100)
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        auto& node = nodes[i];
         if (node.is_pinned) {
             // Pinned nodes don't move
             node.velocity = Vec3::zero();

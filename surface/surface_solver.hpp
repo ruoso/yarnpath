@@ -24,7 +24,7 @@ struct SolveConfig {
     float convergence_threshold = 1e-4f;
 
     // Number of constraint projection iterations per step
-    int constraint_iterations = 10;
+    int constraint_iterations = 30;  // Increased for better constraint satisfaction
 
     // Number of constraint-only pre-solve iterations (before force relaxation)
     // This helps satisfy constraints before springs start pulling
@@ -36,6 +36,9 @@ struct SolveConfig {
     // Frame capture callback (optional) - called every frame_interval iterations
     FrameCallback frame_callback = nullptr;
     int frame_interval = 100;  // Capture a frame every N iterations
+
+    // Parallelization settings
+    int num_threads = 0;  // 0 = auto-detect, > 0 = use specific count
 };
 
 // Result of solving

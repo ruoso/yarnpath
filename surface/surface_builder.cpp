@@ -79,10 +79,13 @@ void SurfaceBuilder::create_continuity_edges() {
     float base_rest_length = yarn_.radius * 2.0f * (1.0f + (1.0f - yarn_.tension) * 0.25f);
     // For worsted (radius=1.0, tension=0.5): rest_length ≈ 2.0 * 1.125 = 2.25mm
 
-    // Stiffness derived from yarn properties
-    // Base stiffness scales with yarn stiffness (0=flexible, 1=stiff)
-    // Using 100.0 as a base constant that works well for the physics simulation
-    float base_stiffness = 100.0f * (0.5f + yarn_.stiffness * 0.5f);  // Range: 50-100
+    // Dimensionally-consistent stiffness: scale by (mass / length²) to match system timescale
+    // This ensures stable integration with the given dt and mass values
+    float typical_mass = yarn_.loop_mass(gauge_.needle_diameter);
+    float typical_length = yarn_.radius * 2.0f;
+    float dimensional_scale = typical_mass / (typical_length * typical_length);
+    // Base stiffness constant adjusted for dt=0.01, scaled by yarn stiffness property
+    float base_stiffness = 5.0f * dimensional_scale * (0.5f + yarn_.stiffness * 0.5f);
     float stiffness = base_stiffness * config_.continuity_stiffness_factor;
 
     // Connect consecutive segments
@@ -111,11 +114,17 @@ void SurfaceBuilder::create_passthrough_edges() {
     // The child loop passes through the parent and hangs below it
     // Distance is approximately: parent_loop_half_height + child_loop_half_height + clearance
     float loop_height = gauge_.loop_height(yarn_.radius, yarn_.loop_aspect_ratio);
-    float base_rest_length = loop_height + yarn_.min_clearance();
+    // Desired equilibrium distance with comfortable clearance (1.5x for slack)
+    float comfortable_clearance = yarn_.min_clearance() * 1.5f;
+    float base_rest_length = loop_height + comfortable_clearance;
 
     // Stiffness for passthrough edges - derived from yarn stiffness
     // Passthroughs are less stiff than continuity (yarn can slide through loops)
-    float base_stiffness = 100.0f * (0.5f + yarn_.stiffness * 0.5f);
+    // Use same dimensionally-consistent calculation as continuity
+    float typical_mass = yarn_.loop_mass(gauge_.needle_diameter);
+    float typical_length = yarn_.radius * 2.0f;
+    float dimensional_scale = typical_mass / (typical_length * typical_length);
+    float base_stiffness = 5.0f * dimensional_scale * (0.5f + yarn_.stiffness * 0.5f);
     float stiffness = base_stiffness * config_.passthrough_stiffness_factor;
 
     for (size_t i = 0; i < segments.size(); ++i) {
@@ -175,6 +184,8 @@ void SurfaceBuilder::create_constraints() {
             constraint.type = ConstraintType::MinDistance;
             constraint.node_a = edge.node_a;
             constraint.node_b = edge.node_b;
+            // Minimum physical clearance - just prevent yarn interpenetration
+            // The rest_length (above) handles the geometric spacing for loop structure
             constraint.limit = min_clearance;
 
             graph_.add_constraint(constraint);
@@ -214,7 +225,9 @@ void SurfaceBuilder::initialize_positions() {
     // Build lookup for passthrough from original YarnPath segments
     // (This ensures we're using the source data, not potentially filtered edges)
     std::map<NodeId, std::vector<std::pair<NodeId, float>>> passthrough_info;
-    float default_passthrough_length = gauge_.loop_height(yarn_.radius, yarn_.loop_aspect_ratio) + yarn_.min_clearance();
+    // Use the same calculation as passthrough edge rest length
+    float comfortable_clearance = yarn_.min_clearance() * 1.5f;
+    float default_passthrough_length = gauge_.loop_height(yarn_.radius, yarn_.loop_aspect_ratio) + comfortable_clearance;
     for (size_t i = 0; i < segments.size(); ++i) {
         const auto& seg = segments[i];
         for (SegmentId parent_id : seg.through) {
@@ -284,9 +297,10 @@ void SurfaceBuilder::initialize_positions() {
 
     // Use constraint-based spacing to ensure minimum distances are satisfied
     // Continuity edge rest length (X spacing within row)
-    float stitch_offset = yarn_.radius * 2.0f * (1.0f + (1.0f - yarn_.tension) * 0.25f);
+    // Start with 33% extra space for relaxation (3.0 → 4.0) to avoid immediate constraint conflicts
+    float stitch_offset = yarn_.radius * 2.0f * (1.0f + (1.0f - yarn_.tension) * 0.25f) * 4.0f; // three segments per stitch
     // Passthrough edge rest length (Y spacing between rows)
-    float row_offset = gauge_.loop_height(yarn_.radius, yarn_.loop_aspect_ratio) + yarn_.min_clearance();
+    float row_offset = stitch_offset;
 
     // Position node 0 at origin
     if (graph_.node_count() > 0) {

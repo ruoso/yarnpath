@@ -4,6 +4,9 @@
 #include <limits>
 #include <set>
 #include <vector>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 namespace yarnpath {
 
@@ -202,8 +205,12 @@ void compute_loop_curvature_forces(SurfaceGraph& graph,
 }
 
 void apply_damping(SurfaceGraph& graph, float damping) {
-    for (auto& node : graph.nodes()) {
-        node.force -= node.velocity * damping;
+    auto& nodes = graph.nodes();
+
+    // Parallelize over nodes - each node is independent
+    #pragma omp parallel for schedule(static) if(nodes.size() > 100)
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        nodes[i].force -= nodes[i].velocity * damping;
     }
 }
 
@@ -349,11 +356,21 @@ void compute_gravity_force(SurfaceGraph& graph,
     bool should_log = (log_counter++ % 1000 == 0);  // Log every 1000 calls
 
     float total_force = 0.0f;
-    for (auto& node : graph.nodes()) {
+    auto& nodes = graph.nodes();
+
+    // Parallelize over nodes - each node is independent
+    #pragma omp parallel for schedule(static) reduction(+:total_force) if(nodes.size() > 100)
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        auto& node = nodes[i];
         if (node.is_pinned) {
             continue;
         }
-        Vec3 gravity_force = gravity_dir * (node.mass * strength);
+        // Convert gravity from m/s² to mm/s² since positions are in mm
+        // strength is in m/s² (e.g., 9.8), mass is in grams
+        // Force units should be compatible with spring forces (which use mm distances)
+        // Numerically treat the value as mm/s² instead of m/s² for unit consistency
+        float gravity_in_mm = strength;
+        Vec3 gravity_force = gravity_dir * (node.mass * gravity_in_mm);
         node.add_force(gravity_force);
         total_force += gravity_force.length();
     }
@@ -375,10 +392,17 @@ void apply_floor_constraint(SurfaceGraph& graph, float floor_dist, const Vec3& d
     float min_dist = std::numeric_limits<float>::max();
     float max_dist = std::numeric_limits<float>::lowest();
 
-    // Prevent nodes from going past the floor along the gravity direction
-    for (auto& node : graph.nodes()) {
+    auto& nodes = graph.nodes();
+
+    // Parallelize over nodes - each node checked independently
+    // Use reduction for statistics
+    #pragma omp parallel for schedule(static) reduction(+:nodes_on_floor) \
+            reduction(min:min_dist) reduction(max:max_dist) if(nodes.size() > 100)
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        auto& node = nodes[i];
         // Compute signed distance along floor direction
         float dist = node.position.dot(floor_dir);
+
         min_dist = std::min(min_dist, dist);
         max_dist = std::max(max_dist, dist);
 

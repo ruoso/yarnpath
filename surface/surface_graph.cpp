@@ -1,6 +1,9 @@
 #include "surface_graph.hpp"
 #include "logging.hpp"
 #include <stdexcept>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 namespace yarnpath {
 
@@ -97,7 +100,10 @@ float SurfaceGraph::compute_energy() const {
     float energy = 0.0f;
 
     // Spring potential energy: 0.5 * k * (x - rest_length)^2
-    for (const auto& edge : edges_) {
+    // Parallelize over edges - each edge computes energy independently
+    #pragma omp parallel for schedule(static) reduction(+:energy) if(edges_.size() > 100)
+    for (size_t i = 0; i < edges_.size(); ++i) {
+        const auto& edge = edges_[i];
         const auto& a = nodes_[edge.node_a];
         const auto& b = nodes_[edge.node_b];
         float dist = a.position.distance_to(b.position);

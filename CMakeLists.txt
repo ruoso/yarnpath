@@ -28,6 +28,14 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(spdlog)
 
+# nlohmann/json for serialization
+FetchContent_Declare(
+    nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG v3.11.3
+)
+FetchContent_MakeAvailable(nlohmann_json)
+
 # GLFW for OpenGL windowing (optional visualization)
 find_package(glfw3 QUIET)
 find_package(OpenGL QUIET)
@@ -46,6 +54,9 @@ add_subdirectory(common)
 add_subdirectory(math)
 add_subdirectory(yarn)
 
+# Serialization
+add_subdirectory(serialization)
+
 # Libraries
 add_subdirectory(instructions)
 add_subdirectory(parser)
@@ -54,6 +65,9 @@ add_subdirectory(yarn_path)
 add_subdirectory(geometry)
 add_subdirectory(surface)
 add_subdirectory(visualizer)
+
+# CLI commands
+add_subdirectory(cli)
 
 # Application
 add_subdirectory(app)

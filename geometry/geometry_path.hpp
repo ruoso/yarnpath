@@ -44,6 +44,11 @@ struct Gauge;
 // Main output: 3D geometry for a yarn path
 class GeometryPath {
 public:
+    // Constructors
+    GeometryPath() = default;
+    explicit GeometryPath(std::vector<SegmentGeometry> segments)
+        : segments_(std::move(segments)) {}
+
     // Construction from YarnPath using relaxed surface positions
     static GeometryPath from_yarn_path(
         const YarnPath& yarn_path,

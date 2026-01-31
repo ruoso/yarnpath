@@ -30,6 +30,11 @@ class StitchGraph {
     std::vector<RowInfo> rows_;
 
 public:
+    // Constructors
+    StitchGraph() = default;
+    StitchGraph(std::vector<StitchNode> nodes, std::vector<RowInfo> rows)
+        : nodes_(std::move(nodes)), rows_(std::move(rows)) {}
+
     // Build from instructions
     static StitchGraph from_instructions(const PatternInstructions& pattern);
 

@@ -25,6 +25,11 @@ class YarnPath {
 public:
     friend class YarnPathBuilder;
 
+    // Constructors
+    YarnPath() = default;
+    explicit YarnPath(std::vector<YarnSegment> segments)
+        : segments_(std::move(segments)) {}
+
     static YarnPath from_stitch_graph(const StitchGraph& graph);
 
     // Segment access (index is identity)

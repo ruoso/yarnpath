@@ -155,77 +155,6 @@ CubicBezier CubicBezier::from_hermite(const Vec3& p0, const Vec3& tangent0,
 BezierSpline::BezierSpline(std::vector<CubicBezier> segments)
     : segments_(std::move(segments)) {}
 
-BezierSpline BezierSpline::from_yarn_points(const std::vector<YarnPathPoint>& points) {
-    BezierSpline spline;
-
-    if (points.size() < 2) {
-        return spline;
-    }
-
-    // For each pair of consecutive points, create a Bezier segment
-    // The tangent at each point is computed from neighboring points
-    // Tension controls how much the tangent affects the curve shape
-
-    for (size_t i = 0; i + 1 < points.size(); ++i) {
-        const auto& p0 = points[i];
-        const auto& p1 = points[i + 1];
-
-        // Compute tangent at p0 (looking at neighbors)
-        Vec3 tangent0;
-        if (i == 0) {
-            // First point: tangent points toward next point
-            tangent0 = p1.position - p0.position;
-        } else {
-            // Interior point: tangent from previous to next (Catmull-Rom style)
-            tangent0 = points[i + 1].position - points[i - 1].position;
-        }
-
-        // Compute tangent at p1 (looking at neighbors)
-        Vec3 tangent1;
-        if (i + 2 >= points.size()) {
-            // Last point: tangent points from previous point
-            tangent1 = p1.position - p0.position;
-        } else {
-            // Interior point: tangent from previous to next
-            tangent1 = points[i + 2].position - points[i].position;
-        }
-
-        // Scale tangents based on tension and distance
-        // High tension = shorter tangent = tighter curve
-        // Low tension = longer tangent = smoother curve
-        float dist = p0.position.distance_to(p1.position);
-
-        // Tension affects tangent length: high tension = short tangent
-        // Standard Catmull-Rom uses 0.5 factor, we modify based on tension
-        // tension 0 -> factor ~0.5 (smooth)
-        // tension 1 -> factor ~0.1 (tight)
-        float factor0 = 0.5f * (1.0f - p0.tension * 0.8f);
-        float factor1 = 0.5f * (1.0f - p1.tension * 0.8f);
-
-        // Clamp tangent magnitude to be reasonable relative to segment length
-        float mag0 = tangent0.length();
-        float mag1 = tangent1.length();
-
-        Vec3 scaled_tangent0 = (mag0 > 0.0001f)
-            ? tangent0 * (factor0 * dist / mag0)
-            : Vec3(dist * factor0, 0.0f, 0.0f);
-
-        Vec3 scaled_tangent1 = (mag1 > 0.0001f)
-            ? tangent1 * (factor1 * dist / mag1)
-            : Vec3(dist * factor1, 0.0f, 0.0f);
-
-        // Create Bezier from Hermite data
-        CubicBezier segment = CubicBezier::from_hermite(
-            p0.position, scaled_tangent0,
-            p1.position, scaled_tangent1
-        );
-
-        spline.add_segment(segment);
-    }
-
-    return spline;
-}
-
 void BezierSpline::add_segment(const CubicBezier& segment) {
     segments_.push_back(segment);
 }
@@ -398,88 +327,231 @@ void BezierSpline::merge_short_segments(float min_length) {
     segments_ = std::move(new_segments);
 }
 
-BezierSpline BezierSpline::to_adaptive_spline(float max_k, int min_samples, int max_samples) const {
-    if (segments_.empty()) {
-        return BezierSpline();
-    }
-
-    // Sample the entire spline at fine intervals
-    std::vector<Vec3> positions;
-    std::vector<Vec3> tangents;
-    std::vector<float> curvatures;
-
-    int total_samples = static_cast<int>(segments_.size()) * max_samples;
-    float dt = static_cast<float>(segments_.size()) / static_cast<float>(total_samples);
-
-    for (int i = 0; i <= total_samples; ++i) {
-        float t = static_cast<float>(i) * dt;
-        if (t > static_cast<float>(segments_.size())) {
-            t = static_cast<float>(segments_.size());
-        }
-
-        positions.push_back(evaluate(t));
-        tangents.push_back(tangent(t));
-
-        // Compute curvature at this point
-        size_t seg_idx = static_cast<size_t>(t);
-        if (seg_idx >= segments_.size()) {
-            seg_idx = segments_.size() - 1;
-        }
-        float local_t = t - static_cast<float>(seg_idx);
-        curvatures.push_back(segments_[seg_idx].curvature(local_t));
-    }
-
-    // Select points based on curvature
-    // High curvature regions: keep more points
-    // Low curvature regions: keep fewer points
-    std::vector<size_t> selected_indices;
-    selected_indices.push_back(0);
-
-    float accumulated_score = 0.0f;
-    float threshold = 1.0f / static_cast<float>(min_samples);
-
-    for (size_t i = 1; i < positions.size() - 1; ++i) {
-        // Score based on curvature relative to max_k
-        float curvature_ratio = std::min(1.0f, curvatures[i] / max_k);
-        accumulated_score += (1.0f + curvature_ratio * 2.0f) * dt;
-
-        if (accumulated_score >= threshold) {
-            selected_indices.push_back(i);
-            accumulated_score = 0.0f;
-        }
-    }
-
-    selected_indices.push_back(positions.size() - 1);
-
-    // Ensure minimum number of points
-    if (selected_indices.size() < static_cast<size_t>(min_samples + 1)) {
-        // Uniformly add more points
-        size_t target_count = static_cast<size_t>(min_samples + 1);
-        std::vector<size_t> uniform_indices;
-        for (size_t i = 0; i < target_count; ++i) {
-            size_t idx = (i * (positions.size() - 1)) / (target_count - 1);
-            uniform_indices.push_back(idx);
-        }
-        selected_indices = std::move(uniform_indices);
-    }
-
-    // Build new spline from selected points using Hermite interpolation
-    std::vector<YarnPathPoint> selected_points;
-    for (size_t idx : selected_indices) {
-        YarnPathPoint pt;
-        pt.position = positions[idx];
-        // Use inverse curvature as tension (high curvature = high tension)
-        float curvature_ratio = std::min(1.0f, curvatures[idx] / max_k);
-        pt.tension = curvature_ratio;
-        selected_points.push_back(pt);
-    }
-
-    return BezierSpline::from_yarn_points(selected_points);
-}
 
 void BezierSpline::cleanup(float min_segment_length) {
     merge_short_segments(min_segment_length);
     enforce_c1_continuity();
+}
+
+CubicBezier create_continuation_segment(
+    const BezierSpline& spline,
+    const Vec3& target_point,
+    const Vec3& target_direction,
+    float max_curvature) {
+    
+    // Get the starting point and incoming direction from the spline
+    Vec3 start_point;
+    Vec3 incoming_dir;
+    
+    if (spline.empty()) {
+        // No spline segments - use target direction reversed as incoming
+        start_point = target_point;  // Degenerate case
+        incoming_dir = target_direction.normalized() * -1.0f;
+    } else {
+        // Get the last segment's end point and exit tangent
+        const auto& last_segment = spline.segments().back();
+        start_point = last_segment.end();
+        incoming_dir = last_segment.tangent(1.0f);  // Tangent at t=1 (end)
+    }
+    
+    // Normalize target direction
+    Vec3 target_dir = target_direction.normalized();
+    
+    // Calculate the distance between points
+    Vec3 to_target = target_point - start_point;
+    float distance = to_target.length();
+    
+    if (distance < 1e-6f) {
+        // Points are coincident - return a degenerate segment
+        return CubicBezier(start_point, start_point, target_point, target_point);
+    }
+    
+    // Calculate tangent magnitudes based on curvature constraint.
+    // For a Hermite curve, the curvature at endpoints depends on the tangent magnitude.
+    // A larger tangent magnitude creates a gentler curve (lower curvature).
+    // 
+    // The minimum bend radius is 1/max_curvature. To ensure we don't exceed
+    // max_curvature, we need tangent magnitudes that are proportional to
+    // the distance and inversely related to the allowed curvature.
+    //
+    // For a smooth curve: tangent_magnitude ~= distance * factor
+    // where factor depends on how much the direction changes.
+    
+    // Calculate how much the direction changes (dot product of normalized directions)
+    float direction_alignment = incoming_dir.dot(target_dir);
+    // direction_alignment: 1.0 = same direction, -1.0 = opposite, 0 = perpendicular
+    
+    // Minimum bend radius
+    float min_bend_radius = (max_curvature > 1e-6f) ? (1.0f / max_curvature) : 1000.0f;
+    
+    // Base tangent magnitude - scales with distance
+    // When directions are aligned, we need less tangent to make a smooth curve
+    // When directions differ significantly, we need more tangent to avoid sharp bends
+    float alignment_factor = 0.5f - 0.3f * direction_alignment;  // Range: [0.2, 0.8]
+    
+    // Ensure tangent is long enough to respect minimum bend radius
+    // The tangent magnitude should be at least proportional to min_bend_radius
+    // for curves that need to turn significantly
+    float curvature_factor = std::max(0.3f, min_bend_radius / distance);
+    curvature_factor = std::min(curvature_factor, 1.0f);  // Cap at 1.0
+    
+    float tangent_magnitude = distance * std::max(alignment_factor, curvature_factor * 0.5f);
+    
+    // Create the Hermite curve
+    Vec3 start_tangent = incoming_dir * tangent_magnitude;
+    Vec3 end_tangent = target_dir * tangent_magnitude;
+    
+    return CubicBezier::from_hermite(start_point, start_tangent, target_point, end_tangent);
+}
+
+CubicBezier create_continuation_segment_with_clearance(
+    const BezierSpline& spline,
+    const Vec3& target_point,
+    const Vec3& target_direction,
+    const Vec3& clearance_point,
+    float clearance_radius,
+    float max_curvature) {
+    
+    // Get the starting point and incoming direction from the spline
+    Vec3 start_point;
+    Vec3 incoming_dir;
+    
+    if (spline.empty()) {
+        // No spline segments - use target direction reversed as incoming
+        start_point = target_point;  // Degenerate case
+        incoming_dir = target_direction.normalized() * -1.0f;
+    } else {
+        // Get the last segment's end point and exit tangent
+        const auto& last_segment = spline.segments().back();
+        start_point = last_segment.end();
+        incoming_dir = last_segment.tangent(1.0f);  // Tangent at t=1 (end)
+    }
+    
+    // Normalize target direction
+    Vec3 target_dir = target_direction.normalized();
+    
+    // Calculate the distance between start and target
+    Vec3 to_target = target_point - start_point;
+    float distance = to_target.length();
+    
+    if (distance < 1e-6f) {
+        // Points are coincident - return a degenerate segment
+        return CubicBezier(start_point, start_point, target_point, target_point);
+    }
+    
+    // Calculate the midpoint of the straight line path
+    Vec3 midpoint = (start_point + target_point) * 0.5f;
+    
+    // Vector from clearance point to midpoint
+    Vec3 clearance_to_mid = midpoint - clearance_point;
+    float clearance_to_mid_dist = clearance_to_mid.length();
+    
+    // Determine which side of the clearance point we should curve around
+    // Use the cross product of incoming and target directions to find the "outside"
+    // If that's ambiguous, use the direction away from the clearance point
+    Vec3 curve_normal;
+    
+    // Calculate the plane normal from the path (incoming x outgoing gives perpendicular)
+    Vec3 path_cross = incoming_dir.cross(target_dir);
+    float path_cross_len = path_cross.length();
+    
+    if (path_cross_len > 1e-6f) {
+        // Incoming and target directions define a plane
+        // The curve will bulge perpendicular to this, away from clearance point
+        Vec3 plane_normal = path_cross.normalized();
+        
+        // Project clearance_to_mid onto the plane perpendicular to the path
+        Vec3 avg_dir = (incoming_dir + target_dir).normalized();
+        Vec3 in_plane = clearance_to_mid - avg_dir * clearance_to_mid.dot(avg_dir);
+        float in_plane_len = in_plane.length();
+        
+        if (in_plane_len > 1e-6f) {
+            curve_normal = in_plane.normalized();
+        } else {
+            // Clearance point is on the path line, use plane normal
+            curve_normal = plane_normal;
+        }
+    } else {
+        // Incoming and target are parallel (or anti-parallel)
+        // Need to find a perpendicular direction away from clearance
+        if (clearance_to_mid_dist > 1e-6f) {
+            // Project out the component along the path
+            Vec3 path_dir = to_target.normalized();
+            Vec3 perp = clearance_to_mid - path_dir * clearance_to_mid.dot(path_dir);
+            float perp_len = perp.length();
+            if (perp_len > 1e-6f) {
+                curve_normal = perp.normalized();
+            } else {
+                // Clearance is exactly on the line - pick arbitrary perpendicular
+                if (std::abs(path_dir.x) < 0.9f) {
+                    curve_normal = path_dir.cross(vec3::unit_x()).normalized();
+                } else {
+                    curve_normal = path_dir.cross(vec3::unit_y()).normalized();
+                }
+            }
+        } else {
+            // Midpoint is at clearance point - pick arbitrary perpendicular
+            Vec3 path_dir = to_target.normalized();
+            if (std::abs(path_dir.x) < 0.9f) {
+                curve_normal = path_dir.cross(vec3::unit_x()).normalized();
+            } else {
+                curve_normal = path_dir.cross(vec3::unit_y()).normalized();
+            }
+        }
+    }
+    
+    // Calculate how much we need to bulge outward to clear the obstacle
+    // Find the closest approach of a straight line to the clearance point
+    Vec3 path_dir = to_target.normalized();
+    Vec3 start_to_clearance = clearance_point - start_point;
+    float projection = start_to_clearance.dot(path_dir);
+    projection = std::clamp(projection, 0.0f, distance);  // Clamp to segment
+    Vec3 closest_on_line = start_point + path_dir * projection;
+    float straight_line_clearance = (clearance_point - closest_on_line).length();
+    
+    // How much additional bulge do we need?
+    float needed_bulge = 0.0f;
+    if (straight_line_clearance < clearance_radius) {
+        needed_bulge = clearance_radius - straight_line_clearance;
+        // Add some extra margin for the curve (Bezier doesn't go through control points)
+        needed_bulge *= 1.5f;
+    }
+    
+    // Minimum bend radius
+    float min_bend_radius = (max_curvature > 1e-6f) ? (1.0f / max_curvature) : 1000.0f;
+    
+    // Calculate base tangent magnitude
+    float direction_alignment = incoming_dir.dot(target_dir);
+    float alignment_factor = 0.5f - 0.3f * direction_alignment;
+    float curvature_factor = std::max(0.3f, min_bend_radius / distance);
+    curvature_factor = std::min(curvature_factor, 1.0f);
+    float tangent_magnitude = distance * std::max(alignment_factor, curvature_factor * 0.5f);
+    
+    // If we need to bulge, increase tangent magnitude and add perpendicular component
+    Vec3 start_tangent = incoming_dir * tangent_magnitude;
+    Vec3 end_tangent = target_dir * tangent_magnitude;
+    
+    if (needed_bulge > 1e-6f) {
+        // Add perpendicular component to control points to create bulge
+        // The control points of a Bezier are offset from the straight line
+        // We modify the tangents to push the curve away from the clearance zone
+        
+        // Scale bulge influence based on how much tangent needs to turn
+        float bulge_factor = needed_bulge * 2.0f;  // Control point offset needs to be larger
+        
+        // Add perpendicular component to tangents
+        // For start tangent: add component that pushes the curve outward at the start
+        // For end tangent: add component that brings the curve back inward at the end
+        start_tangent = start_tangent + curve_normal * bulge_factor;
+        end_tangent = end_tangent + curve_normal * bulge_factor;
+        
+        // Also increase magnitude to maintain smooth curvature with the added turn
+        float extra_magnitude = needed_bulge * 0.5f;
+        start_tangent = start_tangent.normalized() * (tangent_magnitude + extra_magnitude);
+        end_tangent = end_tangent.normalized() * (tangent_magnitude + extra_magnitude);
+    }
+    
+    return CubicBezier::from_hermite(start_point, start_tangent, target_point, end_tangent);
 }
 
 }  // namespace yarnpath

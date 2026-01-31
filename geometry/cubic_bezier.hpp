@@ -82,12 +82,6 @@ public:
     BezierSpline() = default;
     explicit BezierSpline(std::vector<CubicBezier> segments);
 
-    // Create a smooth spline through yarn path points
-    // Each point has its own tension value controlling local curvature
-    // High tension (near 1.0) = tight curve at loop apex
-    // Low tension (near 0.0) = gentle curve for transitions
-    static BezierSpline from_yarn_points(const std::vector<YarnPathPoint>& points);
-
     // Add a segment to the spline
     void add_segment(const CubicBezier& segment);
 
@@ -124,16 +118,50 @@ public:
     // Merge segments shorter than min_length into adjacent segments
     void merge_short_segments(float min_length);
 
-    // Create a smoothed spline with curvature-adaptive sampling
-    // Returns a new spline with more segments at high curvature, fewer at low
-    BezierSpline to_adaptive_spline(float max_curvature, int min_samples, int max_samples) const;
-
     // Combined cleanup: merge short segments, enforce continuity
     void cleanup(float min_segment_length);
 
 private:
     std::vector<CubicBezier> segments_;
 };
+
+// Create a smooth continuation segment from a spline to a target point.
+// Analyzes the last segment of the spline to determine incoming direction,
+// then creates a curve that respects the max_curvature constraint.
+//
+// Parameters:
+//   spline: The existing spline to continue from (uses last segment's exit tangent)
+//   target_point: The destination point for the new segment
+//   target_direction: The desired tangent direction at the target point (will be normalized)
+//   max_curvature: Maximum allowed curvature (1/min_bend_radius)
+//
+// Returns: A CubicBezier segment from the spline's end to target_point
+CubicBezier create_continuation_segment(
+    const BezierSpline& spline,
+    const Vec3& target_point,
+    const Vec3& target_direction,
+    float max_curvature);
+
+// Create a smooth continuation segment that maintains clearance around a reference point.
+// The curve will bulge away from the clearance point to ensure the minimum distance
+// is maintained throughout the trajectory.
+//
+// Parameters:
+//   spline: The existing spline to continue from (uses last segment's exit tangent)
+//   target_point: The destination point for the new segment
+//   target_direction: The desired tangent direction at the target point (will be normalized)
+//   clearance_point: The center point that must be avoided
+//   clearance_radius: The minimum distance to maintain from clearance_point
+//   max_curvature: Maximum allowed curvature (1/min_bend_radius)
+//
+// Returns: A CubicBezier segment that curves around the clearance zone
+CubicBezier create_continuation_segment_with_clearance(
+    const BezierSpline& spline,
+    const Vec3& target_point,
+    const Vec3& target_direction,
+    const Vec3& clearance_point,
+    float clearance_radius,
+    float max_curvature);
 
 }  // namespace yarnpath
 

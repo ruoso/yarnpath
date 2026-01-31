@@ -436,11 +436,11 @@ static void render_axis_gizmo(int window_width, int window_height, const Camera&
 static Vec3 find_perpendicular(const Vec3& v) {
     // Choose the axis that is least aligned with v
     if (std::abs(v.x) < std::abs(v.y) && std::abs(v.x) < std::abs(v.z)) {
-        return v.cross(vec3::unit_x()).normalized();
+        return v.cross(Vec3::unit_x()).normalized();
     } else if (std::abs(v.y) < std::abs(v.z)) {
-        return v.cross(vec3::unit_y()).normalized();
+        return v.cross(Vec3::unit_y()).normalized();
     } else {
-        return v.cross(vec3::unit_z()).normalized();
+        return v.cross(Vec3::unit_z()).normalized();
     }
 }
 
@@ -961,7 +961,7 @@ VisualizerResult visualize_with_geometry(
 
     // Create a mutable config with yarn radius from properties
     VisualizerConfig config = viz_config;
-    //config.yarn_radius = yarn.radius;
+    config.yarn_radius = yarn.radius;
 
     // Initialize camera
     g_camera.distance = config.camera_distance;
@@ -1122,7 +1122,7 @@ VisualizerResult visualize_with_geometry(
             g_current_geometry_snapshot < static_cast<int>(g_geometry_snapshots.size())) {
             if (g_current_geometry_snapshot != g_last_logged_geometry_snapshot) {
                 const auto& gsnap = g_geometry_snapshots[g_current_geometry_snapshot];
-                Vec3 endpoint = vec3::zero();
+                Vec3 endpoint = Vec3::zero();
                 if (!gsnap.spline.empty()) {
                     endpoint = gsnap.spline.segments().back().end();
                 }

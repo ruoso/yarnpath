@@ -20,7 +20,7 @@ RelaxedSurface RelaxedSurface::from_graph(const SurfaceGraph& graph) {
         }
     }
 
-    surface.positions_.resize(max_seg_id + 1, vec3::zero());
+    surface.positions_.resize(max_seg_id + 1, Vec3::zero());
 
     // Copy positions from graph nodes
     for (const auto& node : graph.nodes()) {
@@ -32,14 +32,14 @@ RelaxedSurface RelaxedSurface::from_graph(const SurfaceGraph& graph) {
 
 Vec3 RelaxedSurface::position(SegmentId id) const {
     if (id >= positions_.size()) {
-        return vec3::zero();
+        return Vec3::zero();
     }
     return positions_[id];
 }
 
 std::pair<Vec3, Vec3> RelaxedSurface::bounding_box() const {
     if (positions_.empty()) {
-        return {vec3::zero(), vec3::zero()};
+        return {Vec3::zero(), Vec3::zero()};
     }
 
     Vec3 min_pt(std::numeric_limits<float>::max(),
@@ -63,10 +63,10 @@ std::pair<Vec3, Vec3> RelaxedSurface::bounding_box() const {
 
 Vec3 RelaxedSurface::center_of_mass() const {
     if (positions_.empty()) {
-        return vec3::zero();
+        return Vec3::zero();
     }
 
-    Vec3 sum = vec3::zero();
+    Vec3 sum = Vec3::zero();
     for (const auto& pos : positions_) {
         sum += pos;
     }

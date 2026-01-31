@@ -115,6 +115,11 @@ struct Vec3 {
         if (i == 1) return y;
         return z;
     }
+
+    constexpr static Vec3 zero() { return {0.0f, 0.0f, 0.0f}; }
+    constexpr static Vec3 unit_x() { return {1.0f, 0.0f, 0.0f}; }
+    constexpr static Vec3 unit_y() { return {0.0f, 1.0f, 0.0f}; }
+    constexpr static Vec3 unit_z() { return {0.0f, 0.0f, 1.0f}; }
 };
 
 // Scalar * Vec3
@@ -127,13 +132,6 @@ constexpr Vec3 lerp(const Vec3& a, const Vec3& b, float t) {
     return a * (1.0f - t) + b * t;
 }
 
-// Common constants
-namespace vec3 {
-    constexpr Vec3 zero() { return {0.0f, 0.0f, 0.0f}; }
-    constexpr Vec3 unit_x() { return {1.0f, 0.0f, 0.0f}; }
-    constexpr Vec3 unit_y() { return {0.0f, 1.0f, 0.0f}; }
-    constexpr Vec3 unit_z() { return {0.0f, 0.0f, 1.0f}; }
-}
 
 }  // namespace yarnpath
 

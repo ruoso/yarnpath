@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <stdexcept>
 
+#include <math/vec3.hpp>
+
 namespace yarnpath {
 
 CubicBezier::CubicBezier(const Vec3& p0, const Vec3& p1, const Vec3& p2, const Vec3& p3)
@@ -102,9 +104,9 @@ Vec3 CubicBezier::normal(float t) const {
     if (len < 1e-8f) {
         // Degenerate case: use arbitrary perpendicular
         if (std::abs(d1.x) < 0.9f) {
-            n = d1.cross(vec3::unit_x());
+            n = d1.cross(Vec3::unit_x());
         } else {
-            n = d1.cross(vec3::unit_y());
+            n = d1.cross(Vec3::unit_y());
         }
     }
     return n.normalized();
@@ -161,7 +163,7 @@ void BezierSpline::add_segment(const CubicBezier& segment) {
 
 Vec3 BezierSpline::evaluate(float t) const {
     if (segments_.empty()) {
-        return vec3::zero();
+        return Vec3::zero();
     }
 
     // Clamp t to valid range
@@ -178,7 +180,7 @@ Vec3 BezierSpline::evaluate(float t) const {
 
 Vec3 BezierSpline::tangent(float t) const {
     if (segments_.empty()) {
-        return vec3::unit_x();
+        return Vec3::unit_x();
     }
 
     t = std::clamp(t, 0.0f, static_cast<float>(segments_.size()));
@@ -404,154 +406,399 @@ CubicBezier create_continuation_segment(
     return CubicBezier::from_hermite(start_point, start_tangent, target_point, end_tangent);
 }
 
-CubicBezier create_continuation_segment_with_clearance(
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <limits>
+#include <vector>
+
+// --- helpers ---------------------------------------------------------------
+
+static bool solve_3x3_columns(
+    const Vec3& A0, const Vec3& A1, const Vec3& A2, // columns
+    const Vec3& R,
+    float& x0, float& x1, float& x2)
+{
+    // Solve [A0 A1 A2] * [x0 x1 x2]^T = R
+    const float det = A0.dot(A1.cross(A2));
+    if (std::abs(det) < 1e-10f) return false;
+
+    x0 = R.dot(A1.cross(A2)) / det;
+    x1 = A0.dot(R.cross(A2)) / det;
+    x2 = A0.dot(A1.cross(R)) / det;
+    return true;
+}
+
+// Robust-ish root finding for f(t) = |B(t)-C|^2 - r^2 over [0,1].
+static std::vector<float> intersect_sphere_ts(
+    const CubicBezier& curve,
+    const Vec3& center,
+    float radius,
+    int samples = 128,
+    float eps_f = 1e-6f)
+{
+    auto f = [&](float t) -> float {
+        Vec3 p = curve.evaluate(t);
+        Vec3 d = p - center;
+        return d.dot(d) - radius * radius;
+    };
+
+    std::vector<float> roots;
+    roots.reserve(4);
+
+    float t0 = 0.0f;
+    float f0 = f(t0);
+
+    for (int i = 1; i <= samples; ++i) {
+        float t1 = float(i) / float(samples);
+        float f1 = f(t1);
+
+        bool sign_change = (f0 <= 0.0f && f1 >= 0.0f) || (f0 >= 0.0f && f1 <= 0.0f);
+        bool near_zero   = (std::abs(f1) < eps_f);
+
+        if (sign_change || near_zero) {
+            float a = t0, b = t1;
+            float fa = f0, fb = f1;
+
+            // If we're "near zero" but didn't bracket, widen slightly.
+            if (!sign_change) {
+                float dt = 1.0f / float(samples);
+                a = std::max(0.0f, t1 - dt);
+                b = std::min(1.0f, t1 + dt);
+                fa = f(a);
+                fb = f(b);
+            }
+
+            // Bisection refine
+            for (int it = 0; it < 50; ++it) {
+                float m  = 0.5f * (a + b);
+                float fm = f(m);
+
+                if (std::abs(fm) < eps_f) { a = b = m; break; }
+
+                bool left = (fa <= 0.0f && fm >= 0.0f) || (fa >= 0.0f && fm <= 0.0f);
+                if (left) { b = m; fb = fm; }
+                else      { a = m; fa = fm; }
+            }
+
+            float root = 0.5f * (a + b);
+
+            // dedupe
+            bool dup = false;
+            for (float r : roots) {
+                if (std::abs(r - root) < 1e-4f) { dup = true; break; }
+            }
+            if (!dup) roots.push_back(root);
+        }
+
+        t0 = t1;
+        f0 = f1;
+    }
+
+    std::sort(roots.begin(), roots.end());
+    return roots;
+}
+
+// Pick a stable perpendicular unit vector to v (used in antipodal/degenerate cases).
+static Vec3 any_perp_unit(const Vec3& v)
+{
+    Vec3 ref = (std::abs(v.x) < 0.9f) ? Vec3::unit_x() : Vec3::unit_y();
+    Vec3 p = v.cross(ref);
+    float len = p.length();
+    if (len < 1e-9f) {
+        ref = Vec3::unit_z();
+        p = v.cross(ref);
+        len = p.length();
+        if (len < 1e-9f) return Vec3(1,0,0);
+    }
+    return p / len;
+}
+
+// Spherical linear interpolation between unit vectors u and v.
+// Returns a unit vector on the shortest arc.
+static Vec3 slerp_unit(const Vec3& u, const Vec3& v, float t)
+{
+    float dot = std::clamp(u.dot(v), -1.0f, 1.0f);
+    float theta = std::acos(dot);
+    if (theta < 1e-6f) return u;
+
+    float s = std::sin(theta);
+    float w0 = std::sin((1.0f - t) * theta) / s;
+    float w1 = std::sin(t * theta) / s;
+
+    Vec3 r = u * w0 + v * w1;
+    float rl = r.length();
+    return (rl > 1e-9f) ? (r / rl) : u;
+}
+
+// Returns true and sets M if we find a useful arc-midpoint on the clearance sphere.
+static bool find_clearance_point_M(
+    const CubicBezier& base,
+    const Vec3& sphere_center,
+    float sphere_radius,
+    Vec3& out_M)
+{
+    // Intersections (parameter values)
+    std::vector<float> ts = intersect_sphere_ts(base, sphere_center, sphere_radius);
+
+    if (ts.size() < 2) {
+        return false;
+    }
+
+    // Choose the best pair if we have more than 2 intersections.
+    // We pick the pair whose midpoint t is closest to where the sphere center projects
+    // onto the chord (base.start -> base.end). This tends to choose the “relevant” crossing.
+    Vec3 P0 = base.start();
+    Vec3 P3 = base.end();
+    Vec3 chord = P3 - P0;
+    float dist = chord.length();
+    Vec3 path_dir = (dist > 1e-9f) ? (chord / dist) : Vec3(0,1,0);
+
+    float proj = (sphere_center - P0).dot(path_dir);
+    proj = std::clamp(proj, 0.0f, dist);
+    float t_proj = (dist > 1e-9f) ? (proj / dist) : 0.5f;
+
+    float bestScore = std::numeric_limits<float>::infinity();
+    float t1 = ts[0], t2 = ts[1];
+
+    for (size_t i = 0; i + 1 < ts.size(); ++i) {
+        float a = ts[i];
+        float b = ts[i + 1];
+        float mid = 0.5f * (a + b);
+
+        float score = std::abs(mid - t_proj);
+        if (score < bestScore) {
+            bestScore = score;
+            t1 = a; t2 = b;
+        }
+    }
+
+    // Evaluate intersection points
+    Vec3 Pa = base.evaluate(t1);
+    Vec3 Pb = base.evaluate(t2);
+
+    // Convert to unit radial directions
+    Vec3 u = Pa - sphere_center;
+    Vec3 v = Pb - sphere_center;
+    float ul = u.length();
+    float vl = v.length();
+
+    if (ul < 1e-6f || vl < 1e-6f) {
+        return false;
+    }
+
+    u /= ul;
+    v /= vl;
+
+    // Midpoint along the shortest great-circle arc:
+    // slerp(u,v,0.5) is stable except near antipodal; handle that case.
+    float dot = std::clamp(u.dot(v), -1.0f, 1.0f);
+
+    Vec3 w;
+    if (dot < -0.9999f) {
+        // Nearly antipodal: infinitely many shortest arcs.
+        // Choose a midpoint direction using a stable plane based on path_dir.
+        // Make path_dir tangent at u by projecting out radial component.
+        Vec3 tangent = path_dir - u * path_dir.dot(u);
+        float tl = tangent.length();
+        if (tl < 1e-6f) {
+            tangent = any_perp_unit(u);
+        } else {
+            tangent /= tl;
+        }
+        // Rotate u by 90 degrees in the (u,tangent) plane: midpoint direction.
+        // (This is one of many valid choices; it’s stable and “forwardish”.)
+        w = (u + tangent).normalized();
+        if (w.length() < 1e-6f) w = tangent;
+    } else {
+        w = slerp_unit(u, v, 0.5f);
+    }
+
+    // Output point on the sphere surface
+    out_M = sphere_center + w * sphere_radius;
+    return true;
+}
+
+// Construct a cubic that hits a point M at parameter t_hit, while matching endpoint directions.
+// We use 3 scalar DOFs (a,b,c):
+//   P1 = P0 + a*d0 + c*n
+//   P2 = P3 - b*d1 + c*n
+static bool build_curve_through_point_at_t(
+    const Vec3& P0, const Vec3& d0_unit,
+    const Vec3& P3, const Vec3& d1_unit,
+    const Vec3& n_unit,
+    const Vec3& M,
+    float t_hit,
+    CubicBezier& out_curve,
+    float clamp_handle = -1.0f) // if >0, clamps a,b,c to this max
+{
+    float t = std::clamp(t_hit, 1e-4f, 1.0f - 1e-4f);
+    float u = 1.0f - t;
+
+    float alpha = 3.0f * u*u * t;
+    float beta  = 3.0f * u * t*t;
+    float gamma = alpha + beta;
+
+    // Baseline point C(t) for collapsed handles (P1=P0, P2=P3)
+    Vec3 C = (u*u*u + alpha) * P0 + (beta + t*t*t) * P3;
+    Vec3 R = M - C;
+
+    // R = (alpha*a) d0 + (-beta*b) d1 + (gamma*c) n
+    Vec3 A0 = d0_unit * alpha;
+    Vec3 A1 = d1_unit * (-beta);
+    Vec3 A2 = n_unit  * gamma;
+
+    float a, b, c;
+    if (!solve_3x3_columns(A0, A1, A2, R, a, b, c)) return false;
+
+    // Basic sanity
+    a = std::max(0.0f, a);
+    b = std::max(0.0f, b);
+
+    // We generally want the bulge to go in the chosen +n direction.
+    // If c comes out negative, flip n and c.
+    if (c < 0.0f) c = -c; // caller should pass an n that makes sense; keep it non-negative.
+
+    if (clamp_handle > 0.0f) {
+        a = std::min(a, clamp_handle);
+        b = std::min(b, clamp_handle);
+        c = std::min(c, clamp_handle);
+    }
+
+    Vec3 P1 = P0 + d0_unit * a + n_unit * c;
+    Vec3 P2 = P3 - d1_unit * b + n_unit * c;
+
+    out_curve = CubicBezier(P0, P1, P2, P3);
+    return true;
+}
+
+static std::pair<Vec3, Vec3>
+fair_hermite_tangents(
+    const Vec3& P0,
+    const Vec3& P1,
+    const Vec3& d0_unit,
+    const Vec3& d1_unit)
+{
+    Vec3 D = P1 - P0;
+    float dist = D.length();
+    if (dist < 1e-6f) {
+        return { Vec3(0,0,0), Vec3(0,0,0) };
+    }
+
+    // Dot products describing geometric alignment
+    float c  = std::clamp(d0_unit.dot(d1_unit), -1.0f, 1.0f);
+    float p0 = D.dot(d0_unit);
+    float p1 = D.dot(d1_unit);
+
+    // Closed-form solution minimizing ∫|B''(t)|² dt
+    float denom = 4.0f - c * c; // ∈ [3,4]
+    float m0 = (6.0f * p0 - 3.0f * c * p1) / denom;
+    float m1 = (6.0f * p1 - 3.0f * c * p0) / denom;
+
+    return {
+        d0_unit * m0,
+        d1_unit * m1
+    };
+}
+
+static Vec3 sphere_tangent_toward_target(
+    const Vec3& sphere_center,
+    const Vec3& M_on_or_near_sphere,
+    const Vec3& target_point,
+    const Vec3& fallback_dir_unit)
+{
+    Vec3 u = (M_on_or_near_sphere - sphere_center);
+    float ul = u.length();
+    if (ul < 1e-6f) return fallback_dir_unit;
+    u /= ul;
+
+    Vec3 toward = target_point - M_on_or_near_sphere;
+
+    // Project onto tangent plane at M: remove radial component
+    Vec3 t = toward - u * toward.dot(u);
+    float tl = t.length();
+    if (tl < 1e-6f) {
+        // If target is almost radial from M, choose any tangent direction
+        // consistent with fallback.
+        Vec3 f = fallback_dir_unit - u * fallback_dir_unit.dot(u);
+        float fl = f.length();
+        if (fl < 1e-6f) {
+            // truly degenerate: pick any perpendicular to u
+            Vec3 ref = (std::abs(u.x) < 0.9f) ? Vec3::unit_x() : Vec3::unit_y();
+            f = u.cross(ref);
+            fl = f.length();
+            if (fl < 1e-6f) return Vec3(1,0,0);
+        }
+        return f / fl;
+    }
+
+    return t / tl;
+}
+
+// --- main function ----------------------------------------------------------
+
+std::vector<CubicBezier> create_continuation_segment_with_clearance(
     const BezierSpline& spline,
     const Vec3& target_point,
     const Vec3& target_direction,
     const Vec3& clearance_point,
     float clearance_radius,
-    float max_curvature) {
-    
-    // Get the starting point and incoming direction from the spline
-    Vec3 start_point;
-    Vec3 incoming_dir;
-    
+    float max_curvature)
+{
+    std::vector<CubicBezier> out;
+
+    // 1) Start point + incoming direction
+    Vec3 P0;
+    Vec3 d0;
     if (spline.empty()) {
-        // No spline segments - use target direction reversed as incoming
-        start_point = target_point;  // Degenerate case
-        incoming_dir = target_direction.normalized() * -1.0f;
+        // Degenerate: no previous segment; choose something consistent
+        P0 = target_point;
+        d0 = (-target_direction).normalized();
     } else {
-        // Get the last segment's end point and exit tangent
-        const auto& last_segment = spline.segments().back();
-        start_point = last_segment.end();
-        incoming_dir = last_segment.tangent(1.0f);  // Tangent at t=1 (end)
+        const auto& last = spline.segments().back();
+        P0 = last.end();
+        d0 = last.tangent(1.0f).normalized();
     }
-    
-    // Normalize target direction
-    Vec3 target_dir = target_direction.normalized();
-    
-    // Calculate the distance between start and target
-    Vec3 to_target = target_point - start_point;
-    float distance = to_target.length();
-    
-    if (distance < 1e-6f) {
-        // Points are coincident - return a degenerate segment
-        return CubicBezier(start_point, start_point, target_point, target_point);
+
+    Vec3 P3 = target_point;
+    Vec3 d1 = target_direction.normalized();
+
+    Vec3 chord = P3 - P0;
+    float dist = chord.length();
+    if (dist < 1e-6f) {
+        return { CubicBezier(P0, P0, P3, P3) };
     }
-    
-    // Calculate the midpoint of the straight line path
-    Vec3 midpoint = (start_point + target_point) * 0.5f;
-    
-    // Vector from clearance point to midpoint
-    Vec3 clearance_to_mid = midpoint - clearance_point;
-    float clearance_to_mid_dist = clearance_to_mid.length();
-    
-    // Determine which side of the clearance point we should curve around
-    // Use the cross product of incoming and target directions to find the "outside"
-    // If that's ambiguous, use the direction away from the clearance point
-    Vec3 curve_normal;
-    
-    // Calculate the plane normal from the path (incoming x outgoing gives perpendicular)
-    Vec3 path_cross = incoming_dir.cross(target_dir);
-    float path_cross_len = path_cross.length();
-    
-    if (path_cross_len > 1e-6f) {
-        // Incoming and target directions define a plane
-        // The curve will bulge perpendicular to this, away from clearance point
-        Vec3 plane_normal = path_cross.normalized();
-        
-        // Project clearance_to_mid onto the plane perpendicular to the path
-        Vec3 avg_dir = (incoming_dir + target_dir).normalized();
-        Vec3 in_plane = clearance_to_mid - avg_dir * clearance_to_mid.dot(avg_dir);
-        float in_plane_len = in_plane.length();
-        
-        if (in_plane_len > 1e-6f) {
-            curve_normal = in_plane.normalized();
-        } else {
-            // Clearance point is on the path line, use plane normal
-            curve_normal = plane_normal;
-        }
-    } else {
-        // Incoming and target are parallel (or anti-parallel)
-        // Need to find a perpendicular direction away from clearance
-        if (clearance_to_mid_dist > 1e-6f) {
-            // Project out the component along the path
-            Vec3 path_dir = to_target.normalized();
-            Vec3 perp = clearance_to_mid - path_dir * clearance_to_mid.dot(path_dir);
-            float perp_len = perp.length();
-            if (perp_len > 1e-6f) {
-                curve_normal = perp.normalized();
-            } else {
-                // Clearance is exactly on the line - pick arbitrary perpendicular
-                if (std::abs(path_dir.x) < 0.9f) {
-                    curve_normal = path_dir.cross(vec3::unit_x()).normalized();
-                } else {
-                    curve_normal = path_dir.cross(vec3::unit_y()).normalized();
-                }
-            }
-        } else {
-            // Midpoint is at clearance point - pick arbitrary perpendicular
-            Vec3 path_dir = to_target.normalized();
-            if (std::abs(path_dir.x) < 0.9f) {
-                curve_normal = path_dir.cross(vec3::unit_x()).normalized();
-            } else {
-                curve_normal = path_dir.cross(vec3::unit_y()).normalized();
-            }
-        }
+    Vec3 path_dir = chord / dist;
+
+    // 2) Baseline curve (no clearance bulge): Hermite with a reasonable magnitude
+    // You can keep your existing heuristic for magnitude; this is a simple one:
+    auto [T0, T1] = fair_hermite_tangents(P0, P3, d0, d1);
+    CubicBezier base = CubicBezier::from_hermite(P0, T0, P3, T1);
+
+    // 3) Intersect baseline with clearance sphere
+    Vec3 M;
+    bool have_M = find_clearance_point_M(base, clearance_point, clearance_radius, M);
+
+    if (!have_M) {
+        // No clearance issue: just return the single baseline segment
+        out.push_back(base);
+        return out;
     }
-    
-    // Calculate how much we need to bulge outward to clear the obstacle
-    // Find the closest approach of a straight line to the clearance point
-    Vec3 path_dir = to_target.normalized();
-    Vec3 start_to_clearance = clearance_point - start_point;
-    float projection = start_to_clearance.dot(path_dir);
-    projection = std::clamp(projection, 0.0f, distance);  // Clamp to segment
-    Vec3 closest_on_line = start_point + path_dir * projection;
-    float straight_line_clearance = (clearance_point - closest_on_line).length();
-    
-    // How much additional bulge do we need?
-    float needed_bulge = 0.0f;
-    if (straight_line_clearance < clearance_radius) {
-        needed_bulge = clearance_radius - straight_line_clearance;
-        // Add some extra margin for the curve (Bezier doesn't go through control points)
-        needed_bulge *= 1.5f;
-    }
-    
-    // Minimum bend radius
-    float min_bend_radius = (max_curvature > 1e-6f) ? (1.0f / max_curvature) : 1000.0f;
-    
-    // Calculate base tangent magnitude
-    float direction_alignment = incoming_dir.dot(target_dir);
-    float alignment_factor = 0.5f - 0.3f * direction_alignment;
-    float curvature_factor = std::max(0.3f, min_bend_radius / distance);
-    curvature_factor = std::min(curvature_factor, 1.0f);
-    float tangent_magnitude = distance * std::max(alignment_factor, curvature_factor * 0.5f);
-    
-    // If we need to bulge, increase tangent magnitude and add perpendicular component
-    Vec3 start_tangent = incoming_dir * tangent_magnitude;
-    Vec3 end_tangent = target_dir * tangent_magnitude;
-    
-    if (needed_bulge > 1e-6f) {
-        // Add perpendicular component to control points to create bulge
-        // The control points of a Bezier are offset from the straight line
-        // We modify the tangents to push the curve away from the clearance zone
-        
-        // Scale bulge influence based on how much tangent needs to turn
-        float bulge_factor = needed_bulge * 2.0f;  // Control point offset needs to be larger
-        
-        // Add perpendicular component to tangents
-        // For start tangent: add component that pushes the curve outward at the start
-        // For end tangent: add component that brings the curve back inward at the end
-        start_tangent = start_tangent + curve_normal * bulge_factor;
-        end_tangent = end_tangent + curve_normal * bulge_factor;
-        
-        // Also increase magnitude to maintain smooth curvature with the added turn
-        float extra_magnitude = needed_bulge * 0.5f;
-        start_tangent = start_tangent.normalized() * (tangent_magnitude + extra_magnitude);
-        end_tangent = end_tangent.normalized() * (tangent_magnitude + extra_magnitude);
-    }
-    
-    return CubicBezier::from_hermite(start_point, start_tangent, target_point, end_tangent);
+
+    Vec3 tM = sphere_tangent_toward_target(clearance_point, M, P3, d1);
+
+    // ---- 5) Build segment A: (P0,d0) -> (M,tM) ----
+    auto [T0A, TMA] = fair_hermite_tangents(P0, M, d0, tM);
+    CubicBezier segA = CubicBezier::from_hermite(P0, T0A, M, TMA);
+
+    // ---- 6) Build segment B: (M,tM) -> (P3,d1) ----
+    auto [TMB, T1B] = fair_hermite_tangents(M, P3, tM, d1);
+    CubicBezier segB = CubicBezier::from_hermite(M, TMB, P3, T1B);
+
+    out.push_back(segA);
+    out.push_back(segB);
+ 
+    return out;
 }
 
 }  // namespace yarnpath

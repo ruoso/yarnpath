@@ -155,7 +155,7 @@ CubicBezier create_continuation_segment(
 //   max_curvature: Maximum allowed curvature (1/min_bend_radius)
 //
 // Returns: A CubicBezier segment that curves around the clearance zone
-CubicBezier create_continuation_segment_with_clearance(
+std::vector<CubicBezier> create_continuation_segment_with_clearance(
     const BezierSpline& spline,
     const Vec3& target_point,
     const Vec3& target_direction,

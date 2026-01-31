@@ -114,7 +114,7 @@ void SurfaceSolver::integrate_verlet(SurfaceGraph& graph, float dt) {
     for (auto& node : graph.nodes()) {
         if (node.is_pinned) {
             // Pinned nodes don't move
-            node.velocity = vec3::zero();
+            node.velocity = Vec3::zero();
             continue;
         }
 

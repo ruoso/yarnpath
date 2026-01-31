@@ -166,7 +166,7 @@ void compute_loop_curvature_forces(SurfaceGraph& graph,
 
             // Find perpendicular direction (simplified: use Y-up)
             Vec3 chord_dir = chord / chord_len;
-            Vec3 up = vec3::unit_y();
+            Vec3 up = Vec3::unit_y();
 
             // Perpendicular to chord in the vertical plane
             Vec3 perp = up - chord_dir * chord_dir.dot(up);
@@ -174,7 +174,7 @@ void compute_loop_curvature_forces(SurfaceGraph& graph,
 
             if (perp_len < 1e-6f) {
                 // Chord is vertical, use X instead
-                up = vec3::unit_x();
+                up = Vec3::unit_x();
                 perp = up - chord_dir * chord_dir.dot(up);
                 perp_len = perp.length();
             }
@@ -308,7 +308,7 @@ void compute_planar_forces(SurfaceGraph& graph,
     if (graph.node_count() < 3) return;
 
     // Compute centroid
-    Vec3 centroid = vec3::zero();
+    Vec3 centroid = Vec3::zero();
     for (const auto& node : graph.nodes()) {
         centroid += node.position;
     }
@@ -453,11 +453,11 @@ Vec3 compute_dominant_plane_normal(const SurfaceGraph& graph) {
     // (direction of minimum variance = perpendicular to the plane)
 
     if (graph.node_count() < 3) {
-        return vec3::unit_z();  // Default to Z-up
+        return Vec3::unit_z();  // Default to Z-up
     }
 
     // Compute centroid
-    Vec3 centroid = vec3::zero();
+    Vec3 centroid = Vec3::zero();
     for (const auto& node : graph.nodes()) {
         centroid += node.position;
     }
@@ -554,7 +554,7 @@ Vec3 compute_dominant_plane_normal(const SurfaceGraph& graph) {
     Vec3 normal = v1.cross(v2);
     if (normal.length() < 1e-6f) {
         // Degenerate case - use default
-        return vec3::unit_z();
+        return Vec3::unit_z();
     }
     normal = normal.normalized();
 

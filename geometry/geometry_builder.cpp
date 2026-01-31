@@ -12,13 +12,11 @@ struct GeometryBuildState {
     float max_curvature;
     float yarn_radius;       // Radius of the yarn
     float yarn_diameter;     // Diameter = 2 * radius, minimum distance between yarn centers
-    float wrap_offset;       // Offset for entry/exit points at apex
     
     GeometryBuildState(const YarnProperties& yarn)
         : max_curvature(yarn.max_curvature())
         , yarn_radius(yarn.radius)
         , yarn_diameter(yarn.radius * 2.0f)
-        , wrap_offset(yarn.radius)  // Full radius for entry/exit separation
     {}
     
     float z_sign() const { return current_z_positive ? 1.0f : -1.0f; }
@@ -37,7 +35,7 @@ static Vec3 calculate_apex_position(
     float yarn_diameter) {
     
     if (!child_positions.empty()) {
-        Vec3 apex = vec3::zero();
+        Vec3 apex = Vec3::zero();
         for (const auto& cp : child_positions) {
             apex += cp;
         }
@@ -53,7 +51,7 @@ static Vec3 calculate_apex_position(
 
 // Calculate average position of child segments
 static Vec3 calculate_avg_child_position(const std::vector<Vec3>& child_positions) {
-    Vec3 avg = vec3::zero();
+    Vec3 avg = Vec3::zero();
     for (const auto& cp : child_positions) {
         avg += cp;
     }
@@ -79,9 +77,11 @@ static void build_loop_up_leg(
             avg_child,
             state.yarn_diameter,  // Diameter clearance to prevent overlap
             state.max_curvature);
-        state.running_spline.add_segment(up_curve);
-        segment_spline.add_segment(up_curve);
-        if (on_curve_added) on_curve_added("up_leg (with clearance)");
+        for (auto& c : up_curve) {
+            state.running_spline.add_segment(c);
+            segment_spline.add_segment(c);
+            if (on_curve_added) on_curve_added("up_leg (with clearance)");
+        }
     } else {
         auto up_curve = create_continuation_segment(
             state.running_spline,
@@ -94,12 +94,13 @@ static void build_loop_up_leg(
     }
 }
 
-// Build the apex crossover (entry -> exit, curving around children)
-// The crossover curves around the child segments that pass through this loop
+// Build the apex crossover (entry -> apex -> exit, curving around children)
+// The crossover goes up to the apex and then down, maintaining clearance from children
+// Note: apex_entry is where the running_spline currently ends (from build_loop_up_leg)
 static void build_apex_crossover(
     GeometryBuildState& state,
     BezierSpline& segment_spline,
-    const Vec3& apex_entry,
+    const Vec3& apex,
     const Vec3& apex_exit,
     const std::vector<Vec3>& child_positions,
     const CurveAddedCallback& on_curve_added) {
@@ -109,29 +110,48 @@ static void build_apex_crossover(
     if (!child_positions.empty()) {
         clearance_point = calculate_avg_child_position(child_positions);
     } else {
-        // Default to midpoint between entry and exit, offset down by diameter
-        clearance_point = (apex_entry + apex_exit) * 0.5f - Vec3(0.0f, state.yarn_diameter, 0.0f);
+        // Default to below the apex by diameter
+        clearance_point = apex - Vec3(0.0f, state.yarn_diameter, 0.0f);
     }
     
-    // Single curve from entry to exit, arcing around the clearance point
-    // Use yarn_diameter as clearance to prevent overlap
-    auto apex_curve = create_continuation_segment_with_clearance(
+    float z_sign = state.z_sign();
+    
+    // First curve: apex_entry -> apex (going up and crossing Z)
+    // Target direction at apex is horizontal, crossing Z
+    auto apex_curve1 = create_continuation_segment_with_clearance(
+        state.running_spline,
+        apex,
+        Vec3(0.0f, 0.0f, -z_sign),  // At apex, moving across Z
+        clearance_point,
+        state.yarn_diameter,
+        state.max_curvature);
+    for (auto& c : apex_curve1) {
+        state.running_spline.add_segment(c);
+        segment_spline.add_segment(c);
+        if (on_curve_added) on_curve_added("apex_up");
+    }
+    
+    // Second curve: apex -> apex_exit (going down after crossing Z)
+    auto apex_curve2 = create_continuation_segment_with_clearance(
         state.running_spline,
         apex_exit,
         Vec3(0.0f, -1.0f, 0.0f),  // Exiting downward
         clearance_point,
         state.yarn_diameter,
         state.max_curvature);
-    state.running_spline.add_segment(apex_curve);
-    segment_spline.add_segment(apex_curve);
-    if (on_curve_added) on_curve_added("apex_crossover");
+    for (auto& c : apex_curve2) {
+        state.running_spline.add_segment(c);
+        segment_spline.add_segment(c);
+        if (on_curve_added) on_curve_added("apex_down");
+    }
 }
 
 // Build the downward leg of a loop (from apex exit to next entry)
 static void build_loop_down_leg(
     GeometryBuildState& state,
     BezierSpline& segment_spline,
-    const Vec3& next_entry,
+    const Vec3& curr_pos,
+    const Vec3& travel_dir,
     const std::vector<Vec3>& child_positions,
     const CurveAddedCallback& on_curve_added) {
     
@@ -140,24 +160,44 @@ static void build_loop_down_leg(
 
         auto down_curve = create_continuation_segment_with_clearance(
             state.running_spline,
-            next_entry,
-            Vec3(0.0f, -1.0f, 0.0f),  // Going down
+            curr_pos,
+            travel_dir,
             avg_child,
             state.yarn_diameter,  // Diameter clearance to prevent overlap
             state.max_curvature);
-        state.running_spline.add_segment(down_curve);
-        segment_spline.add_segment(down_curve);
-        if (on_curve_added) on_curve_added("down_leg (with clearance)");
+        for (auto& c : down_curve) {
+            state.running_spline.add_segment(c);
+            segment_spline.add_segment(c);
+            if (on_curve_added) on_curve_added("down_leg (with clearance)");
+        }
     } else {
         auto down_curve = create_continuation_segment(
             state.running_spline,
-            next_entry,
-            Vec3(0.0f, -1.0f, 0.0f),  // Going down
+            curr_pos,
+            travel_dir,
             state.max_curvature);
         state.running_spline.add_segment(down_curve);
         segment_spline.add_segment(down_curve);
         if (on_curve_added) on_curve_added("down_leg");
     }
+}
+
+// Build the pass-through segment to the next entry point
+static void build_pass_through(
+    GeometryBuildState& state,
+    BezierSpline& segment_spline,
+    const Vec3& next_entry,
+    const Vec3& next_entry_dir,
+    const CurveAddedCallback& on_curve_added) {
+    
+    auto pass_curve = create_continuation_segment(
+        state.running_spline,
+        next_entry,
+        next_entry_dir,
+        state.max_curvature);
+    state.running_spline.add_segment(pass_curve);
+    segment_spline.add_segment(pass_curve);
+    if (on_curve_added) on_curve_added("pass_through");
 }
 
 // Build a complete loop segment curve
@@ -173,27 +213,39 @@ static BezierSpline build_loop_segment(
     // Calculate apex position (using diameter for proper clearance)
     Vec3 apex = calculate_apex_position(curr_pos, child_positions, state.yarn_diameter);
     
+    // Calculate the X offset for apex entry and exit. The apex is centered.
+    // We need to consider the current and next positions to determine the direction that
+    // we are going. The entry should be closer to the next position and the exit should be
+    // behind the current position, according to the direction of travel.
+    Vec3 to_next = next_pos - curr_pos;
+    Vec3 travel_dir = (to_next.length() > 0.0001f) ? to_next.normalized() : Vec3(1.0f, 0.0f, 0.0f);
+    float apex_offset_x = travel_dir.x * state.yarn_diameter;
+    Vec3 travel_dir_unit = apex_offset_x > 0.0f ? Vec3::unit_x() : Vec3(-1.0f, 0.0f, 0.0f);
+
     // Entry/exit points offset in Z for the crossover
-    // Use wrap_offset (= yarn_radius) for separation
+    // Use yarn_diameter for separation
     float z_sign = state.z_sign();
-    Vec3 apex_entry = apex + Vec3(0.0f, -state.wrap_offset, z_sign * state.wrap_offset);
-    Vec3 apex_exit = apex + Vec3(0.0f, -state.wrap_offset, -z_sign * state.wrap_offset);
+    Vec3 apex_entry = apex + Vec3(apex_offset_x, -state.yarn_diameter, z_sign * state.yarn_diameter);
+    Vec3 apex_exit = apex + Vec3(-apex_offset_x, -state.yarn_diameter, -z_sign * state.yarn_diameter);
     
+    Vec3 pass_through_end = curr_pos + Vec3(apex_offset_x, 0.0f, -z_sign * state.yarn_diameter);
+    Vec3 pass_through_dir = (apex_entry - pass_through_end).normalized();
+
+    build_pass_through(state, segment_spline, pass_through_end, pass_through_dir, on_curve_added);
+
     // Build upward leg
     build_loop_up_leg(state, segment_spline, apex_entry, child_positions, on_curve_added);
     
-    // Build apex crossover
-    build_apex_crossover(state, segment_spline, apex_entry, apex_exit, child_positions, on_curve_added);
+    // Build apex crossover (entry -> apex -> exit)
+    build_apex_crossover(state, segment_spline, apex, apex_exit, child_positions, on_curve_added);
     
-    // Calculate next entry point - offset by wrap_offset (yarn_radius) in Y and Z
-    Vec3 next_entry = next_pos + Vec3(0.0f, state.wrap_offset, -z_sign * state.wrap_offset);
+    // Calculate next entry point - offset by yarn_diameter in Y and Z
+    Vec3 next_entry = next_pos + Vec3(0.0f, -state.yarn_diameter, -z_sign * state.yarn_diameter);
+    Vec3 next_entry_dir = (next_pos - apex_exit).normalized();
     
     // Build downward leg
-    build_loop_down_leg(state, segment_spline, next_entry, child_positions, on_curve_added);
-    
-    // Flip Z for next segment after crossover
-    state.flip_z();
-    
+    build_loop_down_leg(state, segment_spline, next_entry, next_entry_dir, child_positions, on_curve_added);
+
     return segment_spline;
 }
 
@@ -269,7 +321,7 @@ static std::optional<Vec3> get_segment_base_position(
                         parent_map, children_map, child_id);
                     if (child_pos_opt.has_value()) {
                         Vec3 child_pos = child_pos_opt.value();
-                        min_y = std::min(min_y, child_pos.y);
+                        min_y = std::min(min_y, child_pos.y - yarn.radius * 2);
                     }
                 }
             }
@@ -338,7 +390,7 @@ GeometryPath build_geometry_with_callback(
             segment_parents, segment_children, seg_id);
         if (!pos_opt.has_value()) {
             log->warn("build_geometry: segment {} position could not be determined, using origin", seg_id);
-            pos_opt = vec3::zero();
+            pos_opt = Vec3::zero();
         }
         positions.push_back(pos_opt.value());
     }

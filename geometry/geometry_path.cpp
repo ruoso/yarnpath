@@ -95,7 +95,7 @@ std::pair<Vec3, Vec3> GeometryPath::bounding_box() const {
     auto log = yarnpath::logging::get_logger();
 
     if (segments_.empty()) {
-        return {vec3::zero(), vec3::zero()};
+        return {Vec3::zero(), Vec3::zero()};
     }
 
     Vec3 min_pt(std::numeric_limits<float>::max(),

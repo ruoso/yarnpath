@@ -26,7 +26,7 @@ struct SurfaceNode {
 
     // Reset forces for a new iteration
     void clear_force() {
-        force = vec3::zero();
+        force = Vec3::zero();
     }
 
     // Add a force to the accumulated force

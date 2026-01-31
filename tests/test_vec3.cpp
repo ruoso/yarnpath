@@ -37,8 +37,8 @@ TEST(Vec3Test, DotProduct) {
 }
 
 TEST(Vec3Test, CrossProduct) {
-    Vec3 x = vec3::unit_x();
-    Vec3 y = vec3::unit_y();
+    Vec3 x = Vec3::unit_x();
+    Vec3 y = Vec3::unit_y();
     Vec3 z = x.cross(y);
     EXPECT_FLOAT_EQ(z.x, 0.0f);
     EXPECT_FLOAT_EQ(z.y, 0.0f);

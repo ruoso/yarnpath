@@ -241,8 +241,8 @@ int main(int argc, char* argv[]) {
             }
 
             log->debug("Building surface graph for visualization");
-            yarnpath::YarnProperties yarn = yarnpath::YarnProperties::worsted();
-            yarnpath::Gauge gauge = yarnpath::Gauge::worsted();
+            yarnpath::YarnProperties yarn = yarnpath::YarnProperties::fingering();
+            yarnpath::Gauge gauge = yarnpath::Gauge::fingering();
 
             yarnpath::SurfaceBuildConfig build_config;
             build_config.random_seed = 42;

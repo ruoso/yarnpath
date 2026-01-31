@@ -50,9 +50,9 @@ void SurfaceBuilder::create_nodes() {
         node.segment_id = static_cast<SegmentId>(i);
         node.forms_loop = segments[i].forms_loop;
         node.is_pinned = false;
-        node.position = vec3::zero();  // Will be set in initialize_positions
-        node.velocity = vec3::zero();
-        node.force = vec3::zero();
+        node.position = Vec3::zero();  // Will be set in initialize_positions
+        node.velocity = Vec3::zero();
+        node.force = Vec3::zero();
 
         // Compute mass based on yarn length in this segment
         if (node.forms_loop) {
@@ -538,10 +538,10 @@ Vec3 SurfaceBuilder::compute_plane_normal(NodeId up_to_node) const {
 
     if (up_to_node < 2) {
         // Not enough nodes to determine a plane, default to Z-up
-        return vec3::unit_z();
+        return Vec3::unit_z();
     }
 
-    Vec3 avg_normal = vec3::zero();
+    Vec3 avg_normal = Vec3::zero();
     int count = 0;
 
     // Sample triplets of consecutive nodes to build up the average normal
@@ -573,7 +573,7 @@ Vec3 SurfaceBuilder::compute_plane_normal(NodeId up_to_node) const {
     }
 
     // Fallback: assume XY plane, normal is Z
-    return vec3::unit_z();
+    return Vec3::unit_z();
 }
 
 bool SurfaceBuilder::check_and_fix_angle(NodeId node_id, const Vec3& plane_normal, float max_bend_angle) {
@@ -637,9 +637,9 @@ bool SurfaceBuilder::check_and_fix_angle(NodeId node_id, const Vec3& plane_norma
         perp_len = perp.length();
         if (perp_len < 1e-6f) {
             // dir1 is parallel to plane_normal, use any perpendicular
-            perp = vec3::unit_x();
+            perp = Vec3::unit_x();
             if (std::abs(dir1.dot(perp)) > 0.9f) {
-                perp = vec3::unit_y();
+                perp = Vec3::unit_y();
             }
             perp = perp - dir1 * dir1.dot(perp);
             perp_len = perp.length();

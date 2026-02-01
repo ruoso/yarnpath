@@ -73,11 +73,12 @@ void SurfaceBuilder::create_nodes() {
 void SurfaceBuilder::create_continuity_edges() {
     auto log = yarnpath::logging::get_logger();
 
-    // Rest length for continuity edges based on yarn properties
-    // Adjacent segments along yarn are touching or very close
-    // Use yarn diameter (2*relaxed_radius) as minimum, scaled slightly by tension
-    float base_rest_length = yarn_.relaxed_radius * 2.0f * (1.0f + (1.0f - yarn_.tension) * 0.25f);
-    // For worsted (relaxed_radius=1.0, tension=0.5): rest_length ≈ 2.0 * 1.125 = 2.25mm
+    // Rest length for continuity edges based on yarn properties and needle diameter
+    // Adjacent segments along yarn form loops around the needle
+    // Use loop_height (which depends on needle_diameter) as the base
+    float loop_height = gauge_.loop_height(yarn_.relaxed_radius);
+    float base_rest_length = loop_height * (1.0f + (1.0f - yarn_.tension) * 0.25f);
+    // For US 8 needle (5mm) with 1.0 relaxed_radius: loop_height ≈ 9.8mm, rest_length ≈ 11mm
 
     // Dimensionally-consistent stiffness: scale by (mass / length²) to match system timescale
     // This ensures stable integration with the given dt and mass values
@@ -300,7 +301,7 @@ void SurfaceBuilder::initialize_positions() {
     // Start with 33% extra space for relaxation (3.0 → 4.0) to avoid immediate constraint conflicts
     float stitch_offset = yarn_.relaxed_radius * 2.0f * (1.0f + (1.0f - yarn_.tension) * 0.25f) * 4.0f; // three segments per stitch
     // Passthrough edge rest length (Y spacing between rows)
-    float row_offset = stitch_offset;
+    float row_offset = gauge_.loop_height(yarn_.relaxed_radius);
 
     // Position node 0 at origin
     if (graph_.node_count() > 0) {

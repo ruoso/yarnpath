@@ -3,6 +3,7 @@
 #include <serialization/json_serialization.hpp>
 #include <serialization/stitch_graph_json.hpp>
 #include <serialization/yarn_path_json.hpp>
+#include <serialization/config_json.hpp>
 #include <common/logging.hpp>
 #include <yarn/yarn_properties.hpp>
 #include <yarn/gauge.hpp>
@@ -16,7 +17,9 @@ int command_yarn(int argc, char** argv) {
         auto [ctx, _] = parse_common_args(argc, argv, 2);
 
         if (ctx.input_path.empty() || ctx.output_path.empty()) {
-            std::cerr << "Usage: yarnpath yarn <graph.json> -o <yarn.json>\n";
+            std::cerr << "Usage: yarnpath yarn <graph.json> -o <yarn.json> [-c <config.json>]\n";
+            std::cerr << "Options:\n";
+            std::cerr << "  -c, --config <file>   Configuration file with yarn properties and gauge\n";
             return 1;
         }
 
@@ -26,14 +29,20 @@ int command_yarn(int argc, char** argv) {
         json::SerializedData input_data = json::read_serialized(ctx.input_path);
         StitchGraph graph = stitch_graph_from_json(input_data.data);
 
-        // Create default yarn and gauge (TODO: load from config or command line)
-        YarnProperties yarn;
-        yarn.relaxed_radius = 0.75f;
-        yarn.compressed_radius = 0.5f;
-        yarn.stiffness = 0.8f;
-        yarn.elasticity = 0.3f;
-        yarn.tension = 0.5f;
-        Gauge gauge{5.0f};  // US 8 needles
+        // Load or use default configuration
+        YarnProperties yarn = YarnProperties::worsted();
+        Gauge gauge = Gauge::worsted();
+
+        if (ctx.config_path.has_value()) {
+            nlohmann::json config_json = json::read_json_file(ctx.config_path.value());
+            if (config_json.contains("yarn")) {
+                yarn = config_json["yarn"].get<YarnProperties>();
+            }
+            if (config_json.contains("gauge")) {
+                gauge = config_json["gauge"].get<Gauge>();
+            }
+            log->info("Loaded configuration from: {}", ctx.config_path.value());
+        }
 
         // Build yarn path
         YarnPath yarn_path = YarnPath::from_stitch_graph(graph, yarn, gauge);
@@ -48,6 +57,10 @@ int command_yarn(int argc, char** argv) {
             {"segment_count", yarn_path.segment_count()},
             {"loop_count", std::count_if(yarn_path.segments().begin(), yarn_path.segments().end(),
                 [](const YarnSegment& seg) { return seg.forms_loop; })}
+        };
+        data.config = {
+            {"yarn", yarn},
+            {"gauge", gauge}
         };
 
         json::write_serialized(ctx.output_path, data);

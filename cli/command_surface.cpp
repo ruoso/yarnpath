@@ -20,7 +20,8 @@ int command_surface(int argc, char** argv) {
         if (ctx.input_path.empty()) {
             std::cerr << "Usage: yarnpath surface <yarn.json> -o <surface.json> [options]\n";
             std::cerr << "Options:\n";
-            std::cerr << "  -c, --config FILE    Load configuration from FILE\n";
+            std::cerr << "  -c, --config FILE    Override config or set surface-specific options\n";
+            std::cerr << "                       (yarn/gauge read from input file by default)\n";
             std::cerr << "  --iterations N       Max solver iterations (default: 100000)\n";
             std::cerr << "  --threshold N        Convergence threshold (default: 1e-6)\n";
             std::cerr << "  --visualize          Open interactive visualization window\n";
@@ -39,21 +40,34 @@ int command_surface(int argc, char** argv) {
         json::SerializedData input_data = json::read_serialized(ctx.input_path);
         YarnPath yarn_path = yarn_path_from_json(input_data.data);
 
-        // Load or use default configuration
-        YarnProperties yarn = YarnProperties::thin();
-        Gauge gauge = Gauge::worsted();
+        // Load configuration from yarn output first (if available), then apply overrides
+        YarnProperties yarn = YarnProperties::thin();  // Default fallback
+        Gauge gauge = Gauge::worsted();                 // Default fallback
         SurfaceBuildConfig build_config;
         SolveConfig solve_config;
         solve_config.max_iterations = 100000;
         solve_config.convergence_threshold = 1e-6f;
 
+        // Read yarn/gauge from yarn output config (if present)
+        if (input_data.config.contains("yarn")) {
+            yarn = input_data.config["yarn"].get<YarnProperties>();
+            log->info("Using yarn properties from input file");
+        }
+        if (input_data.config.contains("gauge")) {
+            gauge = input_data.config["gauge"].get<Gauge>();
+            log->info("Using gauge from input file");
+        }
+
+        // Override with explicit config file (if provided)
         if (ctx.config_path.has_value()) {
             nlohmann::json config_json = json::read_json_file(ctx.config_path.value());
             if (config_json.contains("yarn")) {
                 yarn = config_json["yarn"].get<YarnProperties>();
+                log->info("Overriding yarn properties from config file");
             }
             if (config_json.contains("gauge")) {
                 gauge = config_json["gauge"].get<Gauge>();
+                log->info("Overriding gauge from config file");
             }
             if (config_json.contains("build")) {
                 build_config = config_json["build"].get<SurfaceBuildConfig>();

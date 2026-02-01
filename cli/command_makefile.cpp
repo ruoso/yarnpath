@@ -125,9 +125,16 @@ int command_makefile(int argc, char** argv) {
         makefile << "$(STITCH): $(INSTRUCTIONS) $(YARNPATH)\n";
         makefile << "\t$(YARNPATH) stitch $(INSTRUCTIONS) -o $(STITCH)\n";
         makefile << "\n";
-        makefile << "$(YARN): $(STITCH) $(YARNPATH)\n";
-        makefile << "\t$(YARNPATH) yarn $(STITCH) -o $(YARN)\n";
+        // Yarn step - pass config if available
+        if (!abs_config.empty()) {
+            makefile << "$(YARN): $(STITCH) $(CONFIG) $(YARNPATH)\n";
+            makefile << "\t$(YARNPATH) yarn $(STITCH) -o $(YARN) -c $(CONFIG)\n";
+        } else {
+            makefile << "$(YARN): $(STITCH) $(YARNPATH)\n";
+            makefile << "\t$(YARNPATH) yarn $(STITCH) -o $(YARN)\n";
+        }
         makefile << "\n";
+        // Surface step - config optional (for overrides/surface-specific config)
         if (!abs_config.empty()) {
             makefile << "$(SURFACE): $(YARN) $(CONFIG) $(YARNPATH)\n";
             makefile << "\t$(YARNPATH) surface $(YARN) -o $(SURFACE) -c $(CONFIG)\n";

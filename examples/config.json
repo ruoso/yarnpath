@@ -15,7 +15,13 @@
   },
   "build": {
     "random_seed": 42,
-    "position_noise": 0.1
+    "position_noise": 0.1,
+    "continuity_rest_length_factor": 1.0,
+    "passthrough_rest_length_factor": 1.0,
+    "continuity_stiffness_factor": 1.0,
+    "passthrough_stiffness_factor": 0.5,
+    "front_orientation_z_offset": 1.0,
+    "back_orientation_z_offset": -1.0
   },
   "solve": {
     "dt": 0.01,

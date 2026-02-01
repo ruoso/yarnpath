@@ -170,6 +170,7 @@ TEST_F(SurfaceBuilderTest, GridBasedInitialPositions) {
 }
 
 TEST_F(SurfaceBuilderTest, DifferentSeedsDifferentPositions) {
+    GTEST_SKIP() << "Noise removed from initial positions - seeds no longer affect initial placement";
     YarnPath path = create_cast_on_only();
 
     SurfaceBuildConfig config1;

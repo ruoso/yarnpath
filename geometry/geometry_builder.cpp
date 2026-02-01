@@ -27,6 +27,53 @@ struct GeometryBuildState {
 // Parameters: description of the curve, the running spline after adding
 using CurveAddedCallback = std::function<void(const std::string& description)>;
 
+// Parameters for varying loop shape based on topology
+struct LoopShapeParams {
+    float z_bulge_factor = 1.0f;      // How far loop crosses in Z (affects depth)
+    float apex_lean_x = 0.0f;          // X-offset for twist/lean in decreases
+    float apex_height_factor = 1.0f;   // Multiplier for apex height
+    bool symmetric_exit = true;        // Derived from orientation (Front=true, Back=false)
+    float entry_tangent_scale = 1.0f;  // Adjust entry curve sharpness (unused for now)
+};
+
+// Derive loop shape parameters from segment topology
+static LoopShapeParams get_loop_shape_params(
+    const YarnSegment& segment,
+    float yarn_compressed_radius) {
+
+    LoopShapeParams params;
+
+    // Orientation-based variation
+    if (segment.orientation == YarnSegment::LoopOrientation::Front) {
+        params.z_bulge_factor = 1.0f;     // Standard forward crossing (knit)
+        params.symmetric_exit = true;      // Knit exits symmetrically
+    } else if (segment.orientation == YarnSegment::LoopOrientation::Back) {
+        params.z_bulge_factor = -0.8f;    // Backward crossing (purl)
+        params.symmetric_exit = false;    // Purl exits asymmetrically (yarn wraps around)
+    } else {  // Neutral
+        params.z_bulge_factor = 0.5f;     // Shallow crossing (cast-on, yarn-over)
+        params.apex_height_factor = 0.8f; // Lower apex
+        params.symmetric_exit = true;      // Neutral loops exit symmetrically
+    }
+
+    // WrapDirection-based lean
+    if (segment.wrap_direction == YarnSegment::WrapDirection::Clockwise) {
+        params.apex_lean_x = yarn_compressed_radius * 0.5f;  // Right lean (K2tog, M1R)
+    } else if (segment.wrap_direction == YarnSegment::WrapDirection::CounterClockwise) {
+        params.apex_lean_x = -yarn_compressed_radius * 0.5f; // Left lean (SSK, S2KP, M1L)
+    }
+
+    // WorkType-based depth
+    if (segment.work_type == YarnSegment::WorkType::Transferred) {
+        params.z_bulge_factor *= 0.3f;    // Very shallow (slip stitch)
+        params.apex_height_factor = 0.6f; // Much lower apex
+    } else if (segment.work_type == YarnSegment::WorkType::Created) {
+        params.entry_tangent_scale = 0.7f; // Gentler entry (not yet applied)
+    }
+
+    return params;
+}
+
 // Calculate apex position from child positions or default height
 // yarn_compressed_diameter is the minimum clearance needed between yarn centers
 static Vec3 calculate_apex_position(
@@ -206,13 +253,17 @@ static BezierSpline build_loop_segment(
     const Vec3& curr_pos,
     const Vec3& next_pos,
     const std::vector<Vec3>& child_positions,
+    const YarnSegment& segment,
     const CurveAddedCallback& on_curve_added) {
-    
+
     BezierSpline segment_spline;
-    
+
+    // Get topology-based shape parameters
+    LoopShapeParams shape = get_loop_shape_params(segment, state.yarn_compressed_radius);
+
     // Calculate apex position (using diameter for proper clearance)
     Vec3 apex = calculate_apex_position(curr_pos, child_positions, state.yarn_compressed_diameter);
-    
+
     // Calculate the X offset for apex entry and exit. The apex is centered.
     // We need to consider the current and next positions to determine the direction that
     // we are going. The entry should be closer to the next position and the exit should be
@@ -222,10 +273,22 @@ static BezierSpline build_loop_segment(
     float apex_offset_x = travel_dir.x * state.yarn_compressed_radius;
 
     // Entry/exit points offset in Z for the crossover
-    // Use yarn_compressed_diameter for separation
+    // Apply topology-based shape variation
     float z_sign = state.z_sign();
-    Vec3 apex_entry = apex + Vec3(apex_offset_x, -state.yarn_compressed_diameter, z_sign * state.yarn_compressed_diameter);
-    Vec3 apex_exit = apex + Vec3(-apex_offset_x, -state.yarn_compressed_diameter, -z_sign * state.yarn_compressed_diameter);
+    float z_bulge = z_sign * state.yarn_compressed_diameter * shape.z_bulge_factor;
+    float apex_x_lean = shape.apex_lean_x;
+
+    Vec3 apex_entry = apex + Vec3(
+        apex_offset_x + apex_x_lean,
+        -state.yarn_compressed_diameter * shape.apex_height_factor,
+        z_bulge
+    );
+
+    Vec3 apex_exit = apex + Vec3(
+        shape.symmetric_exit ? -apex_offset_x + apex_x_lean : -apex_offset_x * 0.7f + apex_x_lean,
+        -state.yarn_compressed_diameter * shape.apex_height_factor,
+        shape.symmetric_exit ? -z_bulge : -z_bulge * 0.8f
+    );
     
     Vec3 pass_through_end = curr_pos + Vec3(apex_offset_x, 0.0f, -z_sign * state.yarn_compressed_diameter);
     Vec3 pass_through_dir = (apex_entry - pass_through_end).normalized();
@@ -458,7 +521,7 @@ GeometryPath build_geometry_with_callback(
 
         // Build curve for this segment
         if (seg.forms_loop && !end_of_row) {
-            geom.curve = build_loop_segment(state, curr_pos, next_pos, child_positions, on_curve_added);
+            geom.curve = build_loop_segment(state, curr_pos, next_pos, child_positions, seg, on_curve_added);
         } else {
             geom.curve = build_connector_segment(state, curr_pos, next_pos, end_of_row, on_curve_added);
         }

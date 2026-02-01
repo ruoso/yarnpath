@@ -25,6 +25,7 @@ int command_surface(int argc, char** argv) {
             std::cerr << "  --iterations N       Max solver iterations (default: 100000)\n";
             std::cerr << "  --threshold N        Convergence threshold (default: 1e-6)\n";
             std::cerr << "  --visualize          Open interactive visualization window\n";
+            std::cerr << "  --no-relax           Skip relaxation, output initial surface configuration\n";
             return 1;
         }
 
@@ -92,7 +93,7 @@ int command_surface(int argc, char** argv) {
 
         SolveResult result;
 
-        // Solve/visualize surface relaxation
+        // Solve/visualize surface relaxation (unless --no-relax is set)
         if (ctx.visualize) {
             if (!visualization_available()) {
                 log->error("Visualization not available - recompile with GLFW and OpenGL");
@@ -100,26 +101,40 @@ int command_surface(int argc, char** argv) {
                 return 1;
             }
 
-            log->info("Starting visualization (surface relaxation)...");
-            log->info("Controls: space=pause, r=reset, q=quit");
-
             VisualizerConfig viz_config;
-            viz_config.window_title = "YarnPath - Surface Relaxation";
-            viz_config.steps_per_frame = 10;
-            viz_config.auto_run = true;
             viz_config.show_geometry = false;
+
+            if (ctx.skip_relax) {
+                log->info("Starting visualization (initial configuration, no relaxation)...");
+                log->info("Controls: q=quit");
+                viz_config.window_title = "YarnPath - Initial Surface Configuration";
+                viz_config.steps_per_frame = 0;  // No simulation steps
+                viz_config.auto_run = false;     // Don't auto-run since nothing to simulate
+            } else {
+                log->info("Starting visualization (surface relaxation)...");
+                log->info("Controls: space=pause, r=reset, q=quit");
+                viz_config.window_title = "YarnPath - Surface Relaxation";
+                viz_config.steps_per_frame = 10;
+                viz_config.auto_run = true;
+            }
 
             VisualizerResult viz_result = visualize_relaxation(
                 surface_graph, yarn, gauge, solve_config, viz_config);
 
-            log->info("Visualization complete: {} iterations, final energy = {}",
-                      viz_result.total_iterations, viz_result.final_energy);
-
-            // Create solve result from visualization
-            result.converged = viz_result.completed;
-            result.iterations = viz_result.total_iterations;
-            result.final_energy = viz_result.final_energy;
-        } else {
+            if (ctx.skip_relax) {
+                log->info("Visualization closed");
+                result.converged = false;
+                result.iterations = 0;
+                result.initial_energy = surface_graph.compute_energy();
+                result.final_energy = result.initial_energy;
+            } else {
+                log->info("Visualization complete: {} iterations, final energy = {}",
+                          viz_result.total_iterations, viz_result.final_energy);
+                result.converged = viz_result.completed;
+                result.iterations = viz_result.total_iterations;
+                result.final_energy = viz_result.final_energy;
+            }
+        } else if (!ctx.skip_relax) {
             // Solve surface relaxation (non-interactive)
             log->debug("Solving surface relaxation");
             result = SurfaceSolver::solve(surface_graph, yarn, gauge, solve_config);
@@ -127,6 +142,13 @@ int command_surface(int argc, char** argv) {
             log->info("Surface relaxation: {} after {} iterations",
                       result.converged ? "converged" : "did not converge",
                       result.iterations);
+        } else {
+            // No relaxation, no visualization - just use initial state
+            log->info("Skipping relaxation (--no-relax), using initial surface configuration");
+            result.converged = false;
+            result.iterations = 0;
+            result.initial_energy = surface_graph.compute_energy();
+            result.final_energy = result.initial_energy;
         }
 
         // Skip saving if no output path provided (visualization-only mode)

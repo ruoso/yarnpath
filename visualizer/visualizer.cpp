@@ -794,45 +794,53 @@ VisualizerResult visualize_relaxation(
 
     log->info("Visualizer started. Controls:");
     log->info("  mouse drag=rotate, scroll=zoom");
-    log->info("  space=pause/resume, q=quit, r=reset camera");
-    log->info("  n=toggle nodes, g=toggle geometry");
-    log->info("  left/right=frame by frame, pgup/pgdn=30 frames");
-    log->info("  home=first frame, end=live view");
+    if (viz_config.steps_per_frame > 0) {
+        log->info("  space=pause/resume, q=quit, r=reset camera");
+        log->info("  n=toggle nodes, g=toggle geometry");
+        log->info("  left/right=frame by frame, pgup/pgdn=30 frames");
+        log->info("  home=first frame, end=live view");
+    } else {
+        log->info("  q=quit, r=reset camera");
+        log->info("  n=toggle nodes");
+    }
 
-    // Start solver thread
-    solver_running = true;
-    std::thread solver_thread([&]() {
-        auto log = yarnpath::logging::get_logger();
-        
-        StepCallback step_callback = [&](const SurfaceGraph& g, int iter, float curr_energy, float energy_change) -> bool {
-            {
-                std::lock_guard<std::mutex> lock(snapshot_mutex);
-                current_iteration = iter;
-                current_energy = curr_energy;
-                
-                // Take snapshot at configured interval
-                if (iter % viz_config.snapshot_interval == 0) {
-                    if (static_cast<int>(g_snapshots.size()) < viz_config.max_snapshots) {
-                        g_snapshots.push_back(take_snapshot(g, iter, curr_energy));
+    // Start solver thread (unless steps_per_frame == 0, which means display-only mode)
+    std::thread solver_thread;
+    if (viz_config.steps_per_frame > 0) {
+        solver_running = true;
+        solver_thread = std::thread([&]() {
+            auto log = yarnpath::logging::get_logger();
+
+            StepCallback step_callback = [&](const SurfaceGraph& g, int iter, float curr_energy, float energy_change) -> bool {
+                {
+                    std::lock_guard<std::mutex> lock(snapshot_mutex);
+                    current_iteration = iter;
+                    current_energy = curr_energy;
+
+                    // Take snapshot at configured interval
+                    if (iter % viz_config.snapshot_interval == 0) {
+                        if (static_cast<int>(g_snapshots.size()) < viz_config.max_snapshots) {
+                            g_snapshots.push_back(take_snapshot(g, iter, curr_energy));
+                        }
                     }
                 }
-            }
-            
-            // Log progress periodically (already done by solver, but keep for thread-specific logging)
-            if (iter % 100 == 0) {
-                log->debug("Solver iteration {}: energy={:.6f}, delta={:.6f}", iter, curr_energy, energy_change);
-            }
-            
-            // Return false only if explicitly requested to stop
-            return !should_stop;
-        };
-        
-        SolveResult solver_result = SurfaceSolver::solve(graph, yarn, gauge, solve_config, step_callback);
-        solver_running = false;
-        
-        log->info("Solver finished: converged={}, iterations={}, energy={}",
-                  solver_result.converged, solver_result.iterations, solver_result.final_energy);
-    });
+
+                // Log progress periodically (already done by solver, but keep for thread-specific logging)
+                if (iter % 100 == 0) {
+                    log->debug("Solver iteration {}: energy={:.6f}, delta={:.6f}", iter, curr_energy, energy_change);
+                }
+
+                // Return false only if explicitly requested to stop
+                return !should_stop;
+            };
+
+            SolveResult solver_result = SurfaceSolver::solve(graph, yarn, gauge, solve_config, step_callback);
+            solver_running = false;
+
+            log->info("Solver finished: converged={}, iterations={}, energy={}",
+                      solver_result.converged, solver_result.iterations, solver_result.final_energy);
+        });
+    }
 
     // Main loop
     while (!glfwWindowShouldClose(window)) {

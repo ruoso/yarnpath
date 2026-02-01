@@ -16,6 +16,7 @@ struct CommandContext {
     std::optional<std::string> config_path;
     bool verbose = false;
     bool visualize = false;
+    bool skip_relax = false;
     std::optional<int> max_iterations;
     std::optional<float> threshold;
 };
@@ -35,6 +36,9 @@ inline std::pair<CommandContext, int> parse_common_args(int argc, char** argv, i
             ++i;
         } else if (arg == "--visualize") {
             ctx.visualize = true;
+            ++i;
+        } else if (arg == "--no-relax" || arg == "--skip-relax") {
+            ctx.skip_relax = true;
             ++i;
         } else if (arg == "--iterations") {
             if (i + 1 < argc) {

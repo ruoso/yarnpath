@@ -55,13 +55,6 @@ int command_geometry(int argc, char** argv) {
             log->info("Starting visualization (surface + geometry)...");
             log->info("Controls: n=toggle nodes, g=toggle geometry, space=pause, q=quit");
 
-            // We need SolveConfig for the visualizer (even though surface is already solved)
-            SolveConfig solve_config;
-            if (input_data.config.contains("solve")) {
-                solve_config = input_data.config["solve"].get<SolveConfig>();
-            }
-            solve_config.max_iterations = 0;  // Surface already solved
-
             VisualizerConfig viz_config;
             viz_config.window_title = "YarnPath - Surface & Geometry";
             viz_config.steps_per_frame = 1;
@@ -69,7 +62,7 @@ int command_geometry(int argc, char** argv) {
             viz_config.show_geometry = true;
 
             VisualizerResult viz_result = visualize_with_geometry(
-                surface_graph, yarn_path, yarn, gauge, solve_config, viz_config);
+                surface_graph, yarn_path, yarn, gauge, viz_config);
 
             log->info("Visualization complete");
         }

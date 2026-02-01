@@ -888,15 +888,9 @@ VisualizerResult visualize_relaxation(
                          snap.iteration, snap.energy);
                 last_logged_snapshot = g_current_snapshot;
             }
-        } else if (!g_viewing_history && !g_paused && solver_running) {
-            // Show latest snapshot if not paused and solver is running
-            {
-                std::lock_guard<std::mutex> lock(snapshot_mutex);
-                if (!g_snapshots.empty()) {
-                    apply_snapshot(graph, g_snapshots.back());
-                }
-            }
         }
+        // When solver is running and not viewing history, just render the graph's
+        // current state directly without applying snapshots (avoids race condition)
 
         // Render
         render_graph(graph, viz_config);
@@ -942,7 +936,6 @@ VisualizerResult visualize_with_geometry(
     const YarnPath& yarn_path,
     const YarnProperties& yarn,
     const Gauge& gauge,
-    const SolveConfig& solve_config,
     const VisualizerConfig& viz_config) {
 
     auto log = yarnpath::logging::get_logger();
@@ -1064,48 +1057,30 @@ VisualizerResult visualize_with_geometry(
         // Clear
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        // Run solver steps if not paused and not viewing history
-        if (!g_paused && !g_viewing_history) {
+        // Run geometry build when ready (this function doesn't have continuous solving)
+        if (!g_paused && !g_viewing_history && !geometry_built) {
+            log->info("Building geometry from relaxed surface...");
 
-            // Build geometry when converged
-            if (!geometry_built) {
-                log->info("Building geometry from relaxed surface...");
+            // Clear any previous geometry snapshots
+            g_geometry_snapshots.clear();
+            g_current_geometry_snapshot = -1;
+            g_viewing_geometry_history = false;
 
-                // Clear any previous geometry snapshots
-                g_geometry_snapshots.clear();
-                g_current_geometry_snapshot = -1;
-                g_viewing_geometry_history = false;
+            // Build geometry with callback to capture snapshots
+            geometry = build_geometry_with_callback(yarn_path, graph, yarn, gauge,
+                [&log](SegmentId seg_id, const std::string& desc, const BezierSpline& spline) {
+                    GeometrySnapshot snap;
+                    snap.segment_id = seg_id;
+                    snap.description = desc;
+                    snap.spline = spline;
+                    g_geometry_snapshots.push_back(snap);
+                    log->debug("  geometry step: seg {} - {}", seg_id, desc);
+                });
 
-                // Build geometry with callback to capture snapshots
-                geometry = build_geometry_with_callback(yarn_path, graph, yarn, gauge,
-                    [&log](SegmentId seg_id, const std::string& desc, const BezierSpline& spline) {
-                        GeometrySnapshot snap;
-                        snap.segment_id = seg_id;
-                        snap.description = desc;
-                        snap.spline = spline;
-                        g_geometry_snapshots.push_back(snap);
-                        log->debug("  geometry step: seg {} - {}", seg_id, desc);
-                    });
-
-                geometry_built = true;
-                log->info("Geometry built with {} segments, {} curve steps recorded",
-                         geometry.segments().size(), g_geometry_snapshots.size());
-                log->info("  Press B/F to step through geometry build, 0 to show full geometry");
-            }
-
-            // Log progress periodically (every 100 iterations)
-            if (iteration % 100 == 0) {
-                float delta = energy - prev_energy;
-                log->debug("Iteration {}: energy={:.6f}, delta={:.6f}", iteration, energy, delta);
-            }
-
-            // Take snapshot at configured interval
-            frame_count++;
-            if (frame_count % config.snapshot_interval == 0) {
-                if (static_cast<int>(g_snapshots.size()) < config.max_snapshots) {
-                    g_snapshots.push_back(take_snapshot(graph, iteration, energy));
-                }
-            }
+            geometry_built = true;
+            log->info("Geometry built with {} segments, {} curve steps recorded",
+                     geometry.segments().size(), g_geometry_snapshots.size());
+            log->info("  Press B/F to step through geometry build, 0 to show full geometry");
         }
 
         // If viewing history, apply the snapshot to the graph for rendering
@@ -1211,7 +1186,6 @@ VisualizerResult visualize_with_geometry(
     const YarnPath&,
     const YarnProperties&,
     const Gauge&,
-    const SolveConfig&,
     const VisualizerConfig&) {
 
     auto log = yarnpath::logging::get_logger();

@@ -71,7 +71,6 @@ VisualizerResult visualize_with_geometry(
     const YarnPath& yarn_path,
     const YarnProperties& yarn,
     const Gauge& gauge,
-    const SolveConfig& solve_config,
     const VisualizerConfig& viz_config = VisualizerConfig{}
 );
 

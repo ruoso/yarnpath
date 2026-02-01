@@ -40,7 +40,7 @@ int command_surface(int argc, char** argv) {
         YarnPath yarn_path = yarn_path_from_json(input_data.data);
 
         // Load or use default configuration
-        YarnProperties yarn = YarnProperties::worsted();
+        YarnProperties yarn = YarnProperties::thin();
         Gauge gauge = Gauge::worsted();
         SurfaceBuildConfig build_config;
         SolveConfig solve_config;

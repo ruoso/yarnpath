@@ -25,6 +25,7 @@ inline void from_json(const nlohmann::json& j, Vec3& v) {
 // YarnProperties serialization
 inline void to_json(nlohmann::json& j, const YarnProperties& yarn) {
     j = {
+        {"relaxed_radius", yarn.relaxed_radius},
         {"compressed_radius", yarn.compressed_radius},
         {"min_bend_radius", yarn.min_bend_radius},
         {"loop_slack", yarn.loop_slack},
@@ -37,8 +38,9 @@ inline void to_json(nlohmann::json& j, const YarnProperties& yarn) {
 }
 
 inline void from_json(const nlohmann::json& j, YarnProperties& yarn) {
-    yarn.compressed_radius = j.value("compressed_radius", 1.0f);
-    yarn.min_bend_radius = j.value("min_bend_radius", 3.0f);
+    yarn.relaxed_radius = j.value("relaxed_radius", 1.0f);
+    yarn.compressed_radius = j.value("compressed_radius", 0.1f);
+    yarn.min_bend_radius = j.value("min_bend_radius", 0.3f);
     yarn.loop_slack = j.value("loop_slack", 0.1f);
     yarn.stiffness = j.value("stiffness", 0.5f);
     yarn.friction = j.value("friction", 0.3f);

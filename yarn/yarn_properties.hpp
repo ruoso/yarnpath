@@ -65,6 +65,7 @@ struct YarnProperties {
     // Factory methods for common yarn types
     static YarnProperties fingering() {
         return YarnProperties{
+            .relaxed_radius = 5.0f,
             .compressed_radius = 0.5f,
             .min_bend_radius = 1.5f,
             .loop_slack = 0.08f,
@@ -75,7 +76,8 @@ struct YarnProperties {
 
     static YarnProperties worsted() {
         return YarnProperties{
-            .compressed_radius = 1.0f,
+            .relaxed_radius = 1.0f,
+            .compressed_radius = 0.1f,
             .min_bend_radius = 3.0f,
             .loop_slack = 0.1f,
             .stiffness = 0.5f,
@@ -85,7 +87,8 @@ struct YarnProperties {
 
     static YarnProperties bulky() {
         return YarnProperties{
-            .compressed_radius = 2.0f,
+            .relaxed_radius = 2.0f,
+            .compressed_radius = 0.2f,
             .min_bend_radius = 6.0f,
             .loop_slack = 0.12f,
             .stiffness = 0.6f,
@@ -95,6 +98,7 @@ struct YarnProperties {
 
     static YarnProperties thin() {
         return YarnProperties{
+            .relaxed_radius = 0.5f,
             .compressed_radius = 0.01f,
             .loop_slack = 0.07f,
             .stiffness = 0.35f,

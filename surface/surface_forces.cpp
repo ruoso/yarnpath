@@ -194,9 +194,6 @@ void compute_loop_curvature_forces(SurfaceGraph& graph,
                 continue;
             }
 
-            // Normalize
-            Vec3 dir_next = to_next / len_next;
-
             // The "natural" direction is influenced by loop aspect ratio
             // Higher aspect ratio = more vertical loops
             // We apply a force perpendicular to the chord (prev to next)

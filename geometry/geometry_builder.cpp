@@ -10,13 +10,13 @@ struct GeometryBuildState {
     BezierSpline running_spline;
     bool current_z_positive = true;
     float max_curvature;
-    float yarn_radius;       // Radius of the yarn
-    float yarn_diameter;     // Diameter = 2 * radius, minimum distance between yarn centers
+    float yarn_compressed_radius;       // Radius of the yarn
+    float yarn_compressed_diameter;     // Diameter = 2 * compressed_radius, minimum distance between yarn centers
     
     GeometryBuildState(const YarnProperties& yarn)
         : max_curvature(yarn.max_curvature())
-        , yarn_radius(yarn.radius)
-        , yarn_diameter(yarn.radius * 2.0f)
+        , yarn_compressed_radius(yarn.compressed_radius)
+        , yarn_compressed_diameter(yarn.compressed_radius * 2.0f)
     {}
     
     float z_sign() const { return current_z_positive ? 1.0f : -1.0f; }
@@ -28,11 +28,11 @@ struct GeometryBuildState {
 using CurveAddedCallback = std::function<void(const std::string& description)>;
 
 // Calculate apex position from child positions or default height
-// yarn_diameter is the minimum clearance needed between yarn centers
+// yarn_compressed_diameter is the minimum clearance needed between yarn centers
 static Vec3 calculate_apex_position(
     const Vec3& curr_pos,
     const std::vector<Vec3>& child_positions,
-    float yarn_diameter) {
+    float yarn_compressed_diameter) {
     
     if (!child_positions.empty()) {
         Vec3 apex = Vec3::zero();
@@ -40,11 +40,11 @@ static Vec3 calculate_apex_position(
             apex += cp;
         }
         apex = apex * (1.0f / static_cast<float>(child_positions.size()));
-        apex.y += yarn_diameter;  // Full diameter above children so yarns don't touch
+        apex.y += yarn_compressed_diameter;  // Full diameter above children so yarns don't touch
         return apex;
     } else {
         // No children - small loop above current position
-        float loop_height = yarn_diameter;  // One diameter height
+        float loop_height = yarn_compressed_diameter;  // One diameter height
         return curr_pos + Vec3(0.0f, loop_height, 0.0f);
     }
 }
@@ -75,7 +75,7 @@ static void build_loop_up_leg(
             apex_entry,
             Vec3(0.0f, 1.0f, 0.0f),  // Going up
             avg_child,
-            state.yarn_diameter,  // Diameter clearance to prevent overlap
+            state.yarn_compressed_diameter,  // Diameter clearance to prevent overlap
             state.max_curvature);
         for (auto& c : up_curve) {
             state.running_spline.add_segment(c);
@@ -111,7 +111,7 @@ static void build_apex_crossover(
         clearance_point = calculate_avg_child_position(child_positions);
     } else {
         // Default to below the apex by diameter
-        clearance_point = apex - Vec3(0.0f, state.yarn_diameter, 0.0f);
+        clearance_point = apex - Vec3(0.0f, state.yarn_compressed_diameter, 0.0f);
     }
     
     float z_sign = state.z_sign();
@@ -123,7 +123,7 @@ static void build_apex_crossover(
         apex,
         Vec3(0.0f, 0.0f, -z_sign),  // At apex, moving across Z
         clearance_point,
-        state.yarn_diameter,
+        state.yarn_compressed_diameter,
         state.max_curvature);
     for (auto& c : apex_curve1) {
         state.running_spline.add_segment(c);
@@ -137,7 +137,7 @@ static void build_apex_crossover(
         apex_exit,
         Vec3(0.0f, -1.0f, 0.0f),  // Exiting downward
         clearance_point,
-        state.yarn_diameter,
+        state.yarn_compressed_diameter,
         state.max_curvature);
     for (auto& c : apex_curve2) {
         state.running_spline.add_segment(c);
@@ -163,7 +163,7 @@ static void build_loop_down_leg(
             curr_pos,
             travel_dir,
             avg_child,
-            state.yarn_diameter,  // Diameter clearance to prevent overlap
+            state.yarn_compressed_diameter,  // Diameter clearance to prevent overlap
             state.max_curvature);
         for (auto& c : down_curve) {
             state.running_spline.add_segment(c);
@@ -211,7 +211,7 @@ static BezierSpline build_loop_segment(
     BezierSpline segment_spline;
     
     // Calculate apex position (using diameter for proper clearance)
-    Vec3 apex = calculate_apex_position(curr_pos, child_positions, state.yarn_diameter);
+    Vec3 apex = calculate_apex_position(curr_pos, child_positions, state.yarn_compressed_diameter);
     
     // Calculate the X offset for apex entry and exit. The apex is centered.
     // We need to consider the current and next positions to determine the direction that
@@ -219,16 +219,15 @@ static BezierSpline build_loop_segment(
     // behind the current position, according to the direction of travel.
     Vec3 to_next = next_pos - curr_pos;
     Vec3 travel_dir = (to_next.length() > 0.0001f) ? to_next.normalized() : Vec3(1.0f, 0.0f, 0.0f);
-    float apex_offset_x = travel_dir.x * state.yarn_radius;
-    Vec3 travel_dir_unit = apex_offset_x > 0.0f ? Vec3::unit_x() : Vec3(-1.0f, 0.0f, 0.0f);
+    float apex_offset_x = travel_dir.x * state.yarn_compressed_radius;
 
     // Entry/exit points offset in Z for the crossover
-    // Use yarn_diameter for separation
+    // Use yarn_compressed_diameter for separation
     float z_sign = state.z_sign();
-    Vec3 apex_entry = apex + Vec3(apex_offset_x, -state.yarn_diameter, z_sign * state.yarn_diameter);
-    Vec3 apex_exit = apex + Vec3(-apex_offset_x, -state.yarn_diameter, -z_sign * state.yarn_diameter);
+    Vec3 apex_entry = apex + Vec3(apex_offset_x, -state.yarn_compressed_diameter, z_sign * state.yarn_compressed_diameter);
+    Vec3 apex_exit = apex + Vec3(-apex_offset_x, -state.yarn_compressed_diameter, -z_sign * state.yarn_compressed_diameter);
     
-    Vec3 pass_through_end = curr_pos + Vec3(apex_offset_x, 0.0f, -z_sign * state.yarn_diameter);
+    Vec3 pass_through_end = curr_pos + Vec3(apex_offset_x, 0.0f, -z_sign * state.yarn_compressed_diameter);
     Vec3 pass_through_dir = (apex_entry - pass_through_end).normalized();
 
     build_pass_through(state, segment_spline, pass_through_end, pass_through_dir, on_curve_added);
@@ -239,8 +238,8 @@ static BezierSpline build_loop_segment(
     // Build apex crossover (entry -> apex -> exit)
     build_apex_crossover(state, segment_spline, apex, apex_exit, child_positions, on_curve_added);
     
-    // Calculate next entry point - offset by yarn_diameter in Y and Z
-    Vec3 next_entry = next_pos + Vec3(0.0f, -state.yarn_diameter, -z_sign * state.yarn_diameter);
+    // Calculate next entry point - offset by yarn_compressed_diameter in Y and Z
+    Vec3 next_entry = next_pos + Vec3(0.0f, -state.yarn_compressed_diameter, -z_sign * state.yarn_compressed_diameter);
     Vec3 next_entry_dir = (next_pos - apex_exit).normalized();
     
     // Build downward leg
@@ -321,15 +320,15 @@ static std::optional<Vec3> get_segment_base_position(
                         parent_map, children_map, child_id);
                     if (child_pos_opt.has_value()) {
                         Vec3 child_pos = child_pos_opt.value();
-                        min_y = std::min(min_y, child_pos.y - yarn.radius * 2);
+                        min_y = std::min(min_y, child_pos.y - yarn.compressed_radius * 2);
                     }
                 }
             }
             if (min_y > base_pos.y) {
                 yarnpath::logging::get_logger()->debug(
                     "get_segment_base_position: segment {} has no parents, adjusting base position from {} to {}",
-                    segment_id, base_pos.y, min_y - yarn.radius);
-                base_pos.y = min_y - yarn.radius;
+                    segment_id, base_pos.y, min_y - yarn.compressed_radius);
+                base_pos.y = min_y - yarn.compressed_radius;
             }
         }
         return base_pos;

@@ -28,7 +28,7 @@ struct VisualizerConfig {
     int spline_samples = 20;          // Samples per Bezier segment
 
     // Tube/extrusion rendering
-    float yarn_radius = 0.3f;         // Tube radius (from YarnProperties)
+    float yarn_compressed_radius = 0.3f;         // Tube compressed_radius (from YarnProperties)
     int tube_radial_segments = 8;     // Vertices around circumference
     bool render_as_tube = true;       // false = legacy line mode
 
@@ -59,6 +59,7 @@ struct VisualizerResult {
 VisualizerResult visualize_relaxation(
     SurfaceGraph& graph,
     const YarnProperties& yarn,
+    const Gauge& gauge,
     const SolveConfig& solve_config,
     const VisualizerConfig& viz_config = VisualizerConfig{}
 );

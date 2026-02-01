@@ -12,6 +12,7 @@ namespace yarnpath {
 
 void compute_forces(SurfaceGraph& graph,
                     const YarnProperties& yarn,
+                    const Gauge& gauge,
                     const ForceConfig& config) {
     // Clear all forces first
     graph.clear_all_forces();
@@ -20,10 +21,10 @@ void compute_forces(SurfaceGraph& graph,
     compute_spring_forces(graph);
 
     // Add passthrough tension based on yarn properties
-    compute_passthrough_tension(graph, yarn, config.passthrough_tension_factor);
+    compute_passthrough_tension(graph, yarn, gauge, config.passthrough_tension_factor);
 
     // Add loop curvature forces
-    compute_loop_curvature_forces(graph, yarn, config.loop_curvature_strength);
+    compute_loop_curvature_forces(graph, yarn, gauge, config.loop_curvature_strength);
 
     // Add collision repulsion forces
     if (config.enable_collision && config.collision_strength > 0) {
@@ -87,6 +88,7 @@ void compute_spring_forces(SurfaceGraph& graph) {
 
 void compute_passthrough_tension(SurfaceGraph& graph,
                                   const YarnProperties& yarn,
+                                  const Gauge&, // gauge not used here
                                   float tension_factor) {
     // Additional tension force on passthrough edges to straighten yarn
     // Higher yarn tension = stronger straightening force
@@ -144,6 +146,7 @@ void compute_passthrough_tension(SurfaceGraph& graph,
 
 void compute_loop_curvature_forces(SurfaceGraph& graph,
                                     const YarnProperties& yarn,
+                                    const Gauge& gauge,
                                     float strength) {
     // Loop curvature force encourages loops to maintain natural shape
     // For nodes that form loops, apply a gentle force based on aspect ratio
@@ -192,7 +195,6 @@ void compute_loop_curvature_forces(SurfaceGraph& graph,
             }
 
             // Normalize
-            Vec3 dir_prev = to_prev / len_prev;
             Vec3 dir_next = to_next / len_next;
 
             // The "natural" direction is influenced by loop aspect ratio
@@ -227,7 +229,7 @@ void compute_loop_curvature_forces(SurfaceGraph& graph,
 
                 // Force magnitude based on desired loop height
                 // aspect_ratio = height / width, where width ~ chord_len
-                float desired_height = chord_len * yarn.loop_aspect_ratio * 0.5f;
+                float desired_height = gauge.loop_height(yarn.compressed_radius);
 
                 // Current height of the loop node above the chord midpoint
                 Vec3 chord_mid = (prev_node.position + next_node.position) * 0.5f;

@@ -23,7 +23,7 @@ static SurfaceGraph build_test_surface(const YarnPath& yarn_path,
     solve_config.max_iterations = 1000;
     solve_config.convergence_threshold = 1e-4f;
 
-    SurfaceSolver::solve(surface, yarn, solve_config);
+    SurfaceSolver::solve(surface, yarn, gauge, solve_config);
 
     return surface;
 }
@@ -257,37 +257,6 @@ TEST(CurvatureTest, CurvatureIsFinite) {
 // Polyline Sharp Turn Tests (using actual output sampling)
 // ============================================
 
-// Helper to check polyline for sharp turns (like the Python analyze script)
-static std::vector<std::string> check_polyline_sharp_turns(
-    const std::vector<Vec3>& polyline,
-    float max_angle = 45.0f) {
-
-    std::vector<std::string> issues;
-
-    for (size_t i = 1; i + 1 < polyline.size(); ++i) {
-        Vec3 prev = polyline[i - 1];
-        Vec3 curr = polyline[i];
-        Vec3 next = polyline[i + 1];
-
-        Vec3 dir1 = curr - prev;
-        Vec3 dir2 = next - curr;
-
-        if (dir1.length() < 0.0001f || dir2.length() < 0.0001f) {
-            continue;
-        }
-
-        float angle = angle_between_degrees(dir1, dir2);
-        if (angle > max_angle) {
-            std::ostringstream ss;
-            ss << "Polyline vertex " << i << ": " << angle << " degree turn at ("
-               << curr.x << ", " << curr.y << ", " << curr.z << ")";
-            issues.push_back(ss.str());
-        }
-    }
-
-    return issues;
-}
-
 TEST(PolylineTest, PolylineOutputExists) {
     // Test that polyline can be generated from geometry
     PatternInstructions pattern = create_pattern({
@@ -405,7 +374,7 @@ static std::vector<CurvatureViolation> find_curvature_violations(
 }
 
 TEST(CurvatureTest, CurvatureWithinYarnBendRadius) {
-    // Test that no point in the spline has curvature exceeding yarn's min bend radius
+    // Test that no point in the spline has curvature exceeding yarn's min bend compressed_radius
     // This walks through the entire spline sampling curvature at many points
     PatternInstructions pattern = create_pattern({
         "CCCC",
@@ -436,7 +405,7 @@ TEST(CurvatureTest, CurvatureWithinYarnBendRadius) {
                       << ", t=" << v.t
                       << ": curvature=" << v.curvature
                       << " > max_allowed=" << v.max_allowed
-                      << " (bend radius=" << (1.0f / v.curvature) << " < min=" << yarn.min_bend_radius << ")"
+                      << " (bend compressed_radius=" << (1.0f / v.curvature) << " < min=" << yarn.min_bend_radius << ")"
                       << " at position (" << v.position.x << ", " << v.position.y << ", " << v.position.z << ")"
                       << "\n  Control points: P0=(" << v.p0.x << "," << v.p0.y << "," << v.p0.z << ")"
                       << " P1=(" << v.p1.x << "," << v.p1.y << "," << v.p1.z << ")"
@@ -445,7 +414,7 @@ TEST(CurvatureTest, CurvatureWithinYarnBendRadius) {
     }
 
     EXPECT_TRUE(violations.empty())
-        << "Found " << violations.size() << " points with curvature exceeding yarn's minimum bend radius";
+        << "Found " << violations.size() << " points with curvature exceeding yarn's minimum bend compressed_radius";
 }
 
 TEST(CurvatureTest, CurvatureWithinYarnBendRadiusRibbing) {
@@ -479,7 +448,7 @@ TEST(CurvatureTest, CurvatureWithinYarnBendRadiusRibbing) {
                       << ", t=" << v.t
                       << ": curvature=" << v.curvature
                       << " > max_allowed=" << v.max_allowed
-                      << " (bend radius=" << (1.0f / v.curvature) << " < min=" << yarn.min_bend_radius << ")"
+                      << " (bend compressed_radius=" << (1.0f / v.curvature) << " < min=" << yarn.min_bend_radius << ")"
                       << " at position (" << v.position.x << ", " << v.position.y << ", " << v.position.z << ")"
                       << "\n  Control points: P0=(" << v.p0.x << "," << v.p0.y << "," << v.p0.z << ")"
                       << " P1=(" << v.p1.x << "," << v.p1.y << "," << v.p1.z << ")"
@@ -492,7 +461,7 @@ TEST(CurvatureTest, CurvatureWithinYarnBendRadiusRibbing) {
 }
 
 TEST(CurvatureTest, CurvatureWithinYarnBendRadiusFineYarn) {
-    // Test with finer yarn which has tighter bend radius constraint
+    // Test with finer yarn which has tighter bend compressed_radius constraint
     PatternInstructions pattern = create_pattern({
         "CCC",
         "KKK",
@@ -519,7 +488,7 @@ TEST(CurvatureTest, CurvatureWithinYarnBendRadiusFineYarn) {
                       << ", t=" << v.t
                       << ": curvature=" << v.curvature
                       << " > max_allowed=" << v.max_allowed
-                      << " (bend radius=" << (1.0f / v.curvature) << " < min=" << yarn.min_bend_radius << ")"
+                      << " (bend compressed_radius=" << (1.0f / v.curvature) << " < min=" << yarn.min_bend_radius << ")"
                       << " at position (" << v.position.x << ", " << v.position.y << ", " << v.position.z << ")"
                       << "\n  Control points: P0=(" << v.p0.x << "," << v.p0.y << "," << v.p0.z << ")"
                       << " P1=(" << v.p1.x << "," << v.p1.y << "," << v.p1.z << ")"

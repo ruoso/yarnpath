@@ -25,9 +25,8 @@ inline void from_json(const nlohmann::json& j, Vec3& v) {
 // YarnProperties serialization
 inline void to_json(nlohmann::json& j, const YarnProperties& yarn) {
     j = {
-        {"radius", yarn.radius},
+        {"compressed_radius", yarn.compressed_radius},
         {"min_bend_radius", yarn.min_bend_radius},
-        {"loop_aspect_ratio", yarn.loop_aspect_ratio},
         {"loop_slack", yarn.loop_slack},
         {"stiffness", yarn.stiffness},
         {"friction", yarn.friction},
@@ -38,9 +37,8 @@ inline void to_json(nlohmann::json& j, const YarnProperties& yarn) {
 }
 
 inline void from_json(const nlohmann::json& j, YarnProperties& yarn) {
-    yarn.radius = j.value("radius", 1.0f);
+    yarn.compressed_radius = j.value("compressed_radius", 1.0f);
     yarn.min_bend_radius = j.value("min_bend_radius", 3.0f);
-    yarn.loop_aspect_ratio = j.value("loop_aspect_ratio", 1.5f);
     yarn.loop_slack = j.value("loop_slack", 0.1f);
     yarn.stiffness = j.value("stiffness", 0.5f);
     yarn.friction = j.value("friction", 0.3f);
@@ -52,17 +50,11 @@ inline void from_json(const nlohmann::json& j, YarnProperties& yarn) {
 // Gauge serialization
 inline void to_json(nlohmann::json& j, const Gauge& gauge) {
     j = {
-        {"stitches_per_unit", gauge.stitches_per_unit},
-        {"rows_per_unit", gauge.rows_per_unit},
-        {"fabric_thickness", gauge.fabric_thickness},
         {"needle_diameter", gauge.needle_diameter}
     };
 }
 
 inline void from_json(const nlohmann::json& j, Gauge& gauge) {
-    gauge.stitches_per_unit = j.value("stitches_per_unit", 4.0f);
-    gauge.rows_per_unit = j.value("rows_per_unit", 5.0f);
-    gauge.fabric_thickness = j.value("fabric_thickness", 2.0f);
     gauge.needle_diameter = j.value("needle_diameter", 4.0f);
 }
 

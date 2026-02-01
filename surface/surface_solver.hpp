@@ -55,11 +55,13 @@ public:
     // Solve the graph to find equilibrium positions
     static SolveResult solve(SurfaceGraph& graph,
                              const YarnProperties& yarn,
+                             const Gauge& gauge,
                              const SolveConfig& config = SolveConfig{});
 
     // Single step of the solver (for debugging or interactive use)
     static void step(SurfaceGraph& graph,
                      const YarnProperties& yarn,
+                     const Gauge& gauge,
                      const SolveConfig& config);
 
 private:

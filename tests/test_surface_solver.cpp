@@ -41,7 +41,8 @@ TEST_F(SurfaceSolverTest, ConvergesForSimpleSpring) {
     config.convergence_threshold = 1e-4f;
     config.force_config.damping = 0.8f;
 
-    SolveResult result = SurfaceSolver::solve(graph, yarn, config);
+    Gauge gauge = Gauge::worsted();
+    SolveResult result = SurfaceSolver::solve(graph, yarn, gauge, config);
 
     EXPECT_TRUE(result.converged);
     EXPECT_LT(result.final_energy, result.initial_energy);
@@ -77,7 +78,8 @@ TEST_F(SurfaceSolverTest, PinnedNodeDoesNotMove) {
     config.max_iterations = 100;
     config.force_config.damping = 0.8f;
 
-    SurfaceSolver::solve(graph, yarn, config);
+    Gauge gauge = Gauge::worsted();
+    SurfaceSolver::solve(graph, yarn, gauge, config);
 
     // Pinned node should not have moved
     EXPECT_EQ(graph.node(0).position.x, original_pos.x);
@@ -118,7 +120,8 @@ TEST_F(SurfaceSolverTest, EnergyDecreases) {
     config.max_iterations = 500;
     config.force_config.damping = 0.8f;
 
-    SolveResult result = SurfaceSolver::solve(graph, yarn, config);
+    Gauge gauge = Gauge::worsted();
+    SolveResult result = SurfaceSolver::solve(graph, yarn, gauge, config);
 
     EXPECT_LT(result.final_energy, initial_energy);
 }
@@ -156,7 +159,8 @@ TEST_F(SurfaceSolverTest, MaxStretchConstraintEnforced) {
     config.constraint_iterations = 5;
     config.force_config.damping = 0.9f;
 
-    SurfaceSolver::solve(graph, yarn, config);
+    Gauge gauge = Gauge::worsted();
+    SurfaceSolver::solve(graph, yarn, gauge, config);
 
     // Distance should be at most the constraint limit
     float final_dist = graph.node(0).position.distance_to(graph.node(1).position);
@@ -182,9 +186,10 @@ TEST_F(SurfaceSolverTest, SingleStepDoesNotCrash) {
     graph.add_edge(edge);
 
     SolveConfig config;
+    Gauge gauge = Gauge::worsted();
 
     // Should not crash
-    EXPECT_NO_THROW(SurfaceSolver::step(graph, yarn, config));
+    EXPECT_NO_THROW(SurfaceSolver::step(graph, yarn, gauge, config));
 
     // Positions should have changed
     EXPECT_NE(graph.node(1).position.x, 3.0f);

@@ -8,9 +8,9 @@ LoopDimensions LoopDimensions::calculate(const YarnProperties& yarn, const Gauge
     LoopDimensions dim;
 
     // Loop opening is needle diameter minus yarn wrapping around both sides
-    dim.opening_diameter = gauge.needle_diameter - 2.0f * yarn.radius;
-    if (dim.opening_diameter < yarn.radius) {
-        dim.opening_diameter = yarn.radius;  // Minimum opening
+    dim.opening_diameter = gauge.needle_diameter - 2.0f * yarn.compressed_radius;
+    if (dim.opening_diameter < yarn.compressed_radius) {
+        dim.opening_diameter = yarn.compressed_radius;  // Minimum opening
     }
 
     // Apply tension: tighter knitting = smaller loops
@@ -18,11 +18,11 @@ LoopDimensions LoopDimensions::calculate(const YarnProperties& yarn, const Gauge
 
     // Loop height: yarn wraps around needle, so height is related to
     // half the circumference of (needle + yarn thickness)
-    float wrap_circumference = 3.14159f * (gauge.needle_diameter + 2.0f * yarn.radius);
-    dim.loop_height = wrap_circumference * 0.5f * yarn.loop_aspect_ratio;
+    float wrap_circumference = 3.14159f * (gauge.needle_diameter + 2.0f * yarn.compressed_radius);
+    dim.loop_height = wrap_circumference * 0.5f;
 
     // Loop width is similar to opening diameter plus yarn on both sides
-    dim.loop_width = dim.opening_diameter + 2.0f * yarn.radius;
+    dim.loop_width = dim.opening_diameter + 2.0f * yarn.compressed_radius;
 
     // Total yarn length in one loop (approximate)
     dim.yarn_length = wrap_circumference * (1.0f + yarn.loop_slack);
@@ -43,7 +43,7 @@ PhysicalLoop PhysicalLoop::from_properties(
     loop.opening_diameter = dim.opening_diameter;
     loop.loop_height = dim.loop_height;
     loop.loop_width = dim.loop_width;
-    loop.yarn_radius = yarn.radius;
+    loop.yarn_compressed_radius = yarn.compressed_radius;
 
     // Position - this is where the needle axis passes through
     loop.center = position;
@@ -65,7 +65,7 @@ PhysicalLoop PhysicalLoop::from_properties(
     //   θ = -π/2: front (Y = 0, Z = -wrap_radius)
 
     float needle_radius = gauge.needle_diameter * 0.5f;
-    float wrap_radius = needle_radius + yarn.radius;  // Distance from needle axis to yarn centerline
+    float wrap_radius = needle_radius + yarn.compressed_radius;  // Distance from needle axis to yarn centerline
 
     constexpr float PI = 3.14159265f;
 
@@ -155,7 +155,7 @@ void PhysicalLoop::generate_shape(const Gauge& gauge) {
     // This creates a full 360° wrap around the needle.
 
     float needle_radius = gauge.needle_diameter * 0.5f;
-    float wrap_radius = needle_radius + yarn_radius;
+    float wrap_radius = needle_radius + yarn_compressed_radius;
 
     // Point on cylinder surface given angle θ and X offset
     auto cylinder_point = [&](float theta, float x) -> Vec3 {
@@ -166,7 +166,7 @@ void PhysicalLoop::generate_shape(const Gauge& gauge) {
         );
     };
 
-    // Tangent direction for circular arc (perpendicular to radius)
+    // Tangent direction for circular arc (perpendicular to compressed_radius)
     // Points in direction of increasing θ
     auto arc_tangent = [&](float theta) -> Vec3 {
         return Vec3(
@@ -224,7 +224,7 @@ void PhysicalLoop::generate_shape(const Gauge& gauge) {
 
 bool PhysicalLoop::segment_passes_through(const Vec3& p1, const Vec3& p2) const {
     // The opening is modeled as a disk in the XZ plane at opening_center
-    // with radius = opening_radius()
+    // with compressed_radius = opening_radius()
     // The normal is in the Y direction (loop opens up/down)
 
     Vec3 d = p2 - p1;
@@ -245,7 +245,7 @@ bool PhysicalLoop::segment_passes_through(const Vec3& p1, const Vec3& p2) const 
     // Find intersection point
     Vec3 intersection = p1 + d * t;
 
-    // Check if intersection is within the disk radius
+    // Check if intersection is within the disk compressed_radius
     Vec3 offset = intersection - opening_center;
     // Project offset onto the disk plane (remove normal component)
     Vec3 in_plane = offset - normal * offset.dot(normal);

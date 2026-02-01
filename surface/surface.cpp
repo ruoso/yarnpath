@@ -87,7 +87,7 @@ RelaxedSurface relax_surface(
     SurfaceGraph graph = SurfaceBuilder::from_yarn_path(path, yarn, gauge, build_config);
 
     // Solve to equilibrium
-    SolveResult result = SurfaceSolver::solve(graph, yarn, solve_config);
+    SolveResult result = SurfaceSolver::solve(graph, yarn, gauge, solve_config);
 
     log->info("relax_surface: {} after {} iterations, energy {} -> {}",
               result.converged ? "converged" : "did not converge",

@@ -166,7 +166,7 @@ TEST_F(SurfaceBuilderTest, GridBasedInitialPositions) {
 
     // Y spread should be small (just noise) for a single row
     float y_spread = max_y - min_y;
-    EXPECT_LT(y_spread, gauge.row_height());  // Should be less than one row height
+    EXPECT_LT(y_spread, gauge.loop_height(yarn.compressed_radius));  // Should be less than one row height
 }
 
 TEST_F(SurfaceBuilderTest, DifferentSeedsDifferentPositions) {
@@ -231,7 +231,7 @@ TEST_F(SurfaceBuilderTest, RestLengthsBasedOnYarnProperties) {
     SurfaceGraph graph = SurfaceBuilder::from_yarn_path(path, yarn, gauge);
 
     // Passthrough edges have rest length = loop_height + min_clearance
-    float loop_height = gauge.loop_height(yarn.radius, yarn.loop_aspect_ratio);
+    float loop_height = gauge.loop_height(yarn.compressed_radius);
     float expected_passthrough = loop_height + yarn.min_clearance();
 
     for (const auto& edge : graph.edges()) {
@@ -241,12 +241,12 @@ TEST_F(SurfaceBuilderTest, RestLengthsBasedOnYarnProperties) {
         }
     }
 
-    // Continuity edges have rest length based on yarn radius
-    float expected_continuity = yarn.radius * 2.0f * (1.0f + (1.0f - yarn.tension) * 0.25f);
+    // Continuity edges have rest length based on yarn compressed_radius
+    float expected_continuity = yarn.compressed_radius * 2.0f * (1.0f + (1.0f - yarn.tension) * 0.25f);
 
     for (const auto& edge : graph.edges()) {
         if (edge.type == EdgeType::YarnContinuity) {
-            // Rest length should be approximately 2*radius with tension adjustment
+            // Rest length should be approximately 2*compressed_radius with tension adjustment
             EXPECT_NEAR(edge.rest_length, expected_continuity, expected_continuity * 0.1f);
         }
     }

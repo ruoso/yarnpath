@@ -43,7 +43,7 @@ void SurfaceBuilder::create_nodes() {
     float loop_width = gauge_.needle_diameter;  // Loop wraps around needle
 
     // Connector length (yarn between adjacent loops)
-    float connector_length = yarn_.radius * 3.0f;  // Same as continuity rest length base
+    float connector_length = yarn_.compressed_radius * 3.0f;  // Same as continuity rest length base
 
     for (size_t i = 0; i < segments.size(); ++i) {
         SurfaceNode node;
@@ -75,14 +75,14 @@ void SurfaceBuilder::create_continuity_edges() {
 
     // Rest length for continuity edges based on yarn properties
     // Adjacent segments along yarn are touching or very close
-    // Use yarn diameter (2*radius) as minimum, scaled slightly by tension
-    float base_rest_length = yarn_.radius * 2.0f * (1.0f + (1.0f - yarn_.tension) * 0.25f);
-    // For worsted (radius=1.0, tension=0.5): rest_length ≈ 2.0 * 1.125 = 2.25mm
+    // Use yarn diameter (2*compressed_radius) as minimum, scaled slightly by tension
+    float base_rest_length = yarn_.compressed_radius * 2.0f * (1.0f + (1.0f - yarn_.tension) * 0.25f);
+    // For worsted (compressed_radius=1.0, tension=0.5): rest_length ≈ 2.0 * 1.125 = 2.25mm
 
     // Dimensionally-consistent stiffness: scale by (mass / length²) to match system timescale
     // This ensures stable integration with the given dt and mass values
     float typical_mass = yarn_.loop_mass(gauge_.needle_diameter);
-    float typical_length = yarn_.radius * 2.0f;
+    float typical_length = yarn_.compressed_radius * 2.0f;
     float dimensional_scale = typical_mass / (typical_length * typical_length);
     // Base stiffness constant adjusted for dt=0.01, scaled by yarn stiffness property
     float base_stiffness = 5.0f * dimensional_scale * (0.5f + yarn_.stiffness * 0.5f);
@@ -113,7 +113,7 @@ void SurfaceBuilder::create_passthrough_edges() {
     // This is based on the loop size (determined by needle diameter and yarn)
     // The child loop passes through the parent and hangs below it
     // Distance is approximately: parent_loop_half_height + child_loop_half_height + clearance
-    float loop_height = gauge_.loop_height(yarn_.radius, yarn_.loop_aspect_ratio);
+    float loop_height = gauge_.loop_height(yarn_.compressed_radius);
     // Desired equilibrium distance with comfortable clearance (1.5x for slack)
     float comfortable_clearance = yarn_.min_clearance() * 1.5f;
     float base_rest_length = loop_height + comfortable_clearance;
@@ -122,7 +122,7 @@ void SurfaceBuilder::create_passthrough_edges() {
     // Passthroughs are less stiff than continuity (yarn can slide through loops)
     // Use same dimensionally-consistent calculation as continuity
     float typical_mass = yarn_.loop_mass(gauge_.needle_diameter);
-    float typical_length = yarn_.radius * 2.0f;
+    float typical_length = yarn_.compressed_radius * 2.0f;
     float dimensional_scale = typical_mass / (typical_length * typical_length);
     float base_stiffness = 5.0f * dimensional_scale * (0.5f + yarn_.stiffness * 0.5f);
     float stiffness = base_stiffness * config_.passthrough_stiffness_factor;
@@ -204,10 +204,10 @@ void SurfaceBuilder::initialize_positions() {
     // 3. If constraints can't be satisfied, run local relaxation
 
     std::mt19937 rng(config_.random_seed);
-    float noise_amplitude = gauge_.stitch_width() * config_.position_noise;
+    float noise_amplitude = yarn_.relaxed_radius * config_.position_noise;
     std::uniform_real_distribution<float> noise_dist(-noise_amplitude, noise_amplitude);
-    // Z noise for initial perturbation - use yarn radius as scale for realistic thickness
-    float z_noise_amplitude = yarn_.radius * 0.5f;  // Half yarn radius
+    // Z noise for initial perturbation - use yarn compressed_radius as scale for realistic thickness
+    float z_noise_amplitude = yarn_.compressed_radius * 0.5f;  // Half yarn compressed_radius
     std::uniform_real_distribution<float> z_noise_dist(-z_noise_amplitude, z_noise_amplitude);
 
     const auto& segments = path_.segments();
@@ -227,7 +227,7 @@ void SurfaceBuilder::initialize_positions() {
     std::map<NodeId, std::vector<std::pair<NodeId, float>>> passthrough_info;
     // Use the same calculation as passthrough edge rest length
     float comfortable_clearance = yarn_.min_clearance() * 1.5f;
-    float default_passthrough_length = gauge_.loop_height(yarn_.radius, yarn_.loop_aspect_ratio) + comfortable_clearance;
+    float default_passthrough_length = gauge_.loop_height(yarn_.compressed_radius) + comfortable_clearance;
     for (size_t i = 0; i < segments.size(); ++i) {
         const auto& seg = segments[i];
         for (SegmentId parent_id : seg.through) {
@@ -298,7 +298,7 @@ void SurfaceBuilder::initialize_positions() {
     // Use constraint-based spacing to ensure minimum distances are satisfied
     // Continuity edge rest length (X spacing within row)
     // Start with 33% extra space for relaxation (3.0 → 4.0) to avoid immediate constraint conflicts
-    float stitch_offset = yarn_.radius * 2.0f * (1.0f + (1.0f - yarn_.tension) * 0.25f) * 4.0f; // three segments per stitch
+    float stitch_offset = yarn_.compressed_radius * 2.0f * (1.0f + (1.0f - yarn_.tension) * 0.25f) * 4.0f; // three segments per stitch
     // Passthrough edge rest length (Y spacing between rows)
     float row_offset = stitch_offset;
 
@@ -310,7 +310,6 @@ void SurfaceBuilder::initialize_positions() {
     // Track current position
     float current_x = 0.0f;
     float current_y = 0.0f;
-    int current_level = 0;
     int row_direction = 1;  // +1 = right, -1 = left
 
     // Position each subsequent node
@@ -326,7 +325,6 @@ void SurfaceBuilder::initialize_positions() {
             // New row: start directly above the previous node, reverse direction
             current_y += row_offset;
             row_direction = -row_direction;
-            current_level = node_level;
 
             log->debug("Row {}: y={}, direction={}",
                        node_level, current_y, row_direction > 0 ? "right" : "left");
@@ -400,7 +398,6 @@ void SurfaceBuilder::relax_partial(
 
     // Simple iterative constraint projection for nodes 0..up_to_node
     const int max_iters = 100;
-    const float tolerance = 0.001f;
 
     for (int iter = 0; iter < max_iters; ++iter) {
         bool any_correction = false;

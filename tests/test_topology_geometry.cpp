@@ -20,7 +20,7 @@ static SurfaceGraph build_test_surface(const YarnPath& yarn_path,
     solve_config.max_iterations = 1000;
     solve_config.convergence_threshold = 1e-4f;
 
-    SurfaceSolver::solve(surface, yarn, solve_config);
+    SurfaceSolver::solve(surface, yarn, gauge, solve_config);
 
     return surface;
 }

@@ -372,7 +372,7 @@ CubicBezier create_continuation_segment(
     // For a Hermite curve, the curvature at endpoints depends on the tangent magnitude.
     // A larger tangent magnitude creates a gentler curve (lower curvature).
     // 
-    // The minimum bend radius is 1/max_curvature. To ensure we don't exceed
+    // The minimum bend compressed_radius is 1/max_curvature. To ensure we don't exceed
     // max_curvature, we need tangent magnitudes that are proportional to
     // the distance and inversely related to the allowed curvature.
     //
@@ -383,7 +383,7 @@ CubicBezier create_continuation_segment(
     float direction_alignment = incoming_dir.dot(target_dir);
     // direction_alignment: 1.0 = same direction, -1.0 = opposite, 0 = perpendicular
     
-    // Minimum bend radius
+    // Minimum bend compressed_radius
     float min_bend_radius = (max_curvature > 1e-6f) ? (1.0f / max_curvature) : 1000.0f;
     
     // Base tangent magnitude - scales with distance
@@ -391,7 +391,7 @@ CubicBezier create_continuation_segment(
     // When directions differ significantly, we need more tangent to avoid sharp bends
     float alignment_factor = 0.5f - 0.3f * direction_alignment;  // Range: [0.2, 0.8]
     
-    // Ensure tangent is long enough to respect minimum bend radius
+    // Ensure tangent is long enough to respect minimum bend compressed_radius
     // The tangent magnitude should be at least proportional to min_bend_radius
     // for curves that need to turn significantly
     float curvature_factor = std::max(0.3f, min_bend_radius / distance);
@@ -433,14 +433,14 @@ static bool solve_3x3_columns(
 static std::vector<float> intersect_sphere_ts(
     const CubicBezier& curve,
     const Vec3& center,
-    float radius,
+    float compressed_radius,
     int samples = 128,
     float eps_f = 1e-6f)
 {
     auto f = [&](float t) -> float {
         Vec3 p = curve.evaluate(t);
         Vec3 d = p - center;
-        return d.dot(d) - radius * radius;
+        return d.dot(d) - compressed_radius * compressed_radius;
     };
 
     std::vector<float> roots;

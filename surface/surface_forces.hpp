@@ -3,6 +3,7 @@
 
 #include "surface_graph.hpp"
 #include <yarn/yarn_properties.hpp>
+#include <yarn/gauge.hpp>
 
 namespace yarnpath {
 
@@ -35,6 +36,7 @@ struct ForceConfig {
 // Compute all forces on the graph nodes
 void compute_forces(SurfaceGraph& graph,
                     const YarnProperties& yarn,
+                    const Gauge& gauge,
                     const ForceConfig& config = ForceConfig{});
 
 // Individual force components (for testing and debugging)
@@ -45,11 +47,13 @@ void compute_spring_forces(SurfaceGraph& graph);
 // Passthrough tension: additional straightening force for through-loop edges
 void compute_passthrough_tension(SurfaceGraph& graph,
                                   const YarnProperties& yarn,
+                                  const Gauge& gauge,
                                   float tension_factor);
 
 // Loop curvature: gentle force toward natural loop shape
 void compute_loop_curvature_forces(SurfaceGraph& graph,
                                     const YarnProperties& yarn,
+                                    const Gauge& gauge,
                                     float strength);
 
 

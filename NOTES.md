@@ -189,7 +189,7 @@ This assembles a **single continuous yarn curve**.
 
 Lightweight, non-physical fixes:
 
-* simple repulsion if segments get closer than `2 × yarn_radius`,
+* simple repulsion if segments get closer than `2 × yarn_compressed_radius`,
 * curvature clamping,
 * local smoothing.
 

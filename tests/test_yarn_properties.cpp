@@ -9,13 +9,13 @@ using namespace yarnpath;
 
 TEST(YarnPropertiesTest, Defaults) {
     YarnProperties yarn;
-    EXPECT_FLOAT_EQ(yarn.radius, 1.0f);
+    EXPECT_FLOAT_EQ(yarn.compressed_radius, 1.0f);
     EXPECT_FLOAT_EQ(yarn.min_bend_radius, 3.0f);
 }
 
 TEST(YarnPropertiesTest, DerivedProperties) {
     YarnProperties yarn;
-    yarn.radius = 2.0f;
+    yarn.compressed_radius = 2.0f;
     yarn.min_bend_radius = 6.0f;
 
     EXPECT_FLOAT_EQ(yarn.min_clearance(), 4.0f);
@@ -24,10 +24,10 @@ TEST(YarnPropertiesTest, DerivedProperties) {
 
 TEST(YarnPropertiesTest, Presets) {
     auto fingering = YarnProperties::fingering();
-    EXPECT_LT(fingering.radius, 1.0f);
+    EXPECT_LT(fingering.compressed_radius, 1.0f);
 
     auto bulky = YarnProperties::bulky();
-    EXPECT_GT(bulky.radius, 1.0f);
+    EXPECT_GT(bulky.compressed_radius, 1.0f);
 }
 
 // ============================================
@@ -36,27 +36,31 @@ TEST(YarnPropertiesTest, Presets) {
 
 TEST(GaugeTest, Defaults) {
     Gauge gauge;
-    EXPECT_FLOAT_EQ(gauge.stitches_per_unit, 4.0f);
-    EXPECT_FLOAT_EQ(gauge.rows_per_unit, 5.0f);
+    EXPECT_FLOAT_EQ(gauge.needle_diameter, 4.0f);
 }
 
-TEST(GaugeTest, StitchWidth) {
+TEST(GaugeTest, LoopHeight) {
     Gauge gauge;
-    gauge.stitches_per_unit = 5.0f;
-    EXPECT_FLOAT_EQ(gauge.stitch_width(), 0.2f);
+    gauge.needle_diameter = 5.0f;
+    float yarn_compressed_radius = 1.0f;
+    
+    // Loop height should be based on needle diameter and yarn radius
+    float loop_height = gauge.loop_height(yarn_compressed_radius);
+    EXPECT_GT(loop_height, 0.0f);
+    
+    // Larger needles should give larger loops
+    Gauge gauge_larger;
+    gauge_larger.needle_diameter = 8.0f;
+    float larger_loop_height = gauge_larger.loop_height(yarn_compressed_radius);
+    EXPECT_GT(larger_loop_height, loop_height);
 }
 
-TEST(GaugeTest, RowHeight) {
-    Gauge gauge;
-    gauge.rows_per_unit = 4.0f;
-    EXPECT_FLOAT_EQ(gauge.row_height(), 0.25f);
-}
-
-TEST(GaugeTest, Conversion) {
-    Gauge gauge;
-    gauge.stitches_per_unit = 4.0f;
-    gauge.rows_per_unit = 5.0f;
-
-    EXPECT_FLOAT_EQ(gauge.stitch_to_u(4.0f), 1.0f);
-    EXPECT_FLOAT_EQ(gauge.row_to_v(5.0f), 1.0f);
+TEST(GaugeTest, Presets) {
+    auto fingering = Gauge::fingering();
+    auto worsted = Gauge::worsted();
+    auto bulky = Gauge::bulky();
+    
+    // Fingering uses smallest needles
+    EXPECT_LT(fingering.needle_diameter, worsted.needle_diameter);
+    EXPECT_LT(worsted.needle_diameter, bulky.needle_diameter);
 }

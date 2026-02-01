@@ -6,13 +6,13 @@ namespace yarnpath {
 // Physical yarn characteristics that affect geometry generation
 struct YarnProperties {
     // Core dimension
-    float radius = 1.0f;              // Yarn radius (half diameter)
+    float relaxed_radius = 1.0f;
+    float compressed_radius = 0.1f;              // Yarn compressed_radius (half diameter)
 
     // Bending constraints
-    float min_bend_radius = 3.0f;     // Minimum curvature radius (typically 2-4x radius)
+    float min_bend_radius = 0.3f;     // Minimum curvature compressed_radius (typically 2-4x compressed_radius)
 
     // Loop formation
-    float loop_aspect_ratio = 1.5f;   // Height/width of relaxed loop
     float loop_slack = 0.1f;          // Extra length factor [0-1]
 
     // Interaction properties
@@ -28,18 +28,11 @@ struct YarnProperties {
 
     // Derived properties
     float min_clearance() const {
-        return 2.0f * radius;
+        return 2.0f * compressed_radius;
     }
 
     float max_curvature() const {
         return 1.0f / min_bend_radius;
-    }
-
-    // Estimate yarn length for a loop segment (mm)
-    // A loop wraps around and back, so it's roughly 2 * loop_height + loop_width
-    float loop_yarn_length(float loop_width) const {
-        float loop_height = loop_width * loop_aspect_ratio;
-        return 2.0f * loop_height + loop_width + loop_width * loop_slack;
     }
 
     // Estimate yarn length for a connector segment (mm)
@@ -50,7 +43,7 @@ struct YarnProperties {
 
     // Mass of a loop segment (grams)
     float loop_mass(float loop_width) const {
-        return loop_yarn_length(loop_width) * linear_density;
+        return loop_width * linear_density;
     }
 
     // Mass of a connector segment (grams)
@@ -72,9 +65,8 @@ struct YarnProperties {
     // Factory methods for common yarn types
     static YarnProperties fingering() {
         return YarnProperties{
-            .radius = 0.5f,
+            .compressed_radius = 0.5f,
             .min_bend_radius = 1.5f,
-            .loop_aspect_ratio = 1.4f,
             .loop_slack = 0.08f,
             .stiffness = 0.4f,
             .friction = 0.3f
@@ -83,9 +75,8 @@ struct YarnProperties {
 
     static YarnProperties worsted() {
         return YarnProperties{
-            .radius = 1.0f,
+            .compressed_radius = 1.0f,
             .min_bend_radius = 3.0f,
-            .loop_aspect_ratio = 1.5f,
             .loop_slack = 0.1f,
             .stiffness = 0.5f,
             .friction = 0.3f
@@ -94,9 +85,8 @@ struct YarnProperties {
 
     static YarnProperties bulky() {
         return YarnProperties{
-            .radius = 2.0f,
+            .compressed_radius = 2.0f,
             .min_bend_radius = 6.0f,
-            .loop_aspect_ratio = 1.6f,
             .loop_slack = 0.12f,
             .stiffness = 0.6f,
             .friction = 0.35f
@@ -105,9 +95,7 @@ struct YarnProperties {
 
     static YarnProperties thin() {
         return YarnProperties{
-            .radius = 0.3f,
-            .min_bend_radius = 1.0f,
-            .loop_aspect_ratio = 1.3f,
+            .compressed_radius = 0.01f,
             .loop_slack = 0.07f,
             .stiffness = 0.35f,
             .friction = 0.25f

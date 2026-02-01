@@ -96,7 +96,7 @@ int command_surface(int argc, char** argv) {
             viz_config.show_geometry = false;
 
             VisualizerResult viz_result = visualize_relaxation(
-                surface_graph, yarn, solve_config, viz_config);
+                surface_graph, yarn, gauge, solve_config, viz_config);
 
             log->info("Visualization complete: {} iterations, final energy = {}",
                       viz_result.total_iterations, viz_result.final_energy);
@@ -108,7 +108,7 @@ int command_surface(int argc, char** argv) {
         } else {
             // Solve surface relaxation (non-interactive)
             log->debug("Solving surface relaxation");
-            result = SurfaceSolver::solve(surface_graph, yarn, solve_config);
+            result = SurfaceSolver::solve(surface_graph, yarn, gauge, solve_config);
 
             log->info("Surface relaxation: {} after {} iterations",
                       result.converged ? "converged" : "did not converge",

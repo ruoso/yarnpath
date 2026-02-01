@@ -9,9 +9,11 @@ class SurfaceForcesTest : public ::testing::Test {
 protected:
     SurfaceGraph graph;
     YarnProperties yarn;
+    Gauge gauge;
 
     void SetUp() override {
         yarn = YarnProperties::worsted();
+        gauge = Gauge::worsted();
     }
 
     void create_two_node_spring(float distance, float rest_length, float stiffness) {
@@ -95,7 +97,6 @@ TEST_F(SurfaceForcesTest, DampingReducesForce) {
     graph.node(0).velocity = Vec3(2.0f, 0.0f, 0.0f);
 
     compute_spring_forces(graph);
-    float force_without_damping = graph.node(0).force.x;
 
     apply_damping(graph, 0.5f);
 
@@ -126,7 +127,7 @@ TEST_F(SurfaceForcesTest, PassthroughTension) {
     // Set yarn tension
     yarn.tension = 0.5f;
 
-    compute_passthrough_tension(graph, yarn, 2.0f);
+    compute_passthrough_tension(graph, yarn, gauge, 2.0f);
 
     // Node 0 should be pulled toward node 1
     // Force = tension * tension_factor = 0.5 * 2.0 = 1.0
@@ -141,7 +142,7 @@ TEST_F(SurfaceForcesTest, ComputeForcesIntegration) {
     config.damping = 0.1f;
     config.passthrough_tension_factor = 1.0f;
 
-    compute_forces(graph, yarn, config);
+    compute_forces(graph, yarn, gauge, config);
 
     // Forces should be computed and non-zero
     EXPECT_NE(graph.node(0).force.x, 0.0f);
@@ -176,7 +177,7 @@ TEST_F(SurfaceForcesTest, LoopCurvatureForce) {
     graph.add_edge(edge2);
 
     // Loop curvature should push the middle node up (to form a loop)
-    compute_loop_curvature_forces(graph, yarn, 1.0f);
+    compute_loop_curvature_forces(graph, yarn, gauge, 1.0f);
 
     // The middle node should have positive Y force (pushed up to form loop)
     EXPECT_GT(graph.node(1).force.y, 0.0f);

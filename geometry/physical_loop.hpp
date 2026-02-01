@@ -16,7 +16,7 @@ struct PhysicalLoop {
     float opening_diameter;   // The hole in the middle (yarn passes through here)
     float loop_height;        // Vertical extent of the loop
     float loop_width;         // Horizontal extent of the loop
-    float yarn_radius;        // Radius of the yarn itself
+    float yarn_compressed_radius;        // Radius of the yarn itself
 
     // Position in 3D space
     Vec3 center;              // Center of the loop

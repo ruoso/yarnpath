@@ -20,7 +20,7 @@ static SurfaceGraph build_test_surface(const YarnPath& yarn_path,
     solve_config.max_iterations = 1000;
     solve_config.convergence_threshold = 1e-4f;
 
-    SurfaceSolver::solve(surface, yarn, solve_config);
+    SurfaceSolver::solve(surface, yarn, gauge, solve_config);
 
     return surface;
 }
@@ -70,7 +70,7 @@ TEST(LoopShapeTest, CurvatureWithinLimits) {
     // With physics-based surface positions, curvature depends on the simulated
     // node positions rather than idealized needle-cylinder geometry.
     // We use a more lenient limit: curvature should be finite and not extreme.
-    // Max curvature of 10 corresponds to a minimum bend radius of 0.1mm,
+    // Max curvature of 10 corresponds to a minimum bend compressed_radius of 0.1mm,
     // which is much tighter than any realistic yarn would allow but ensures
     // there are no degenerate curves.
     float max_reasonable_curvature = 10.0f;

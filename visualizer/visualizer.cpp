@@ -300,17 +300,17 @@ static void fit_camera_to_graph(const SurfaceGraph& graph, Camera& camera, float
     if (camera.distance < 1.0f) camera.distance = 1.0f;
 }
 
-static void draw_sphere(float x, float y, float z, float radius, int segments = 8) {
+static void draw_sphere(float x, float y, float z, float compressed_radius, int segments = 8) {
     glPushMatrix();
     glTranslatef(x, y, z);
 
     for (int i = 0; i < segments; ++i) {
         float lat0 = 3.14159f * (-0.5f + static_cast<float>(i) / segments);
         float lat1 = 3.14159f * (-0.5f + static_cast<float>(i + 1) / segments);
-        float z0 = std::sin(lat0) * radius;
-        float z1 = std::sin(lat1) * radius;
-        float r0 = std::cos(lat0) * radius;
-        float r1 = std::cos(lat1) * radius;
+        float z0 = std::sin(lat0) * compressed_radius;
+        float z1 = std::sin(lat1) * compressed_radius;
+        float r0 = std::cos(lat0) * compressed_radius;
+        float r1 = std::cos(lat1) * compressed_radius;
 
         glBegin(GL_QUAD_STRIP);
         for (int j = 0; j <= segments; ++j) {
@@ -523,7 +523,7 @@ static std::vector<CurveFrame> compute_parallel_transport_frames(
 
 // Render a tube by extruding a circle along curve frames
 static void render_extruded_tube(const std::vector<CurveFrame>& frames,
-                                  float radius, int radial_segments) {
+                                  float compressed_radius, int radial_segments) {
     if (frames.size() < 2) {
         return;
     }
@@ -545,8 +545,8 @@ static void render_extruded_tube(const std::vector<CurveFrame>& frames,
             Vec3 offset1 = frame1.normal * c + frame1.binormal * s;
 
             // Vertex positions
-            Vec3 pos0 = frame0.position + offset0 * radius;
-            Vec3 pos1 = frame1.position + offset1 * radius;
+            Vec3 pos0 = frame0.position + offset0 * compressed_radius;
+            Vec3 pos1 = frame1.position + offset1 * compressed_radius;
 
             // Normals point outward (same as offset direction)
             glNormal3f(offset0.x, offset0.y, offset0.z);
@@ -612,7 +612,7 @@ static void render_spline(const BezierSpline& spline, const VisualizerConfig& co
         // Render as extruded tube
         auto frames = compute_parallel_transport_frames(spline, config.spline_samples);
         glEnable(GL_LIGHTING);
-        render_extruded_tube(frames, config.yarn_radius, config.tube_radial_segments);
+        render_extruded_tube(frames, config.yarn_compressed_radius, config.tube_radial_segments);
     } else {
         // Legacy line rendering
         glDisable(GL_LIGHTING);
@@ -649,9 +649,9 @@ static void render_geometry(const GeometryPath& geometry, const VisualizerConfig
             if (!segments.empty()) {
                 BezierSpline last_segment;
                 last_segment.add_segment(segments.back());
-                // Render latest segment with slightly larger radius for visibility
+                // Render latest segment with slightly larger compressed_radius for visibility
                 VisualizerConfig highlight_config = config;
-                highlight_config.yarn_radius = config.yarn_radius * 1.1f;
+                highlight_config.yarn_compressed_radius = config.yarn_compressed_radius * 1.1f;
                 render_spline(last_segment, highlight_config, true);
 
                 // Draw a green sphere at the endpoint of the spline
@@ -705,6 +705,7 @@ static void setup_lighting() {
 VisualizerResult visualize_relaxation(
     SurfaceGraph& graph,
     const YarnProperties& yarn,
+    const Gauge& gauge,
     const SolveConfig& solve_config,
     const VisualizerConfig& viz_config) {
 
@@ -825,7 +826,7 @@ VisualizerResult visualize_relaxation(
             float prev_energy = energy;
 
             for (int i = 0; i < viz_config.steps_per_frame; ++i) {
-                SurfaceSolver::step(graph, yarn, solve_config);
+                SurfaceSolver::step(graph, yarn, gauge, solve_config);
                 iteration++;
 
                 // Check convergence
@@ -959,9 +960,9 @@ VisualizerResult visualize_with_geometry(
     glfwSetScrollCallback(window, scroll_callback);
     glfwSetKeyCallback(window, key_callback);
 
-    // Create a mutable config with yarn radius from properties
+    // Create a mutable config with yarn compressed_radius from properties
     VisualizerConfig config = viz_config;
-    config.yarn_radius = yarn.radius;
+    config.yarn_compressed_radius = yarn.compressed_radius;
 
     // Initialize camera
     g_camera.distance = config.camera_distance;
@@ -1040,7 +1041,7 @@ VisualizerResult visualize_with_geometry(
             bool converged = false;
 
             for (int i = 0; i < config.steps_per_frame; ++i) {
-                SurfaceSolver::step(graph, yarn, solve_config);
+                SurfaceSolver::step(graph, yarn, gauge, solve_config);
                 iteration++;
 
                 // Check convergence
@@ -1191,6 +1192,7 @@ namespace yarnpath {
 VisualizerResult visualize_relaxation(
     SurfaceGraph&,
     const YarnProperties&,
+    const Gauge&,
     const SolveConfig&,
     const VisualizerConfig&) {
 

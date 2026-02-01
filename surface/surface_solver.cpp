@@ -10,6 +10,7 @@ namespace yarnpath {
 
 SolveResult SurfaceSolver::solve(SurfaceGraph& graph,
                                   const YarnProperties& yarn,
+                                  const Gauge& gauge,
                                   const SolveConfig& config) {
     auto log = yarnpath::logging::get_logger();
 
@@ -65,7 +66,7 @@ SolveResult SurfaceSolver::solve(SurfaceGraph& graph,
 
     for (int iter = 0; iter < config.max_iterations; ++iter) {
         // Single solver step
-        step(graph, yarn, config);
+        step(graph, yarn, gauge, config);
 
         // Check convergence periodically (not every iteration to save compute)
         bool should_check = ((iter + 1) % energy_check_interval == 0) ||
@@ -116,9 +117,10 @@ SolveResult SurfaceSolver::solve(SurfaceGraph& graph,
 
 void SurfaceSolver::step(SurfaceGraph& graph,
                           const YarnProperties& yarn,
+                          const Gauge& gauge,
                           const SolveConfig& config) {
     // 1. Compute all forces (including gravity and collision repulsion)
-    compute_forces(graph, yarn, config.force_config);
+    compute_forces(graph, yarn, gauge, config.force_config);
 
     // 2. Integrate using Verlet
     integrate_verlet(graph, config.dt);

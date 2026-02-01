@@ -3,6 +3,7 @@ add_executable(tests
     test_stitch_graph.cpp
     test_parser.cpp
     test_yarn_path.cpp
+    test_yarn_topology_distinctions.cpp
     test_loop_shape.cpp
     test_vec3.cpp
     test_bezier.cpp

@@ -120,15 +120,15 @@ YarnPath YarnPathBuilder::build() {
 
 void YarnPathBuilder::process_stitch(const StitchNode& node) {
     auto log = yarnpath::logging::get_logger();
-    
+
     // Collect parent loop segments that this stitch works through
     std::vector<SegmentId> through_loops;
-    
+
     for (StitchId parent_stitch : node.worked_through) {
         if (parent_stitch < stitch_to_loops_.size() &&
             !stitch_to_loops_[parent_stitch].empty()) {
             SegmentId parent_loop = stitch_to_loops_[parent_stitch].back();
-            
+
             // Check if this parent loop is still live
             auto it = std::find(live_loops_.begin(), live_loops_.end(), parent_loop);
             if (it != live_loops_.end()) {
@@ -141,26 +141,92 @@ void YarnPathBuilder::process_stitch(const StitchNode& node) {
             }
         }
     }
-    
+
+    // Determine topological metadata based on stitch type
+    YarnSegment::LoopOrientation orientation = YarnSegment::LoopOrientation::Neutral;
+    YarnSegment::WrapDirection wrap_direction = YarnSegment::WrapDirection::None;
+    YarnSegment::WorkType work_type = YarnSegment::WorkType::Worked;
+
+    if (std::holds_alternative<stitch::Knit>(node.operation)) {
+        orientation = YarnSegment::LoopOrientation::Front;
+        work_type = YarnSegment::WorkType::Worked;
+    } else if (std::holds_alternative<stitch::Purl>(node.operation)) {
+        orientation = YarnSegment::LoopOrientation::Back;
+        work_type = YarnSegment::WorkType::Worked;
+    } else if (std::holds_alternative<stitch::Slip>(node.operation)) {
+        orientation = YarnSegment::LoopOrientation::Neutral;
+        work_type = YarnSegment::WorkType::Transferred;
+    } else if (std::holds_alternative<stitch::K2tog>(node.operation)) {
+        orientation = YarnSegment::LoopOrientation::Front;
+        wrap_direction = YarnSegment::WrapDirection::Clockwise;
+        work_type = YarnSegment::WorkType::Worked;
+    } else if (std::holds_alternative<stitch::SSK>(node.operation)) {
+        orientation = YarnSegment::LoopOrientation::Front;
+        wrap_direction = YarnSegment::WrapDirection::CounterClockwise;
+        work_type = YarnSegment::WorkType::Worked;
+    } else if (std::holds_alternative<stitch::S2KP>(node.operation)) {
+        orientation = YarnSegment::LoopOrientation::Front;
+        wrap_direction = YarnSegment::WrapDirection::CounterClockwise;
+        work_type = YarnSegment::WorkType::Worked;
+    } else if (std::holds_alternative<stitch::M1L>(node.operation)) {
+        orientation = YarnSegment::LoopOrientation::Neutral;
+        wrap_direction = YarnSegment::WrapDirection::CounterClockwise;
+        work_type = YarnSegment::WorkType::Created;
+    } else if (std::holds_alternative<stitch::M1R>(node.operation)) {
+        orientation = YarnSegment::LoopOrientation::Neutral;
+        wrap_direction = YarnSegment::WrapDirection::Clockwise;
+        work_type = YarnSegment::WorkType::Created;
+    } else if (std::holds_alternative<stitch::YarnOver>(node.operation)) {
+        orientation = YarnSegment::LoopOrientation::Neutral;
+        work_type = YarnSegment::WorkType::Created;
+    } else if (std::holds_alternative<stitch::CastOn>(node.operation)) {
+        orientation = YarnSegment::LoopOrientation::Neutral;
+        work_type = YarnSegment::WorkType::Created;
+    } else if (std::holds_alternative<stitch::BindOff>(node.operation)) {
+        orientation = YarnSegment::LoopOrientation::Neutral;
+        work_type = YarnSegment::WorkType::Worked;
+    } else if (std::holds_alternative<stitch::KFB>(node.operation)) {
+        orientation = YarnSegment::LoopOrientation::Front;
+        work_type = YarnSegment::WorkType::Worked;
+    } else if (std::holds_alternative<stitch::CableLeft>(node.operation)) {
+        orientation = YarnSegment::LoopOrientation::Front;
+        work_type = YarnSegment::WorkType::Worked;
+    } else if (std::holds_alternative<stitch::CableRight>(node.operation)) {
+        orientation = YarnSegment::LoopOrientation::Front;
+        work_type = YarnSegment::WorkType::Worked;
+    }
+
     // Create segment for this stitch (forms a loop)
     bool is_terminal = std::holds_alternative<stitch::BindOff>(node.operation);
-    SegmentId seg_id = add_segment(std::move(through_loops), true, node.id);
-    
+    SegmentId seg_id = add_segment(std::move(through_loops), true, node.id,
+                                    orientation, wrap_direction, work_type);
+
     // Add to live loops (unless it's a bind-off which terminates)
     if (!is_terminal) {
         add_live_loop(seg_id);
     }
-    
+
     log->trace("YarnPath: processed stitch {} -> segment {}", node.id, seg_id);
 }
 
 // === Helper implementations ===
 
-SegmentId YarnPathBuilder::add_segment(std::vector<SegmentId> through, bool forms_loop, StitchId stitch_id) {
+SegmentId YarnPathBuilder::add_segment(std::vector<SegmentId> through, bool forms_loop, StitchId stitch_id,
+                                       YarnSegment::LoopOrientation orientation,
+                                       YarnSegment::WrapDirection wrap_direction,
+                                       YarnSegment::WorkType work_type) {
     auto log = yarnpath::logging::get_logger();
     SegmentId id = static_cast<SegmentId>(segments_.size());
-    segments_.push_back(YarnSegment{std::move(through), forms_loop});
-    
+
+    // Create segment with all topology metadata
+    YarnSegment segment;
+    segment.through = std::move(through);
+    segment.forms_loop = forms_loop;
+    segment.orientation = orientation;
+    segment.wrap_direction = wrap_direction;
+    segment.work_type = work_type;
+    segments_.push_back(std::move(segment));
+
     // Track stitch -> loop segment mapping (builder-only, for finding parents)
     if (forms_loop) {
         if (stitch_id >= stitch_to_loops_.size()) {
@@ -168,7 +234,7 @@ SegmentId YarnPathBuilder::add_segment(std::vector<SegmentId> through, bool form
         }
         stitch_to_loops_[stitch_id].push_back(id);
     }
-    
+
     log->trace("YarnPath: created segment {}, forms_loop={}", id, forms_loop);
     return id;
 }

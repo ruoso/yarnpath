@@ -1,0 +1,32 @@
+{
+  "gauge": {
+    "needle_diameter": 5.0
+  },
+  "yarn": {
+    "relaxed_radius": 1.0,
+    "compressed_radius": 0.3,
+    "min_bend_radius": 0.3,
+    "loop_slack": 0.1,
+    "stiffness": 0.5,
+    "friction": 0.3,
+    "tension": 0.5,
+    "elasticity": 0.3,
+    "linear_density": 0.003
+  },
+  "build": {
+    "random_seed": 42,
+    "position_noise": 0.1,
+    "continuity_rest_length_factor": 1.0,
+    "passthrough_rest_length_factor": 1.0,
+    "continuity_stiffness_factor": 1.0,
+    "passthrough_stiffness_factor": 1.0
+  },
+  "solve": {
+    "dt": 0.01,
+    "max_iterations": 100000,
+    "convergence_threshold": 0.0001,
+    "constraint_iterations": 30,
+    "frame_interval": 100,
+    "num_threads": 0
+  }
+}

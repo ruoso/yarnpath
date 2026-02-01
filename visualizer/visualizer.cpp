@@ -800,36 +800,34 @@ VisualizerResult visualize_relaxation(
     log->info("  home=first frame, end=live view");
 
     // Start solver thread
+    solver_running = true;
     std::thread solver_thread([&]() {
         auto log = yarnpath::logging::get_logger();
         
-        SolveConfig thread_solve_config = solve_config;
-        thread_solve_config.step_callback = [&](const SurfaceGraph& g, int iter, float curr_energy, float energy_change) -> bool {
+        StepCallback step_callback = [&](const SurfaceGraph& g, int iter, float curr_energy, float energy_change) -> bool {
             {
                 std::lock_guard<std::mutex> lock(snapshot_mutex);
                 current_iteration = iter;
                 current_energy = curr_energy;
                 
                 // Take snapshot at configured interval
-                frame_count++;
-                if (frame_count % viz_config.snapshot_interval == 0) {
+                if (iter % viz_config.snapshot_interval == 0) {
                     if (static_cast<int>(g_snapshots.size()) < viz_config.max_snapshots) {
                         g_snapshots.push_back(take_snapshot(g, iter, curr_energy));
                     }
                 }
             }
             
-            // Log progress periodically
+            // Log progress periodically (already done by solver, but keep for thread-specific logging)
             if (iter % 100 == 0) {
-                log->debug("Solver iteration {}: energy={:.6f}", iter, curr_energy);
+                log->debug("Solver iteration {}: energy={:.6f}, delta={:.6f}", iter, curr_energy, energy_change);
             }
             
-            // Return false if should stop
-            return !should_stop && iter < solve_config.max_iterations;
+            // Return false only if explicitly requested to stop
+            return !should_stop;
         };
         
-        solver_running = true;
-        SolveResult solver_result = SurfaceSolver::solve(graph, yarn, gauge, thread_solve_config);
+        SolveResult solver_result = SurfaceSolver::solve(graph, yarn, gauge, solve_config, step_callback);
         solver_running = false;
         
         log->info("Solver finished: converged={}, iterations={}, energy={}",
@@ -874,11 +872,6 @@ VisualizerResult visualize_relaxation(
                 std::lock_guard<std::mutex> lock(snapshot_mutex);
                 iteration = current_iteration;
                 energy = current_energy;
-            }
-            
-            // Pause solver if requested
-            if (g_paused) {
-                should_stop = true;
             }
         }
 
@@ -1073,33 +1066,9 @@ VisualizerResult visualize_with_geometry(
 
         // Run solver steps if not paused and not viewing history
         if (!g_paused && !g_viewing_history) {
-            float prev_energy = energy;
-            bool converged = false;
-
-            for (int i = 0; i < config.steps_per_frame; ++i) {
-                SurfaceSolver::step(graph, yarn, gauge, solve_config);
-                iteration++;
-
-                // Check convergence
-                float new_energy = graph.compute_energy();
-                if (std::abs(new_energy - energy) < solve_config.convergence_threshold) {
-                    g_paused = true;
-                    converged = true;
-                    log->info("Converged at iteration {}, energy={}", iteration, new_energy);
-                    break;
-                }
-                energy = new_energy;
-
-                if (iteration >= solve_config.max_iterations) {
-                    g_paused = true;
-                    converged = true;
-                    log->info("Max iterations reached, energy={}", energy);
-                    break;
-                }
-            }
 
             // Build geometry when converged
-            if (converged && !geometry_built) {
+            if (!geometry_built) {
                 log->info("Building geometry from relaxed surface...");
 
                 // Clear any previous geometry snapshots

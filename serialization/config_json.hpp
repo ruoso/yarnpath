@@ -121,7 +121,6 @@ inline void to_json(nlohmann::json& j, const SolveConfig& config) {
         {"constraint_iterations", config.constraint_iterations},
         {"pre_solve_iterations", config.pre_solve_iterations},
         {"force_config", config.force_config},
-        {"frame_interval", config.frame_interval},
         {"num_threads", config.num_threads}
     };
 }
@@ -135,7 +134,6 @@ inline void from_json(const nlohmann::json& j, SolveConfig& config) {
     if (j.contains("force_config")) {
         config.force_config = j["force_config"].get<ForceConfig>();
     }
-    config.frame_interval = j.value("frame_interval", 100);
     config.num_threads = j.value("num_threads", 0);
     // Note: frame_callback cannot be serialized
 }

@@ -11,7 +11,8 @@ namespace yarnpath {
 SolveResult SurfaceSolver::solve(SurfaceGraph& graph,
                                   const YarnProperties& yarn,
                                   const Gauge& gauge,
-                                  const SolveConfig& config) {
+                                  const SolveConfig& config,
+                                  const StepCallback& step_callback) {
     auto log = yarnpath::logging::get_logger();
 
     // Configure OpenMP thread count
@@ -41,8 +42,8 @@ SolveResult SurfaceSolver::solve(SurfaceGraph& graph,
         float energy_change = std::abs(current_energy - prev_energy);
 
         // Call step callback if provided
-        if (config.step_callback) {
-            bool should_continue = config.step_callback(graph, iter + 1, current_energy, energy_change);
+        if (step_callback) {
+            bool should_continue = step_callback(graph, iter + 1, current_energy, energy_change);
             if (!should_continue) {
                 result.converged = true;
                 result.iterations = iter + 1;

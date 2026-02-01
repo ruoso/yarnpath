@@ -37,14 +37,6 @@ struct SolveConfig {
     // Force configuration
     ForceConfig force_config;
 
-    // Step callback (optional) - called after each solver step
-    // Returns true to continue, false to stop early
-    StepCallback step_callback = nullptr;
-
-    // Frame capture callback (optional) - called every frame_interval iterations
-    FrameCallback frame_callback = nullptr;
-    int frame_interval = 100;  // Capture a frame every N iterations
-
     // Parallelization settings
     int num_threads = 0;  // 0 = auto-detect, > 0 = use specific count
 };
@@ -64,7 +56,8 @@ public:
     static SolveResult solve(SurfaceGraph& graph,
                              const YarnProperties& yarn,
                              const Gauge& gauge,
-                             const SolveConfig& config = SolveConfig{});
+                             const SolveConfig& config = SolveConfig{},
+                             const StepCallback& step_callback = nullptr);
 
     // Single step of the solver (for debugging or interactive use)
     static void step(SurfaceGraph& graph,

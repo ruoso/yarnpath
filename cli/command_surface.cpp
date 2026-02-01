@@ -20,12 +20,13 @@ int command_surface(int argc, char** argv) {
         if (ctx.input_path.empty()) {
             std::cerr << "Usage: yarnpath surface <yarn.json> -o <surface.json> [options]\n";
             std::cerr << "Options:\n";
-            std::cerr << "  -c, --config FILE    Override config or set surface-specific options\n";
-            std::cerr << "                       (yarn/gauge read from input file by default)\n";
-            std::cerr << "  --iterations N       Max solver iterations (default: 100000)\n";
-            std::cerr << "  --threshold N        Convergence threshold (default: 1e-6)\n";
+            std::cerr << "  --iterations N       Max solver iterations (default: from config or 100000)\n";
+            std::cerr << "  --threshold N        Convergence threshold (default: from config or 1e-6)\n";
             std::cerr << "  --visualize          Open interactive visualization window\n";
             std::cerr << "  --no-relax           Skip relaxation, output initial surface configuration\n";
+            std::cerr << "\n";
+            std::cerr << "Configuration is read from the yarn.json input file.\n";
+            std::cerr << "To customize config, use -c option with the yarn command.\n";
             return 1;
         }
 
@@ -41,7 +42,7 @@ int command_surface(int argc, char** argv) {
         json::SerializedData input_data = json::read_serialized(ctx.input_path);
         YarnPath yarn_path = yarn_path_from_json(input_data.data);
 
-        // Load configuration from yarn output first (if available), then apply overrides
+        // Load configuration from yarn output
         YarnProperties yarn = YarnProperties::thin();  // Default fallback
         Gauge gauge = Gauge::worsted();                 // Default fallback
         SurfaceBuildConfig build_config;
@@ -49,7 +50,7 @@ int command_surface(int argc, char** argv) {
         solve_config.max_iterations = 100000;
         solve_config.convergence_threshold = 1e-6f;
 
-        // Read yarn/gauge from yarn output config (if present)
+        // Read full config from yarn output (if present)
         if (input_data.config.contains("yarn")) {
             yarn = input_data.config["yarn"].get<YarnProperties>();
             log->info("Using yarn properties from input file");
@@ -58,24 +59,13 @@ int command_surface(int argc, char** argv) {
             gauge = input_data.config["gauge"].get<Gauge>();
             log->info("Using gauge from input file");
         }
-
-        // Override with explicit config file (if provided)
-        if (ctx.config_path.has_value()) {
-            nlohmann::json config_json = json::read_json_file(ctx.config_path.value());
-            if (config_json.contains("yarn")) {
-                yarn = config_json["yarn"].get<YarnProperties>();
-                log->info("Overriding yarn properties from config file");
-            }
-            if (config_json.contains("gauge")) {
-                gauge = config_json["gauge"].get<Gauge>();
-                log->info("Overriding gauge from config file");
-            }
-            if (config_json.contains("build")) {
-                build_config = config_json["build"].get<SurfaceBuildConfig>();
-            }
-            if (config_json.contains("solve")) {
-                solve_config = config_json["solve"].get<SolveConfig>();
-            }
+        if (input_data.config.contains("build")) {
+            build_config = input_data.config["build"].get<SurfaceBuildConfig>();
+            log->info("Using build config from input file");
+        }
+        if (input_data.config.contains("solve")) {
+            solve_config = input_data.config["solve"].get<SolveConfig>();
+            log->info("Using solve config from input file");
         }
 
         // Override with command-line arguments

@@ -207,13 +207,6 @@ void SurfaceBuilder::initialize_positions() {
     // 2. Add nodes one at a time, using level for row direction
     // 3. If constraints can't be satisfied, run local relaxation
 
-    std::mt19937 rng(config_.random_seed);
-    float noise_amplitude = yarn_.relaxed_radius * config_.position_noise;
-    std::uniform_real_distribution<float> noise_dist(-noise_amplitude, noise_amplitude);
-    // Z noise for initial perturbation - use yarn relaxed_radius as scale for realistic thickness
-    float z_noise_amplitude = yarn_.relaxed_radius * 0.5f;  // Half yarn relaxed_radius
-    std::uniform_real_distribution<float> z_noise_dist(-z_noise_amplitude, z_noise_amplitude);
-
     const auto& segments = path_.segments();
     const auto& edges = graph_.edges();
 
@@ -352,11 +345,11 @@ void SurfaceBuilder::initialize_positions() {
             z_offset = config_.back_orientation_z_offset;   // Purl stitches curl backward
         }
 
-        // Place node at current position with orientation-based Z and small perturbation
+        // Place node at current position with orientation-based Z
         node.position = Vec3(
-            current_x + noise_dist(rng) * 0.1f,  // Small XY noise
-            current_y + noise_dist(rng) * 0.1f,
-            z_offset + z_noise_dist(rng)  // Orientation bias + small perturbation
+            current_x,
+            current_y,
+            z_offset
         );
     }
 

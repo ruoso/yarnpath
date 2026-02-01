@@ -279,19 +279,14 @@ TEST_F(SurfaceBuilderTest, OrientationZOffsetApplied) {
 
     // Build surface with custom z-offsets
     SurfaceBuildConfig config;
-    config.random_seed = 42;
-    config.position_noise = 0.0f;  // Minimize XY noise for cleaner results
     config.front_orientation_z_offset = 2.0f;  // Knit stitches
     config.back_orientation_z_offset = -3.0f;  // Purl stitches
 
     SurfaceGraph surface = SurfaceBuilder::from_yarn_path(path, yarn, gauge, config);
 
-    // Note: Z noise of ±(yarn.relaxed_radius * 0.5) is always applied during initialization
-    float z_tolerance = yarn.relaxed_radius * 0.6f;  // Slightly more than max noise
-
     // Collect Z positions by orientation
-    std::vector<float> front_z_values;
-    std::vector<float> back_z_values;
+    bool found_front = false;
+    bool found_back = false;
 
     for (size_t i = 0; i < path.segment_count(); ++i) {
         const auto& segment = path.segments()[i];
@@ -300,33 +295,17 @@ TEST_F(SurfaceBuilderTest, OrientationZOffsetApplied) {
         float node_z = surface.node(node_id).position.z;
 
         if (segment.orientation == YarnSegment::LoopOrientation::Front) {
-            front_z_values.push_back(node_z);
-            // Front-facing nodes should be near the positive offset (within noise tolerance)
-            EXPECT_NEAR(node_z, config.front_orientation_z_offset, z_tolerance);
+            // Front-facing nodes should have exactly the positive offset
+            EXPECT_FLOAT_EQ(node_z, config.front_orientation_z_offset);
+            found_front = true;
         } else if (segment.orientation == YarnSegment::LoopOrientation::Back) {
-            back_z_values.push_back(node_z);
-            // Back-facing nodes should be near the negative offset (within noise tolerance)
-            EXPECT_NEAR(node_z, config.back_orientation_z_offset, z_tolerance);
+            // Back-facing nodes should have exactly the negative offset
+            EXPECT_FLOAT_EQ(node_z, config.back_orientation_z_offset);
+            found_back = true;
         }
     }
 
     // Verify we found both orientations
-    EXPECT_FALSE(front_z_values.empty());
-    EXPECT_FALSE(back_z_values.empty());
-
-    // Calculate average Z positions for each orientation
-    float avg_front_z = 0.0f;
-    for (float z : front_z_values) avg_front_z += z;
-    avg_front_z /= front_z_values.size();
-
-    float avg_back_z = 0.0f;
-    for (float z : back_z_values) avg_back_z += z;
-    avg_back_z /= back_z_values.size();
-
-    // Verify that front nodes are consistently above back nodes
-    EXPECT_GT(avg_front_z, avg_back_z);
-
-    // Verify the average difference is close to the configured offset difference
-    float expected_diff = config.front_orientation_z_offset - config.back_orientation_z_offset;
-    EXPECT_NEAR(avg_front_z - avg_back_z, expected_diff, z_tolerance);
+    EXPECT_TRUE(found_front);
+    EXPECT_TRUE(found_back);
 }

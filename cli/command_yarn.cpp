@@ -32,14 +32,15 @@ int command_yarn(int argc, char** argv) {
         // Load or use default configuration
         YarnProperties yarn = YarnProperties::worsted();
         Gauge gauge = Gauge::worsted();
+        nlohmann::json full_config;  // Store entire config if provided
 
         if (ctx.config_path.has_value()) {
-            nlohmann::json config_json = json::read_json_file(ctx.config_path.value());
-            if (config_json.contains("yarn")) {
-                yarn = config_json["yarn"].get<YarnProperties>();
+            full_config = json::read_json_file(ctx.config_path.value());
+            if (full_config.contains("yarn")) {
+                yarn = full_config["yarn"].get<YarnProperties>();
             }
-            if (config_json.contains("gauge")) {
-                gauge = config_json["gauge"].get<Gauge>();
+            if (full_config.contains("gauge")) {
+                gauge = full_config["gauge"].get<Gauge>();
             }
             log->info("Loaded configuration from: {}", ctx.config_path.value());
         }
@@ -58,10 +59,16 @@ int command_yarn(int argc, char** argv) {
             {"loop_count", std::count_if(yarn_path.segments().begin(), yarn_path.segments().end(),
                 [](const YarnSegment& seg) { return seg.forms_loop; })}
         };
-        data.config = {
-            {"yarn", yarn},
-            {"gauge", gauge}
-        };
+
+        // Pass through entire config if provided, otherwise just yarn and gauge
+        if (!full_config.is_null()) {
+            data.config = full_config;
+        } else {
+            data.config = {
+                {"yarn", yarn},
+                {"gauge", gauge}
+            };
+        }
 
         json::write_serialized(ctx.output_path, data);
 

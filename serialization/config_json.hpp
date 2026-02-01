@@ -108,7 +108,7 @@ inline void from_json(const nlohmann::json& j, ForceConfig& config) {
     config.enable_gravity = j.value("enable_gravity", true);
     config.floor_position = j.value("floor_position", 0.0f);
     config.enable_floor = j.value("enable_floor", false);
-    config.enable_collision = j.value("enable_collision", false);
+    config.enable_collision = j.value("enable_collision", true);
     config.collision_strength = j.value("collision_strength", 100.0f);
 }
 

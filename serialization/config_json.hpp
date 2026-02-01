@@ -68,7 +68,9 @@ inline void to_json(nlohmann::json& j, const SurfaceBuildConfig& config) {
         {"continuity_rest_length_factor", config.continuity_rest_length_factor},
         {"passthrough_rest_length_factor", config.passthrough_rest_length_factor},
         {"continuity_stiffness_factor", config.continuity_stiffness_factor},
-        {"passthrough_stiffness_factor", config.passthrough_stiffness_factor}
+        {"passthrough_stiffness_factor", config.passthrough_stiffness_factor},
+        {"front_orientation_z_offset", config.front_orientation_z_offset},
+        {"back_orientation_z_offset", config.back_orientation_z_offset}
     };
 }
 
@@ -79,6 +81,8 @@ inline void from_json(const nlohmann::json& j, SurfaceBuildConfig& config) {
     config.passthrough_rest_length_factor = j.value("passthrough_rest_length_factor", 1.0f);
     config.continuity_stiffness_factor = j.value("continuity_stiffness_factor", 1.0f);
     config.passthrough_stiffness_factor = j.value("passthrough_stiffness_factor", 0.5f);
+    config.front_orientation_z_offset = j.value("front_orientation_z_offset", 1.0f);
+    config.back_orientation_z_offset = j.value("back_orientation_z_offset", -1.0f);
 }
 
 // ForceConfig serialization

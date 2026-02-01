@@ -93,13 +93,16 @@ inline void to_json(nlohmann::json& j, const ForceConfig& config) {
         {"floor_position", config.floor_position},
         {"enable_floor", config.enable_floor},
         {"enable_collision", config.enable_collision},
-        {"collision_strength", config.collision_strength}
+        {"collision_strength", config.collision_strength},
+        {"enable_bending_resistance", config.enable_bending_resistance},
+        {"bending_stiffness", config.bending_stiffness},
+        {"min_bend_angle", config.min_bend_angle}
     };
 }
 
 inline void from_json(const nlohmann::json& j, ForceConfig& config) {
     config.damping = j.value("damping", 0.5f);
-    config.passthrough_tension_factor = j.value("passthrough_tension_factor", 1.0f);
+    config.passthrough_tension_factor = j.value("passthrough_tension_factor", 0.1f);
     config.loop_curvature_strength = j.value("loop_curvature_strength", 0.1f);
     config.gravity_strength = j.value("gravity_strength", 9.8f);
     if (j.contains("gravity_direction")) {
@@ -110,6 +113,9 @@ inline void from_json(const nlohmann::json& j, ForceConfig& config) {
     config.enable_floor = j.value("enable_floor", false);
     config.enable_collision = j.value("enable_collision", true);
     config.collision_strength = j.value("collision_strength", 100.0f);
+    config.enable_bending_resistance = j.value("enable_bending_resistance", true);
+    config.bending_stiffness = j.value("bending_stiffness", 50.0f);
+    config.min_bend_angle = j.value("min_bend_angle", 0.5f);
 }
 
 // SolveConfig serialization (without frame_callback)

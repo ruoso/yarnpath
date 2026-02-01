@@ -73,12 +73,11 @@ void SurfaceBuilder::create_nodes() {
 void SurfaceBuilder::create_continuity_edges() {
     auto log = yarnpath::logging::get_logger();
 
-    // Rest length for continuity edges based on yarn properties and needle diameter
-    // Adjacent segments along yarn form loops around the needle
-    // Use loop_height (which depends on needle_diameter) as the base
-    float loop_height = gauge_.loop_height(yarn_.relaxed_radius);
-    float base_rest_length = loop_height * (1.0f + (1.0f - yarn_.tension) * 0.25f);
-    // For US 8 needle (5mm) with 1.0 relaxed_radius: loop_height ≈ 9.8mm, rest_length ≈ 11mm
+    // Rest length for continuity edges (HORIZONTAL spacing along a row)
+    // Use stitch_width instead of loop_height since these connect stitches in the same row
+    float stitch_width = gauge_.stitch_width(yarn_.compressed_radius);
+    float base_rest_length = stitch_width * (1.0f + (1.0f - yarn_.tension) * 0.25f);
+    // For US 8 needle (5mm) with 0.1 compressed_radius: stitch_width ≈ 5.2mm, rest_length ≈ 5.8mm
 
     // Dimensionally-consistent stiffness: scale by (mass / length²) to match system timescale
     // This ensures stable integration with the given dt and mass values

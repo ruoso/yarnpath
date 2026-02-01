@@ -13,7 +13,8 @@ struct ForceConfig {
     float damping = 0.5f;
 
     // Additional passthrough tension multiplier based on yarn tension
-    float passthrough_tension_factor = 1.0f;
+    // REDUCED: was causing rows to pull too tight, fighting against spring rest length
+    float passthrough_tension_factor = 0.1f;
 
     // Loop curvature force (encourages natural loop shape)
     float loop_curvature_strength = 0.1f;
@@ -31,6 +32,11 @@ struct ForceConfig {
     // Collision configuration
     bool enable_collision = false;      // Whether to apply collision repulsion (opt-in for performance)
     float collision_strength = 100.0f;  // Repulsion force strength
+
+    // Bending resistance (prevents sharp folds along yarn path)
+    bool enable_bending_resistance = true;  // Whether to apply bending forces
+    float bending_stiffness = 50.0f;        // Force strength resisting sharp bends
+    float min_bend_angle = 0.5f;            // Minimum allowed bend angle (radians, ~30 degrees)
 };
 
 // Compute all forces on the graph nodes
@@ -71,8 +77,8 @@ void apply_floor_constraint(SurfaceGraph& graph, float floor_dist, const Vec3& d
 // Collision repulsion force: pushes non-adjacent nodes apart when too close
 void compute_collision_forces(SurfaceGraph& graph, float min_distance, float strength);
 
-// Determine the dominant plane from node positions (returns normal direction)
-Vec3 compute_dominant_plane_normal(const SurfaceGraph& graph);
+// Bending resistance: prevents sharp bends/folds along continuity edges
+void compute_bending_forces(SurfaceGraph& graph, float stiffness, float min_angle);
 
 }  // namespace yarnpath
 

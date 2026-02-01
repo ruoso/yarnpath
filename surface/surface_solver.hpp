@@ -8,6 +8,10 @@
 
 namespace yarnpath {
 
+// Callback for each solver step - returns true to continue, false to stop
+// Called with (graph, iteration_number, current_energy, energy_change)
+using StepCallback = std::function<bool(const SurfaceGraph&, int, float, float)>;
+
 // Callback function for frame capture during solving
 // Called with (graph, iteration_number, total_iterations)
 using FrameCallback = std::function<void(const SurfaceGraph&, int, int)>;
@@ -32,6 +36,10 @@ struct SolveConfig {
 
     // Force configuration
     ForceConfig force_config;
+
+    // Step callback (optional) - called after each solver step
+    // Returns true to continue, false to stop early
+    StepCallback step_callback = nullptr;
 
     // Frame capture callback (optional) - called every frame_interval iterations
     FrameCallback frame_callback = nullptr;

@@ -30,77 +30,43 @@ SolveResult SurfaceSolver::solve(SurfaceGraph& graph,
     log->info("SurfaceSolver: starting solve with {} nodes, initial energy = {}",
               graph.node_count(), result.initial_energy);
 
-    // Pre-solve phase: satisfy constraints before applying forces
-    // This helps get the initial configuration into a valid state
-    if (config.pre_solve_iterations > 0) {
-        log->info("SurfaceSolver: running pre-solve constraint phase (max {} iterations)",
-                  config.pre_solve_iterations);
-
-        for (int iter = 0; iter < config.pre_solve_iterations; ++iter) {
-            project_constraints(graph, config.constraint_iterations);
-
-            // Check if all constraints are satisfied
-            if (constraints_satisfied(graph)) {
-                float post_presolve_energy = graph.compute_energy();
-                log->info("SurfaceSolver: pre-solve converged at iteration {}, energy = {}",
-                          iter + 1, post_presolve_energy);
-                break;
-            }
-
-            // Log progress periodically
-            if ((iter + 1) % 100 == 0) {
-                float energy = graph.compute_energy();
-                log->debug("SurfaceSolver: pre-solve iteration {}, energy = {}", iter + 1, energy);
-            }
-        }
-
-        if (!constraints_satisfied(graph)) {
-            float post_presolve_energy = graph.compute_energy();
-            log->warn("SurfaceSolver: pre-solve did not satisfy all constraints, energy = {}",
-                      post_presolve_energy);
-        }
-    }
-
-    float prev_energy = graph.compute_energy();
-    int energy_check_interval = 10;  // Adaptive: check every N iterations
+    float prev_energy = result.initial_energy;
 
     for (int iter = 0; iter < config.max_iterations; ++iter) {
         // Single solver step
         step(graph, yarn, gauge, config);
 
-        // Check convergence periodically (not every iteration to save compute)
-        bool should_check = ((iter + 1) % energy_check_interval == 0) ||
-                           (iter == config.max_iterations - 1);
+        // Check convergence on every iteration
+        float current_energy = graph.compute_energy();
+        float energy_change = std::abs(current_energy - prev_energy);
 
-        if (should_check) {
-            float current_energy = graph.compute_energy();
-            float energy_change = std::abs(current_energy - prev_energy);
-
-            if (energy_change < config.convergence_threshold) {
+        // Call step callback if provided
+        if (config.step_callback) {
+            bool should_continue = config.step_callback(graph, iter + 1, current_energy, energy_change);
+            if (!should_continue) {
                 result.converged = true;
                 result.iterations = iter + 1;
                 result.final_energy = current_energy;
-
-                log->info("SurfaceSolver: converged at iteration {} with energy = {}",
-                          result.iterations, result.final_energy);
+                log->info("SurfaceSolver: stopped by callback at iteration {}", result.iterations);
                 return result;
             }
+        }
 
-            prev_energy = current_energy;
+        if (energy_change < config.convergence_threshold) {
+            result.converged = true;
+            result.iterations = iter + 1;
+            result.final_energy = current_energy;
 
-            // Log progress periodically
-            if ((iter + 1) % 100 == 0) {
-                log->debug("SurfaceSolver: iteration {}, energy = {}", iter + 1, current_energy);
-            }
+            log->info("SurfaceSolver: converged at iteration {} with energy = {}",
+                      result.iterations, result.final_energy);
+            return result;
+        }
 
-            // Adaptive interval: if energy change is large, check more frequently
-            if (energy_change > config.convergence_threshold * 10.0f) {
-                energy_check_interval = 5;   // Check frequently when far from convergence
-            } else if (energy_change > config.convergence_threshold * 2.0f) {
-                energy_check_interval = 10;  // Moderate checking
-            } else {
-                energy_check_interval = 20;  // Check infrequently when close to convergence
-            }
+        prev_energy = current_energy;
+
+        // Log progress periodically
+        if ((iter + 1) % 100 == 0) {
+            log->debug("SurfaceSolver: iteration {}, energy = {}", iter + 1, current_energy);
         }
     }
 

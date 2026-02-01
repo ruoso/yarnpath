@@ -7,6 +7,9 @@
 #include <GLFW/glfw3.h>
 #include <cmath>
 #include <vector>
+#include <thread>
+#include <mutex>
+#include <atomic>
 
 namespace yarnpath {
 
@@ -779,6 +782,13 @@ VisualizerResult visualize_relaxation(
     float energy = graph.compute_energy();
     int last_logged_snapshot = -1;
 
+    // Thread synchronization
+    std::mutex snapshot_mutex;
+    std::atomic<bool> solver_running(false);
+    std::atomic<bool> should_stop(false);
+    int current_iteration = 0;
+    float current_energy = energy;
+
     // Take initial snapshot
     g_snapshots.push_back(take_snapshot(graph, iteration, energy));
 
@@ -788,6 +798,43 @@ VisualizerResult visualize_relaxation(
     log->info("  n=toggle nodes, g=toggle geometry");
     log->info("  left/right=frame by frame, pgup/pgdn=30 frames");
     log->info("  home=first frame, end=live view");
+
+    // Start solver thread
+    std::thread solver_thread([&]() {
+        auto log = yarnpath::logging::get_logger();
+        
+        SolveConfig thread_solve_config = solve_config;
+        thread_solve_config.step_callback = [&](const SurfaceGraph& g, int iter, float curr_energy, float energy_change) -> bool {
+            {
+                std::lock_guard<std::mutex> lock(snapshot_mutex);
+                current_iteration = iter;
+                current_energy = curr_energy;
+                
+                // Take snapshot at configured interval
+                frame_count++;
+                if (frame_count % viz_config.snapshot_interval == 0) {
+                    if (static_cast<int>(g_snapshots.size()) < viz_config.max_snapshots) {
+                        g_snapshots.push_back(take_snapshot(g, iter, curr_energy));
+                    }
+                }
+            }
+            
+            // Log progress periodically
+            if (iter % 100 == 0) {
+                log->debug("Solver iteration {}: energy={:.6f}", iter, curr_energy);
+            }
+            
+            // Return false if should stop
+            return !should_stop && iter < solve_config.max_iterations;
+        };
+        
+        solver_running = true;
+        SolveResult solver_result = SurfaceSolver::solve(graph, yarn, gauge, thread_solve_config);
+        solver_running = false;
+        
+        log->info("Solver finished: converged={}, iterations={}, energy={}",
+                  solver_result.converged, solver_result.iterations, solver_result.final_energy);
+    });
 
     // Main loop
     while (!glfwWindowShouldClose(window)) {
@@ -821,42 +868,17 @@ VisualizerResult visualize_relaxation(
         // Clear
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        // Run solver steps if not paused and not viewing history
-        if (!g_paused && !g_viewing_history) {
-            float prev_energy = energy;
-
-            for (int i = 0; i < viz_config.steps_per_frame; ++i) {
-                SurfaceSolver::step(graph, yarn, gauge, solve_config);
-                iteration++;
-
-                // Check convergence
-                float new_energy = graph.compute_energy();
-                if (std::abs(new_energy - energy) < solve_config.convergence_threshold) {
-                    g_paused = true;
-                    log->info("Converged at iteration {}, energy={}", iteration, new_energy);
-                    break;
-                }
-                energy = new_energy;
-
-                if (iteration >= solve_config.max_iterations) {
-                    g_paused = true;
-                    log->info("Max iterations reached, energy={}", energy);
-                    break;
-                }
+        // Update current state from solver thread
+        if (solver_running) {
+            {
+                std::lock_guard<std::mutex> lock(snapshot_mutex);
+                iteration = current_iteration;
+                energy = current_energy;
             }
-
-            // Log progress periodically (every 100 iterations)
-            if (iteration % 100 == 0) {
-                float delta = energy - prev_energy;
-                log->debug("Iteration {}: energy={:.6f}, delta={:.6f}", iteration, energy, delta);
-            }
-
-            // Take snapshot at configured interval
-            frame_count++;
-            if (frame_count % viz_config.snapshot_interval == 0) {
-                if (static_cast<int>(g_snapshots.size()) < viz_config.max_snapshots) {
-                    g_snapshots.push_back(take_snapshot(graph, iteration, energy));
-                }
+            
+            // Pause solver if requested
+            if (g_paused) {
+                should_stop = true;
             }
         }
 
@@ -873,6 +895,14 @@ VisualizerResult visualize_relaxation(
                          snap.iteration, snap.energy);
                 last_logged_snapshot = g_current_snapshot;
             }
+        } else if (!g_viewing_history && !g_paused && solver_running) {
+            // Show latest snapshot if not paused and solver is running
+            {
+                std::lock_guard<std::mutex> lock(snapshot_mutex);
+                if (!g_snapshots.empty()) {
+                    apply_snapshot(graph, g_snapshots.back());
+                }
+            }
         }
 
         // Render
@@ -884,6 +914,12 @@ VisualizerResult visualize_relaxation(
         // Swap buffers and poll events
         glfwSwapBuffers(window);
         glfwPollEvents();
+    }
+
+    // Stop solver thread if still running
+    should_stop = true;
+    if (solver_thread.joinable()) {
+        solver_thread.join();
     }
 
     // If we were viewing history, restore the final state

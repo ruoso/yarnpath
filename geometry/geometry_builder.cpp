@@ -8,7 +8,6 @@ namespace yarnpath {
 // Helper struct to track state during geometry building
 struct GeometryBuildState {
     BezierSpline running_spline;
-    bool current_z_positive = true;
     float max_curvature;
     float yarn_compressed_radius;       // Radius of the yarn
     float yarn_compressed_diameter;     // Diameter = 2 * compressed_radius, minimum distance between yarn centers
@@ -18,9 +17,6 @@ struct GeometryBuildState {
         , yarn_compressed_radius(yarn.compressed_radius)
         , yarn_compressed_diameter(yarn.compressed_radius * 2.0f)
     {}
-    
-    float z_sign() const { return current_z_positive ? 1.0f : -1.0f; }
-    void flip_z() { current_z_positive = !current_z_positive; }
 };
 
 // Callback type for reporting each curve as it's added
@@ -161,7 +157,7 @@ static void build_apex_crossover(
         clearance_point = apex - Vec3(0.0f, state.yarn_compressed_diameter, 0.0f);
     }
     
-    float z_sign = state.z_sign();
+    float z_sign = apex_exit.z - apex.z;
     
     // First curve: apex_entry -> apex (going up and crossing Z)
     // Target direction at apex is horizontal, crossing Z
@@ -274,8 +270,7 @@ static BezierSpline build_loop_segment(
 
     // Entry/exit points offset in Z for the crossover
     // Apply topology-based shape variation
-    float z_sign = state.z_sign();
-    float z_bulge = z_sign * state.yarn_compressed_diameter * shape.z_bulge_factor;
+    float z_bulge = state.yarn_compressed_diameter * shape.z_bulge_factor;
     float apex_x_lean = shape.apex_lean_x;
 
     Vec3 apex_entry = apex + Vec3(
@@ -290,7 +285,7 @@ static BezierSpline build_loop_segment(
         shape.symmetric_exit ? -z_bulge : -z_bulge * 0.8f
     );
     
-    Vec3 pass_through_end = curr_pos + Vec3(apex_offset_x, 0.0f, -z_sign * state.yarn_compressed_diameter);
+    Vec3 pass_through_end = curr_pos + Vec3(apex_offset_x, 0.0f, z_bulge);
     Vec3 pass_through_dir = (apex_entry - pass_through_end).normalized();
 
     build_pass_through(state, segment_spline, pass_through_end, pass_through_dir, on_curve_added);
@@ -302,7 +297,7 @@ static BezierSpline build_loop_segment(
     build_apex_crossover(state, segment_spline, apex, apex_exit, child_positions, on_curve_added);
     
     // Calculate next entry point - offset by yarn_compressed_diameter in Y and Z
-    Vec3 next_entry = next_pos + Vec3(0.0f, -state.yarn_compressed_diameter, -z_sign * state.yarn_compressed_diameter);
+    Vec3 next_entry = next_pos + Vec3(0.0f, -state.yarn_compressed_diameter, z_bulge);
     Vec3 next_entry_dir = (next_pos - apex_exit).normalized();
     
     // Build downward leg
@@ -316,7 +311,6 @@ static BezierSpline build_connector_segment(
     GeometryBuildState& state,
     const Vec3& curr_pos,
     const Vec3& next_pos,
-    bool end_of_row,
     const CurveAddedCallback& on_curve_added) {
     
     BezierSpline segment_spline;
@@ -332,10 +326,6 @@ static BezierSpline build_connector_segment(
     state.running_spline.add_segment(connect_curve);
     segment_spline.add_segment(connect_curve);
     if (on_curve_added) on_curve_added("connector");
-
-    if (end_of_row) {
-        state.flip_z();
-    }
     
     return segment_spline;
 }
@@ -502,15 +492,6 @@ GeometryPath build_geometry_with_callback(
             child_positions = it->second;
         }
 
-        // Determine if this is end of row (next segment passes through this one)
-        bool end_of_row = false;
-        if (i < segments.size() - 1) {
-            const auto& next_seg = segments[i + 1];
-            if (std::find(next_seg.through.begin(), next_seg.through.end(), seg_id) != next_seg.through.end()) {
-                end_of_row = true;
-            }
-        }
-
         // Create callback for reporting each curve as it's added
         CurveAddedCallback on_curve_added = nullptr;
         if (callback_ptr) {
@@ -520,10 +501,10 @@ GeometryPath build_geometry_with_callback(
         }
 
         // Build curve for this segment
-        if (seg.forms_loop && !end_of_row) {
+        if (seg.forms_loop) {
             geom.curve = build_loop_segment(state, curr_pos, next_pos, child_positions, seg, on_curve_added);
         } else {
-            geom.curve = build_connector_segment(state, curr_pos, next_pos, end_of_row, on_curve_added);
+            geom.curve = build_connector_segment(state, curr_pos, next_pos, on_curve_added);
         }
 
         // Calculate arc length and max curvature

@@ -106,11 +106,12 @@ YarnPath YarnPathBuilder::build() {
     log->debug("YarnPath: building from {} rows", graph_.row_count());
 
     // Process all rows in order
-    for (uint32_t row = 0; row < graph_.row_count(); ++row) {
-        auto row_nodes = graph_.row(row);
-        log->debug("YarnPath: processing row {} with {} stitch nodes", row, row_nodes.size());
+    for (uint32_t row_num = 0; row_num < graph_.row_count(); ++row_num) {
+        auto row_nodes = graph_.row(row_num);
+        auto row = graph_.row_infos()[row_num];
+        log->debug("YarnPath: processing row {} with {} stitch nodes", row_num, row_nodes.size());
         for (const auto& node : row_nodes) {
-            process_stitch(node);
+            process_stitch(node, row.side);
         }
     }
 
@@ -122,7 +123,13 @@ YarnPath YarnPathBuilder::build() {
     return result;
 }
 
-void YarnPathBuilder::process_stitch(const StitchNode& node) {
+static YarnSegment::LoopOrientation orientation_instruction_to_fabric(RowSide side, YarnSegment::LoopOrientation in) {
+    using O = YarnSegment::LoopOrientation;
+    if (in == O::Neutral || side == RowSide::RS) return in;
+    return (in == O::Front) ? O::Back : O::Front;
+}
+
+void YarnPathBuilder::process_stitch(const StitchNode& node, RowSide side) {
     auto log = yarnpath::logging::get_logger();
 
     // Collect parent loop segments that this stitch works through
@@ -152,24 +159,24 @@ void YarnPathBuilder::process_stitch(const StitchNode& node) {
     YarnSegment::WorkType work_type = YarnSegment::WorkType::Worked;
 
     if (std::holds_alternative<stitch::Knit>(node.operation)) {
-        orientation = YarnSegment::LoopOrientation::Front;
+        orientation = orientation_instruction_to_fabric(side, YarnSegment::LoopOrientation::Front);
         work_type = YarnSegment::WorkType::Worked;
     } else if (std::holds_alternative<stitch::Purl>(node.operation)) {
-        orientation = YarnSegment::LoopOrientation::Back;
+        orientation = orientation_instruction_to_fabric(side, YarnSegment::LoopOrientation::Back);
         work_type = YarnSegment::WorkType::Worked;
     } else if (std::holds_alternative<stitch::Slip>(node.operation)) {
         orientation = YarnSegment::LoopOrientation::Neutral;
         work_type = YarnSegment::WorkType::Transferred;
     } else if (std::holds_alternative<stitch::K2tog>(node.operation)) {
-        orientation = YarnSegment::LoopOrientation::Front;
+        orientation = orientation_instruction_to_fabric(side, YarnSegment::LoopOrientation::Front);
         wrap_direction = YarnSegment::WrapDirection::Clockwise;
         work_type = YarnSegment::WorkType::Worked;
     } else if (std::holds_alternative<stitch::SSK>(node.operation)) {
-        orientation = YarnSegment::LoopOrientation::Front;
+        orientation = orientation_instruction_to_fabric(side, YarnSegment::LoopOrientation::Front);
         wrap_direction = YarnSegment::WrapDirection::CounterClockwise;
         work_type = YarnSegment::WorkType::Worked;
     } else if (std::holds_alternative<stitch::S2KP>(node.operation)) {
-        orientation = YarnSegment::LoopOrientation::Front;
+        orientation = orientation_instruction_to_fabric(side, YarnSegment::LoopOrientation::Front);
         wrap_direction = YarnSegment::WrapDirection::CounterClockwise;
         work_type = YarnSegment::WorkType::Worked;
     } else if (std::holds_alternative<stitch::M1L>(node.operation)) {
@@ -190,13 +197,13 @@ void YarnPathBuilder::process_stitch(const StitchNode& node) {
         orientation = YarnSegment::LoopOrientation::Neutral;
         work_type = YarnSegment::WorkType::Worked;
     } else if (std::holds_alternative<stitch::KFB>(node.operation)) {
-        orientation = YarnSegment::LoopOrientation::Front;
+        orientation = orientation_instruction_to_fabric(side, YarnSegment::LoopOrientation::Front);
         work_type = YarnSegment::WorkType::Worked;
     } else if (std::holds_alternative<stitch::CableLeft>(node.operation)) {
-        orientation = YarnSegment::LoopOrientation::Front;
+        orientation = orientation_instruction_to_fabric(side, YarnSegment::LoopOrientation::Front);
         work_type = YarnSegment::WorkType::Worked;
     } else if (std::holds_alternative<stitch::CableRight>(node.operation)) {
-        orientation = YarnSegment::LoopOrientation::Front;
+        orientation = orientation_instruction_to_fabric(side, YarnSegment::LoopOrientation::Front);
         work_type = YarnSegment::WorkType::Worked;
     }
 

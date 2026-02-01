@@ -103,7 +103,7 @@ private:
     std::vector<std::vector<SegmentId>> stitch_to_loops_;
 
     // Process stitch, consuming from live_loops_ by position
-    void process_stitch(const StitchNode& node);
+    void process_stitch(const StitchNode& node, RowSide side);
 
     // Helpers
     SegmentId add_segment(std::vector<SegmentId> through, bool forms_loop, StitchId stitch_id,

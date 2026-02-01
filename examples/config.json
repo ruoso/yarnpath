@@ -3,8 +3,8 @@
     "needle_diameter": 3.0
   },
   "yarn": {
-    "relaxed_radius": 3.0,
-    "compressed_radius": 0.3,
+    "relaxed_radius": 4.0,
+    "compressed_radius": 2,
     "min_bend_radius": 0.03,
     "loop_slack": 0.1,
     "stiffness": 0.5,

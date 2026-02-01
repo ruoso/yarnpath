@@ -51,7 +51,7 @@ TEST(GeometryPathTest, EmptyYarnPath) {
 TEST(GeometryPathTest, CastOnOnly) {
     PatternInstructions pattern = create_pattern({"CCCC"});
     StitchGraph graph = StitchGraph::from_instructions(pattern);
-    YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
+    YarnPath yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     YarnProperties yarn = YarnProperties::worsted();
     Gauge gauge = Gauge::worsted();
@@ -80,7 +80,7 @@ TEST(GeometryPathTest, StockinettePattern) {
         "KKKK"
     });
     StitchGraph graph = StitchGraph::from_instructions(pattern);
-    YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
+    YarnPath yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     YarnProperties yarn = YarnProperties::worsted();
     Gauge gauge = Gauge::worsted();
@@ -107,7 +107,7 @@ TEST(GeometryPathTest, PolylineGeneration) {
         "KK"
     });
     StitchGraph graph = StitchGraph::from_instructions(pattern);
-    YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
+    YarnPath yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     YarnProperties yarn = YarnProperties::worsted();
     Gauge gauge = Gauge::worsted();
@@ -136,7 +136,7 @@ TEST(GeometryPathTest, BoundingBox) {
         "PPPP"
     });
     StitchGraph graph = StitchGraph::from_instructions(pattern);
-    YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
+    YarnPath yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     YarnProperties yarn = YarnProperties::worsted();
     Gauge gauge = Gauge::worsted();
@@ -162,7 +162,7 @@ TEST(GeometryPathTest, TotalArcLength) {
         "KK"
     });
     StitchGraph graph = StitchGraph::from_instructions(pattern);
-    YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
+    YarnPath yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     YarnProperties yarn = YarnProperties::worsted();
     Gauge gauge = Gauge::worsted();
@@ -185,7 +185,7 @@ TEST(GeometryPathTest, Validation) {
         "KKK"
     });
     StitchGraph graph = StitchGraph::from_instructions(pattern);
-    YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
+    YarnPath yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     YarnProperties yarn = YarnProperties::worsted();
     Gauge gauge = Gauge::worsted();
@@ -206,7 +206,7 @@ TEST(GeometryPathTest, ObjExport) {
         "KK"
     });
     StitchGraph graph = StitchGraph::from_instructions(pattern);
-    YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
+    YarnPath yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     YarnProperties yarn = YarnProperties::worsted();
     Gauge gauge = Gauge::worsted();
@@ -232,7 +232,7 @@ TEST(GeometryPathTest, DifferentYarnProperties) {
         "KKK"
     });
     StitchGraph graph = StitchGraph::from_instructions(pattern);
-    YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
+    YarnPath yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     // Generate with different yarn types
     YarnProperties yarn_worsted = YarnProperties::worsted();
@@ -263,7 +263,7 @@ TEST(GeometryPathTest, SegmentGeometryAccess) {
         "KK"
     });
     StitchGraph graph = StitchGraph::from_instructions(pattern);
-    YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
+    YarnPath yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     YarnProperties yarn = YarnProperties::worsted();
     Gauge gauge = Gauge::worsted();

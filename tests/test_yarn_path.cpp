@@ -1,10 +1,12 @@
 #include "yarn_path.hpp"
 #include "stitch_instruction.hpp"
 #include "row_instruction.hpp"
+#include "test_helpers.hpp"
 #include <gtest/gtest.h>
 #include <algorithm>
 
 using namespace yarnpath;
+using namespace yarnpath::test;
 
 TEST(YarnPath, CastOnOnly) {
     // Cast on 3 stitches
@@ -16,7 +18,7 @@ TEST(YarnPath, CastOnOnly) {
     pattern.rows.push_back(row0);
 
     auto graph = StitchGraph::from_instructions(pattern);
-    auto yarn_path = YarnPath::from_stitch_graph(graph);
+    auto yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     // Should have 3 segments that form loops (one per cast-on)
     size_t loop_count = 0;
@@ -48,7 +50,7 @@ TEST(YarnPath, SingleRowKnit) {
     pattern.rows.push_back(row1);
 
     auto graph = StitchGraph::from_instructions(pattern);
-    auto yarn_path = YarnPath::from_stitch_graph(graph);
+    auto yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     // Count loops and verify parent relationships
     size_t loop_count = 0;
@@ -92,7 +94,7 @@ TEST(YarnPath, PurlRow) {
     pattern.rows.push_back(row1);
 
     auto graph = StitchGraph::from_instructions(pattern);
-    auto yarn_path = YarnPath::from_stitch_graph(graph);
+    auto yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     // Count loops
     size_t loop_count = 0;
@@ -140,7 +142,7 @@ TEST(YarnPath, StockinetteMultipleRows) {
     pattern.rows.push_back(row3);
 
     auto graph = StitchGraph::from_instructions(pattern);
-    auto yarn_path = YarnPath::from_stitch_graph(graph);
+    auto yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     // Count loops
     size_t loop_count = 0;
@@ -172,7 +174,7 @@ TEST(YarnPath, ParentChildRelationships) {
     pattern.rows.push_back(row1);
 
     auto graph = StitchGraph::from_instructions(pattern);
-    auto yarn_path = YarnPath::from_stitch_graph(graph);
+    auto yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     // Find loop segments
     std::vector<SegmentId> loop_ids;
@@ -223,7 +225,7 @@ TEST(YarnPath, BindOff) {
     pattern.rows.push_back(row2);
 
     auto graph = StitchGraph::from_instructions(pattern);
-    auto yarn_path = YarnPath::from_stitch_graph(graph);
+    auto yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     // Count loops
     size_t loop_count = 0;
@@ -246,7 +248,7 @@ TEST(YarnPath, IsLoopHelper) {
     pattern.rows.push_back(row0);
 
     auto graph = StitchGraph::from_instructions(pattern);
-    auto yarn_path = YarnPath::from_stitch_graph(graph);
+    auto yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     // Find which segments are loops
     for (size_t i = 0; i < yarn_path.segments().size(); ++i) {
@@ -272,7 +274,7 @@ TEST(YarnPath, GetThroughHelper) {
     pattern.rows.push_back(row1);
 
     auto graph = StitchGraph::from_instructions(pattern);
-    auto yarn_path = YarnPath::from_stitch_graph(graph);
+    auto yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     // Get through for each segment
     for (size_t i = 0; i < yarn_path.segments().size(); ++i) {
@@ -303,7 +305,7 @@ TEST(YarnPath, ToDot) {
     pattern.rows.push_back(row1);
 
     auto graph = StitchGraph::from_instructions(pattern);
-    auto yarn_path = YarnPath::from_stitch_graph(graph);
+    auto yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     std::string dot = yarn_path.to_dot();
 

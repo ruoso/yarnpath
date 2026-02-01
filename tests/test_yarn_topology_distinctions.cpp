@@ -1,9 +1,11 @@
 #include "yarn_path.hpp"
 #include "stitch_instruction.hpp"
 #include "row_instruction.hpp"
+#include "test_helpers.hpp"
 #include <gtest/gtest.h>
 
 using namespace yarnpath;
+using namespace yarnpath::test;
 
 TEST(YarnTopology, KnitVsPurlOrientation) {
     // Test that Knit and Purl have different orientations
@@ -29,7 +31,7 @@ TEST(YarnTopology, KnitVsPurlOrientation) {
     pattern.rows.push_back(row2);
 
     auto graph = StitchGraph::from_instructions(pattern);
-    auto yarn_path = YarnPath::from_stitch_graph(graph);
+    auto yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     const auto& segments = yarn_path.segments();
 
@@ -70,7 +72,7 @@ TEST(YarnTopology, K2togVsSSKWrapDirection) {
     pattern.rows.push_back(row1);
 
     auto graph = StitchGraph::from_instructions(pattern);
-    auto yarn_path = YarnPath::from_stitch_graph(graph);
+    auto yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     const auto& segments = yarn_path.segments();
 
@@ -118,7 +120,7 @@ TEST(YarnTopology, M1LVsM1RTwist) {
     pattern.rows.push_back(row1);
 
     auto graph = StitchGraph::from_instructions(pattern);
-    auto yarn_path = YarnPath::from_stitch_graph(graph);
+    auto yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     const auto& segments = yarn_path.segments();
 
@@ -156,7 +158,7 @@ TEST(YarnTopology, SlipVsKnitWorkSemantics) {
     pattern.rows.push_back(row1);
 
     auto graph = StitchGraph::from_instructions(pattern);
-    auto yarn_path = YarnPath::from_stitch_graph(graph);
+    auto yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     const auto& segments = yarn_path.segments();
 
@@ -197,7 +199,7 @@ TEST(YarnTopology, YarnOverCreation) {
     pattern.rows.push_back(row1);
 
     auto graph = StitchGraph::from_instructions(pattern);
-    auto yarn_path = YarnPath::from_stitch_graph(graph);
+    auto yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     const auto& segments = yarn_path.segments();
 
@@ -229,7 +231,7 @@ TEST(YarnTopology, S2KPTripleDecrease) {
     pattern.rows.push_back(row1);
 
     auto graph = StitchGraph::from_instructions(pattern);
-    auto yarn_path = YarnPath::from_stitch_graph(graph);
+    auto yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     const auto& segments = yarn_path.segments();
 
@@ -264,7 +266,7 @@ TEST(YarnTopology, CablePreservesOrientation) {
     pattern.rows.push_back(row1);
 
     auto graph = StitchGraph::from_instructions(pattern);
-    auto yarn_path = YarnPath::from_stitch_graph(graph);
+    auto yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     const auto& segments = yarn_path.segments();
 
@@ -297,7 +299,7 @@ TEST(YarnTopology, KFBPreservesOrientation) {
     pattern.rows.push_back(row1);
 
     auto graph = StitchGraph::from_instructions(pattern);
-    auto yarn_path = YarnPath::from_stitch_graph(graph);
+    auto yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     const auto& segments = yarn_path.segments();
 
@@ -341,7 +343,7 @@ TEST(YarnTopology, BindOffHasWorkedType) {
     pattern.rows.push_back(row2);
 
     auto graph = StitchGraph::from_instructions(pattern);
-    auto yarn_path = YarnPath::from_stitch_graph(graph);
+    auto yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     const auto& segments = yarn_path.segments();
 

@@ -34,7 +34,7 @@ TEST(TopologyGeometryTest, ParentChildInTopology) {
         "KK"
     });
     StitchGraph graph = StitchGraph::from_instructions(pattern);
-    YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
+    YarnPath yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     // Count loop segments with parents
     size_t with_parents = 0;
@@ -61,7 +61,7 @@ TEST(TopologyGeometryTest, GeometryFromTopology) {
         "PPP"
     });
     StitchGraph graph = StitchGraph::from_instructions(pattern);
-    YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
+    YarnPath yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     YarnProperties yarn = YarnProperties::worsted();
     Gauge gauge = Gauge::worsted();
@@ -85,7 +85,7 @@ TEST(TopologyGeometryTest, VerticalStacking) {
         "KKK"
     });
     StitchGraph graph = StitchGraph::from_instructions(pattern);
-    YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
+    YarnPath yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     YarnProperties yarn = YarnProperties::worsted();
     Gauge gauge = Gauge::worsted();

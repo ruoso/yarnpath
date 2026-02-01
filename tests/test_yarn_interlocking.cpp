@@ -16,7 +16,7 @@ TEST(YarnInterlockingTest, KnitPassesThrough) {
         "KK"
     });
     StitchGraph graph = StitchGraph::from_instructions(pattern);
-    YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
+    YarnPath yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     // Find knit loops - they should pass through cast-on loops
     for (const auto& seg : yarn_path.segments()) {
@@ -36,7 +36,7 @@ TEST(YarnInterlockingTest, ThroughVectorCorrect) {
         "KKK"
     });
     StitchGraph graph = StitchGraph::from_instructions(pattern);
-    YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
+    YarnPath yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     // Each knit should have exactly one parent
     size_t knit_count = 0;
@@ -56,7 +56,7 @@ TEST(YarnInterlockingTest, MultiRowInterlocking) {
         "KK"
     });
     StitchGraph graph = StitchGraph::from_instructions(pattern);
-    YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
+    YarnPath yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     // Count loops at each level (by counting parents)
     size_t level0 = 0;  // No parents (cast-on)

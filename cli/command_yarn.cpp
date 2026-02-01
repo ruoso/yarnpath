@@ -4,6 +4,8 @@
 #include <serialization/stitch_graph_json.hpp>
 #include <serialization/yarn_path_json.hpp>
 #include <common/logging.hpp>
+#include <yarn/yarn_properties.hpp>
+#include <yarn/gauge.hpp>
 
 namespace yarnpath::cli {
 
@@ -24,8 +26,17 @@ int command_yarn(int argc, char** argv) {
         json::SerializedData input_data = json::read_serialized(ctx.input_path);
         StitchGraph graph = stitch_graph_from_json(input_data.data);
 
+        // Create default yarn and gauge (TODO: load from config or command line)
+        YarnProperties yarn;
+        yarn.relaxed_radius = 0.75f;
+        yarn.compressed_radius = 0.5f;
+        yarn.stiffness = 0.8f;
+        yarn.elasticity = 0.3f;
+        yarn.tension = 0.5f;
+        Gauge gauge{5.0f};  // US 8 needles
+
         // Build yarn path
-        YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
+        YarnPath yarn_path = YarnPath::from_stitch_graph(graph, yarn, gauge);
 
         // Serialize to JSON
         json::SerializedData data;

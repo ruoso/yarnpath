@@ -3,6 +3,8 @@
 
 #include "stitch_instruction.hpp"
 #include "row_instruction.hpp"
+#include "../yarn/yarn_properties.hpp"
+#include "../yarn/gauge.hpp"
 #include <string>
 #include <vector>
 
@@ -38,6 +40,22 @@ inline PatternInstructions create_pattern(const std::vector<std::string>& rows) 
         pattern.rows.push_back(row);
     }
     return pattern;
+}
+
+// Default yarn properties for testing (typical worsted weight)
+inline YarnProperties default_yarn() {
+    YarnProperties yarn;
+    yarn.relaxed_radius = 0.75f;      // mm
+    yarn.compressed_radius = 0.5f;    // mm
+    yarn.stiffness = 0.8f;            // relative stiffness
+    yarn.elasticity = 0.3f;           // 30% max stretch
+    yarn.tension = 0.5f;              // medium tension
+    return yarn;
+}
+
+// Default gauge for testing (US size 8 needles, 5mm diameter)
+inline Gauge default_gauge() {
+    return Gauge{5.0f};  // 5mm needle diameter
 }
 
 }  // namespace test

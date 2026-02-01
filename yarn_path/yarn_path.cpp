@@ -8,8 +8,10 @@ namespace yarnpath {
 
 // === YarnPath implementation ===
 
-YarnPath YarnPath::from_stitch_graph(const StitchGraph& graph) {
-    YarnPathBuilder builder(graph);
+YarnPath YarnPath::from_stitch_graph(const StitchGraph& graph,
+                                     const YarnProperties& yarn,
+                                     const Gauge& gauge) {
+    YarnPathBuilder builder(graph, yarn, gauge);
     return builder.build();
 }
 
@@ -90,8 +92,10 @@ std::string YarnPath::to_dot() const {
 
 // === YarnPathBuilder implementation ===
 
-YarnPathBuilder::YarnPathBuilder(const StitchGraph& graph)
-    : graph_(graph)
+YarnPathBuilder::YarnPathBuilder(const StitchGraph& graph,
+                                 const YarnProperties& yarn,
+                                 const Gauge& gauge)
+    : graph_(graph), yarn_(yarn), gauge_(gauge)
 {
     // Reserve space for stitch_to_loops_
     stitch_to_loops_.resize(graph.size());
@@ -211,12 +215,67 @@ void YarnPathBuilder::process_stitch(const StitchNode& node) {
 
 // === Helper implementations ===
 
+namespace {
+
+// Calculate yarn length based on segment metadata
+float calculate_yarn_length(YarnSegment::LoopOrientation orientation,
+                            YarnSegment::WrapDirection wrap_direction,
+                            YarnSegment::WorkType work_type,
+                            size_t num_parents,
+                            float loop_height,
+                            float stitch_width) {
+    // Base knit loop formula
+    float base = M_PI * loop_height + stitch_width;
+
+    // Handle special cases first
+    if (work_type == YarnSegment::WorkType::Transferred) {
+        return stitch_width * 0.5f;  // Slip stitch - minimal connector
+    }
+
+    if (work_type == YarnSegment::WorkType::Created && num_parents == 0) {
+        // YarnOver, CastOn, M1L/M1R - pure loop, no passthrough
+        float loop_only = M_PI * loop_height;
+        if (wrap_direction != YarnSegment::WrapDirection::None) {
+            loop_only *= 1.1f;  // Twisted pickup (M1L/M1R)
+        }
+        return loop_only;
+    }
+
+    // Apply orientation factor
+    if (orientation == YarnSegment::LoopOrientation::Back) {
+        base *= 0.88f;  // Purl loops use 12% less yarn
+    }
+
+    // Apply wrap direction factor (decreases/increases)
+    if (wrap_direction == YarnSegment::WrapDirection::Clockwise) {
+        base *= 0.82f;  // K2tog - right-leaning, tight
+    } else if (wrap_direction == YarnSegment::WrapDirection::CounterClockwise) {
+        if (num_parents >= 3) {
+            base *= 0.80f;  // S2KP triple decrease - very tight
+        } else {
+            base *= 0.86f;  // SSK - left-leaning, slightly looser
+        }
+    }
+
+    return base;
+}
+
+}  // namespace
+
 SegmentId YarnPathBuilder::add_segment(std::vector<SegmentId> through, bool forms_loop, StitchId stitch_id,
                                        YarnSegment::LoopOrientation orientation,
                                        YarnSegment::WrapDirection wrap_direction,
                                        YarnSegment::WorkType work_type) {
     auto log = yarnpath::logging::get_logger();
     SegmentId id = static_cast<SegmentId>(segments_.size());
+
+    // Get geometry from gauge
+    float loop_height = gauge_.loop_height(yarn_.compressed_radius);
+    float stitch_width = gauge_.stitch_width(yarn_.compressed_radius);
+
+    // Calculate yarn length for this segment
+    float yarn_length = calculate_yarn_length(orientation, wrap_direction, work_type,
+                                              through.size(), loop_height, stitch_width);
 
     // Create segment with all topology metadata
     YarnSegment segment;
@@ -225,6 +284,7 @@ SegmentId YarnPathBuilder::add_segment(std::vector<SegmentId> through, bool form
     segment.orientation = orientation;
     segment.wrap_direction = wrap_direction;
     segment.work_type = work_type;
+    segment.target_yarn_length = yarn_length;  // Store calculated yarn length
     segments_.push_back(std::move(segment));
 
     // Track stitch -> loop segment mapping (builder-only, for finding parents)

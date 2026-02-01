@@ -37,7 +37,7 @@ protected:
         pattern.rows.push_back(row1);
 
         StitchGraph graph = StitchGraph::from_instructions(pattern);
-        return YarnPath::from_stitch_graph(graph);
+        return YarnPath::from_stitch_graph(graph, yarn, gauge);
     }
 
     YarnPath create_cast_on_only() {
@@ -49,7 +49,7 @@ protected:
         pattern.rows.push_back(row0);
 
         StitchGraph graph = StitchGraph::from_instructions(pattern);
-        return YarnPath::from_stitch_graph(graph);
+        return YarnPath::from_stitch_graph(graph, yarn, gauge);
     }
 };
 

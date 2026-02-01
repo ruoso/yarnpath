@@ -2,6 +2,8 @@
 #define YARNPATH_YARN_PATH_HPP
 
 #include "stitch_node.hpp"
+#include "../yarn/yarn_properties.hpp"
+#include "../yarn/gauge.hpp"
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -39,6 +41,9 @@ struct YarnSegment {
         Created      // New loop created without parent (CastOn, YarnOver, M1L/M1R)
     };
     WorkType work_type = WorkType::Worked;
+
+    // Pre-calculated yarn length for this segment (mm of yarn consumed)
+    float target_yarn_length = 0.0f;
 };
 
 // Forward declaration
@@ -54,7 +59,9 @@ public:
     explicit YarnPath(std::vector<YarnSegment> segments)
         : segments_(std::move(segments)) {}
 
-    static YarnPath from_stitch_graph(const StitchGraph& graph);
+    static YarnPath from_stitch_graph(const StitchGraph& graph,
+                                      const YarnProperties& yarn,
+                                      const Gauge& gauge);
 
     // Segment access (index is identity)
     const std::vector<YarnSegment>& segments() const { return segments_; }
@@ -76,11 +83,15 @@ private:
 // Builder class for constructing YarnPath from StitchGraph
 class YarnPathBuilder {
 public:
-    explicit YarnPathBuilder(const StitchGraph& graph);
+    YarnPathBuilder(const StitchGraph& graph,
+                   const YarnProperties& yarn,
+                   const Gauge& gauge);
     YarnPath build();
 
 private:
     const StitchGraph& graph_;
+    const YarnProperties& yarn_;
+    const Gauge& gauge_;
 
     // Needle state machine: live loop segments in current needle order
     std::vector<SegmentId> live_loops_;

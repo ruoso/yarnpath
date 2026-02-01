@@ -51,7 +51,7 @@ TEST(ContinuityTest, BasicGeometryGeneration) {
         "KKK"    // Row 3 (RS): K3
     });
     StitchGraph graph = StitchGraph::from_instructions(pattern);
-    YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
+    YarnPath yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     YarnProperties yarn = YarnProperties::worsted();
     Gauge gauge = Gauge::worsted();
@@ -82,7 +82,7 @@ TEST(ContinuityTest, PolylineSmoothnessCheck) {
         "KKPPKK"
     });
     StitchGraph graph = StitchGraph::from_instructions(pattern);
-    YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
+    YarnPath yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     YarnProperties yarn = YarnProperties::worsted();
     Gauge gauge = Gauge::worsted();
@@ -110,7 +110,7 @@ TEST(ContinuityTest, TangentDirectionsAreConsistent) {
         "KKK"
     });
     StitchGraph graph = StitchGraph::from_instructions(pattern);
-    YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
+    YarnPath yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     YarnProperties yarn = YarnProperties::worsted();
     Gauge gauge = Gauge::worsted();
@@ -162,7 +162,7 @@ TEST(ContinuityTest, NoBezierSelfIntersection) {
         "KKKK"
     });
     StitchGraph graph = StitchGraph::from_instructions(pattern);
-    YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
+    YarnPath yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     YarnProperties yarn = YarnProperties::worsted();
     Gauge gauge = Gauge::worsted();
@@ -230,7 +230,7 @@ TEST(CurvatureTest, CurvatureIsFinite) {
         "PPPP"
     });
     StitchGraph graph = StitchGraph::from_instructions(pattern);
-    YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
+    YarnPath yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
     YarnProperties yarn = YarnProperties::worsted();
     Gauge gauge = Gauge::worsted();
     SurfaceGraph surface = build_test_surface(yarn_path, yarn, gauge);
@@ -268,7 +268,7 @@ TEST(PolylineTest, PolylineOutputExists) {
         "KKK"
     });
     StitchGraph graph = StitchGraph::from_instructions(pattern);
-    YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
+    YarnPath yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     YarnProperties yarn = YarnProperties::worsted();
     Gauge gauge = Gauge::worsted();
@@ -298,7 +298,7 @@ TEST(PolylineTest, PolylineBoundingBoxMakesSense) {
         "KKK"       // Row 3 (RS): K3
     });
     StitchGraph graph = StitchGraph::from_instructions(pattern);
-    YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
+    YarnPath yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     YarnProperties yarn = YarnProperties::worsted();
     Gauge gauge = Gauge::worsted();
@@ -386,7 +386,7 @@ TEST(CurvatureTest, CurvatureWithinYarnBendRadius) {
         "KKKK"
     });
     StitchGraph graph = StitchGraph::from_instructions(pattern);
-    YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
+    YarnPath yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
     YarnProperties yarn = YarnProperties::worsted();
     Gauge gauge = Gauge::worsted();
     SurfaceGraph surface = build_test_surface(yarn_path, yarn, gauge);
@@ -432,7 +432,7 @@ TEST(CurvatureTest, CurvatureWithinYarnBendRadiusRibbing) {
         "PKPKPKPK"
     });
     StitchGraph graph = StitchGraph::from_instructions(pattern);
-    YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
+    YarnPath yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
     YarnProperties yarn = YarnProperties::worsted();
     Gauge gauge = Gauge::worsted();
     SurfaceGraph surface = build_test_surface(yarn_path, yarn, gauge);
@@ -473,7 +473,7 @@ TEST(CurvatureTest, CurvatureWithinYarnBendRadiusFineYarn) {
         "PPP"
     });
     StitchGraph graph = StitchGraph::from_instructions(pattern);
-    YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
+    YarnPath yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
     YarnProperties yarn = YarnProperties::fingering();  // Tighter constraints
     Gauge gauge = Gauge::fingering();
     SurfaceGraph surface = build_test_surface(yarn_path, yarn, gauge);

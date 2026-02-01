@@ -34,7 +34,7 @@ TEST(LoopShapeTest, BasicGeometryGeneration) {
         "KKK"
     });
     StitchGraph graph = StitchGraph::from_instructions(pattern);
-    YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
+    YarnPath yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     YarnProperties yarn = YarnProperties::worsted();
     Gauge gauge = Gauge::worsted();
@@ -57,7 +57,7 @@ TEST(LoopShapeTest, CurvatureWithinLimits) {
         "KK"
     });
     StitchGraph graph = StitchGraph::from_instructions(pattern);
-    YarnPath yarn_path = YarnPath::from_stitch_graph(graph);
+    YarnPath yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     YarnProperties yarn = YarnProperties::worsted();
     Gauge gauge = Gauge::worsted();

@@ -39,57 +39,56 @@ void SurfaceBuilder::create_nodes() {
     auto log = yarnpath::logging::get_logger();
     const auto& segments = path_.segments();
 
-    // Estimate loop width from gauge (stitch width gives approximate loop size)
-    float loop_width = gauge_.needle_diameter;  // Loop wraps around needle
-
-    // Connector length (yarn between adjacent loops)
-    float connector_length = yarn_.relaxed_radius * 3.0f;  // Same as continuity rest length base
-
     for (size_t i = 0; i < segments.size(); ++i) {
+        const auto& segment = segments[i];
+
         SurfaceNode node;
         node.segment_id = static_cast<SegmentId>(i);
-        node.forms_loop = segments[i].forms_loop;
+        node.forms_loop = segment.forms_loop;
         node.is_pinned = false;
         node.position = Vec3::zero();  // Will be set in initialize_positions
         node.velocity = Vec3::zero();
         node.force = Vec3::zero();
 
-        // Compute mass based on yarn length in this segment
-        if (node.forms_loop) {
-            node.mass = yarn_.loop_mass(loop_width);
-        } else {
-            node.mass = yarn_.connector_mass(connector_length);
-        }
+        // Use pre-calculated yarn length from segment
+        // Mass = yarn_length * linear_density (g/mm)
+        node.mass = segment.target_yarn_length * yarn_.linear_density;
 
         graph_.add_node(node);
     }
 
-    log->debug("SurfaceBuilder: created {} nodes (loop_mass={:.4f}g, connector_mass={:.4f}g)",
-               graph_.node_count(),
-               yarn_.loop_mass(loop_width),
-               yarn_.connector_mass(connector_length));
+    log->debug("SurfaceBuilder: created {} nodes using pre-calculated yarn lengths",
+               graph_.node_count());
 }
 
 void SurfaceBuilder::create_continuity_edges() {
     auto log = yarnpath::logging::get_logger();
+    const auto& segments = path_.segments();
 
     // Rest length for continuity edges (HORIZONTAL spacing along a row)
     // Use stitch_width instead of loop_height since these connect stitches in the same row
     float stitch_width = gauge_.stitch_width(yarn_.compressed_radius);
     float base_rest_length = stitch_width * (1.0f + (1.0f - yarn_.tension) * 0.25f);
-    // For US 8 needle (5mm) with 0.1 compressed_radius: stitch_width ≈ 5.2mm, rest_length ≈ 5.8mm
 
-    // Dimensionally-consistent stiffness: scale by (mass / length²) to match system timescale
-    // This ensures stable integration with the given dt and mass values
+    // Base stiffness calculation (dimensionally consistent)
     float typical_mass = yarn_.loop_mass(gauge_.needle_diameter);
     float typical_length = yarn_.relaxed_radius * 2.0f;
     float dimensional_scale = typical_mass / (typical_length * typical_length);
-    // Base stiffness constant adjusted for dt=0.01, scaled by yarn stiffness property
     float base_stiffness = 5.0f * dimensional_scale * (0.5f + yarn_.stiffness * 0.5f);
-    float stiffness = base_stiffness * config_.continuity_stiffness_factor;
 
     // Connect consecutive segments
     for (size_t i = 0; i + 1 < path_.segment_count(); ++i) {
+        const auto& curr_segment = segments[i];
+        const auto& next_segment = segments[i + 1];
+
+        // Calculate average yarn density for this edge
+        // Yarn density = yarn per unit length (how much yarn is packed into the space)
+        float avg_yarn_length = (curr_segment.target_yarn_length + next_segment.target_yarn_length) / 2.0f;
+        float yarn_density = avg_yarn_length / stitch_width;
+
+        // Stiffness proportional to yarn density - more yarn packed = stiffer
+        float stiffness = base_stiffness * yarn_density * config_.continuity_stiffness_factor;
+
         SurfaceEdge edge;
         edge.node_a = static_cast<NodeId>(i);
         edge.node_b = static_cast<NodeId>(i + 1);
@@ -100,8 +99,8 @@ void SurfaceBuilder::create_continuity_edges() {
         graph_.add_edge(edge);
     }
 
-    log->debug("SurfaceBuilder: created {} continuity edges with rest_length={}, stiffness={}",
-               graph_.edge_count(), base_rest_length, stiffness);
+    log->debug("SurfaceBuilder: created {} continuity edges (density-based stiffness)",
+               graph_.edge_count());
 }
 
 void SurfaceBuilder::create_passthrough_edges() {
@@ -110,33 +109,38 @@ void SurfaceBuilder::create_passthrough_edges() {
     size_t passthrough_count = 0;
 
     // Passthrough rest length: distance from child loop center to parent loop center
-    // This is based on the loop size (determined by needle diameter and yarn)
-    // The child loop passes through the parent and hangs below it
-    // Distance is approximately: parent_loop_half_height + child_loop_half_height + clearance
     float loop_height = gauge_.loop_height(yarn_.relaxed_radius);
-    // Desired equilibrium distance with comfortable clearance (1.5x for slack)
     float comfortable_clearance = yarn_.min_clearance() * 1.5f;
     float base_rest_length = loop_height + comfortable_clearance;
 
-    // Stiffness for passthrough edges - derived from yarn stiffness
-    // Passthroughs are less stiff than continuity (yarn can slide through loops)
-    // Use same dimensionally-consistent calculation as continuity
+    // Base stiffness calculation (dimensionally consistent)
     float typical_mass = yarn_.loop_mass(gauge_.needle_diameter);
     float typical_length = yarn_.relaxed_radius * 2.0f;
     float dimensional_scale = typical_mass / (typical_length * typical_length);
     float base_stiffness = 5.0f * dimensional_scale * (0.5f + yarn_.stiffness * 0.5f);
-    float stiffness = base_stiffness * config_.passthrough_stiffness_factor;
 
     for (size_t i = 0; i < segments.size(); ++i) {
-        const auto& segment = segments[i];
+        const auto& child_segment = segments[i];
 
         // Connect this segment to each loop it passes through
-        for (SegmentId parent_seg : segment.through) {
+        for (SegmentId parent_seg : child_segment.through) {
             // Make sure the parent segment exists
             if (parent_seg >= segments.size()) {
                 log->warn("SurfaceBuilder: segment {} references invalid parent {}",
                           i, parent_seg);
                 continue;
+            }
+
+            // Calculate yarn density for this child segment
+            // Yarn density = yarn per unit height (how much yarn in the vertical span)
+            float yarn_density = child_segment.target_yarn_length / loop_height;
+
+            // Stiffness proportional to yarn density, reduced for passthrough
+            float stiffness = base_stiffness * yarn_density * config_.passthrough_stiffness_factor;
+
+            // Slip stitches (Transferred) are even looser - yarn barely constrained
+            if (child_segment.work_type == YarnSegment::WorkType::Transferred) {
+                stiffness *= 0.3f;
             }
 
             SurfaceEdge edge;
@@ -151,8 +155,8 @@ void SurfaceBuilder::create_passthrough_edges() {
         }
     }
 
-    log->debug("SurfaceBuilder: created {} passthrough edges with rest_length={}, stiffness={}",
-               passthrough_count, base_rest_length, stiffness);
+    log->debug("SurfaceBuilder: created {} passthrough edges (density-based stiffness)",
+               passthrough_count);
 }
 
 void SurfaceBuilder::create_constraints() {
@@ -302,9 +306,15 @@ void SurfaceBuilder::initialize_positions() {
     // Passthrough edge rest length (Y spacing between rows)
     float row_offset = gauge_.loop_height(yarn_.relaxed_radius);
 
-    // Position node 0 at origin
+    // Position node 0 at origin with orientation-based Z-offset
     if (graph_.node_count() > 0) {
-        graph_.node(0).position = Vec3(0.0f, 0.0f, 0.0f);
+        float z_offset = 0.0f;
+        if (segments[0].orientation == YarnSegment::LoopOrientation::Front) {
+            z_offset = config_.front_orientation_z_offset;
+        } else if (segments[0].orientation == YarnSegment::LoopOrientation::Back) {
+            z_offset = config_.back_orientation_z_offset;
+        }
+        graph_.node(0).position = Vec3(0.0f, 0.0f, z_offset);
     }
 
     // Track current position
@@ -333,12 +343,20 @@ void SurfaceBuilder::initialize_positions() {
             current_x += row_direction * stitch_offset;
         }
 
-        // Place node at current position with small Z perturbation
-        // Z perturbation allows the fabric to develop natural thickness
+        // Calculate Z-offset based on loop orientation (for fabric curl)
+        const auto& segment = segments[i];
+        float z_offset = 0.0f;
+        if (segment.orientation == YarnSegment::LoopOrientation::Front) {
+            z_offset = config_.front_orientation_z_offset;  // Knit stitches curl forward
+        } else if (segment.orientation == YarnSegment::LoopOrientation::Back) {
+            z_offset = config_.back_orientation_z_offset;   // Purl stitches curl backward
+        }
+
+        // Place node at current position with orientation-based Z and small perturbation
         node.position = Vec3(
             current_x + noise_dist(rng) * 0.1f,  // Small XY noise
             current_y + noise_dist(rng) * 0.1f,
-            z_noise_dist(rng)  // Small Z perturbation
+            z_offset + z_noise_dist(rng)  // Orientation bias + small perturbation
         );
     }
 

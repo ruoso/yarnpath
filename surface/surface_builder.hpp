@@ -27,6 +27,10 @@ struct SurfaceBuildConfig {
     // Base stiffness comes from YarnProperties::stiffness
     float continuity_stiffness_factor = 1.0f;
     float passthrough_stiffness_factor = 0.5f;  // Passthroughs are typically less stiff
+
+    // Orientation Z-offset for fabric curl
+    float front_orientation_z_offset = 1.0f;   // Knit forward (mm)
+    float back_orientation_z_offset = -1.0f;   // Purl backward (mm)
 };
 
 // Builder for creating a SurfaceGraph from YarnPath topology

@@ -1,0 +1,26 @@
+Cast on 15 sts.
+Row 2 (ws): P3, K1, P3, K1, P3, K1, P3.
+Row 1 (rs): K3, P1, K3, P1, K3, P1, K3.
+Row 2 (ws): P3, K1, P3, K1, P3, K1, P3.
+Row 3 (rs): K3, P1, K3, P1, K3, P1, K3.
+Row 4 (ws): P3, K1, P3, K1, P3, K1, P3.
+Row 5 (rs): K3, P1, K3, P1, K3, P1, K3.
+Row 6 (ws): P3, K1, P3, K1, P3, K1, P3.
+Row 7 (rs): K3, P1, K3, P1, K3, P1, K3.
+Row 8 (ws): P3, K1, P3, K1, P3, K1, P3.
+Row 9 (rs): K3, P1, K3, P1, K3, P1, K3.
+Row 10 (ws): P3, K1, P3, K1, P3, K1, P3.
+Row 11 (rs): K3, P1, K3, P1, K3, P1, K3.
+Row 12 (ws): P3, K1, P3, K1, P3, K1, P3.
+Row 13 (rs): K3, P1, K3, P1, K3, P1, K3.
+Row 14 (ws): P3, K1, P3, K1, P3, K1, P3.
+Row 15 (rs): K3, P1, K3, P1, K3, P1, K3.
+Row 16 (ws): P3, K1, P3, K1, P3, K1, P3.
+Row 17 (rs): K3, P1, K3, P1, K3, P1, K3.
+Row 18 (ws): P3, K1, P3, K1, P3, K1, P3.
+Row 19 (rs): K3, P1, K3, P1, K3, P1, K3.
+Row 20 (ws): P3, K1, P3, K1, P3, K1, P3.
+Row 21 (rs): K3, P1, K3, P1, K3, P1, K3.
+Row 22 (ws): P3, K1, P3, K1, P3, K1, P3.
+Row 23 (rs): K3, P1, K3, P1, K3, P1, K3.
+Row 24 (ws): P3, K1, P3, K1, P3, K1, P3.

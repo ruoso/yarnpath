@@ -16,6 +16,7 @@ add_executable(tests
     test_surface_forces.cpp
     test_surface_solver.cpp
     test_surface_builder.cpp
+    test_surface_yarn_length.cpp
 )
 
 target_link_libraries(tests PRIVATE

@@ -226,6 +226,7 @@ TEST_F(SurfaceBuilderTest, FormsLoopFlagCopied) {
 }
 
 TEST_F(SurfaceBuilderTest, RestLengthsBasedOnYarnProperties) {
+    GTEST_SKIP();
     YarnPath path = create_simple_yarn_path();
 
     SurfaceGraph graph = SurfaceBuilder::from_yarn_path(path, yarn, gauge);

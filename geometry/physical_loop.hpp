@@ -2,7 +2,7 @@
 #define YARNPATH_GEOMETRY_PHYSICAL_LOOP_HPP
 
 #include <math/vec3.hpp>
-#include "cubic_bezier.hpp"
+#include <math/cubic_bezier.hpp>
 #include <yarn/yarn_properties.hpp>
 #include <yarn/gauge.hpp>
 #include <stitch_shape/loop_dimensions.hpp>

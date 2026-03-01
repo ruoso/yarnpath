@@ -67,15 +67,6 @@ struct CubicBezier {
     Vec3& end() { return control_points[3]; }
 };
 
-// A point on a yarn path with associated curvature hint
-struct YarnPathPoint {
-    Vec3 position;
-    float tension;  // 0.0 = smooth transition, 1.0 = tight loop
-
-    YarnPathPoint() : position(), tension(0.5f) {}
-    YarnPathPoint(const Vec3& pos, float t = 0.5f) : position(pos), tension(t) {}
-};
-
 // A spline composed of multiple Bezier segments
 class BezierSpline {
 public:

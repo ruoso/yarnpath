@@ -3,7 +3,7 @@
 
 #include <nlohmann/json.hpp>
 #include <geometry/geometry_path.hpp>
-#include <geometry/cubic_bezier.hpp>
+#include <math/cubic_bezier.hpp>
 #include "config_json.hpp"
 
 namespace yarnpath {

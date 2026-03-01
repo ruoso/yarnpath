@@ -7,10 +7,15 @@
 #include <math/vec3.hpp>
 #include <yarn/yarn_properties.hpp>
 #include <yarn/gauge.hpp>
-#include "cubic_bezier.hpp"
+#include <math/cubic_bezier.hpp>
 #include "physical_loop.hpp"
 #include "geometry_path.hpp"
 #include "geometry_builder.hpp"
+#include "geometry_build_state.hpp"
+#include "loop_precompute.hpp"
+#include "position_resolver.hpp"
+#include "geometry_validator.hpp"
+#include "crossover_geometry.hpp"
 
 namespace yarnpath {
 

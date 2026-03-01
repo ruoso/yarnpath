@@ -2,7 +2,7 @@
 #define YARNPATH_GEOMETRY_PATH_HPP
 
 #include <math/vec3.hpp>
-#include "cubic_bezier.hpp"
+#include <math/cubic_bezier.hpp>
 #include "yarn_path.hpp"
 #include <vector>
 #include <string>

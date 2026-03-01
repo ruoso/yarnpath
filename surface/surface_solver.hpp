@@ -63,7 +63,8 @@ public:
     static void step(SurfaceGraph& graph,
                      const YarnProperties& yarn,
                      const Gauge& gauge,
-                     const SolveConfig& config);
+                     const SolveConfig& config,
+                     const std::vector<std::vector<NodeId>>& collision_skip_list = {});
 
 private:
     // Verlet integration step

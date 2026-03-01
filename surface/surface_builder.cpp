@@ -50,6 +50,13 @@ void SurfaceBuilder::create_nodes() {
         node.velocity = Vec3::zero();
         node.force = Vec3::zero();
 
+        // Compute 3D stitch shape from topology (z_bulge, loop dimensions, etc.)
+        node.shape = compute_stitch_shape(
+            yarn_, gauge_,
+            segment.orientation,
+            segment.wrap_direction,
+            segment.work_type);
+
         // Use pre-calculated yarn length from segment
         // Mass = yarn_length * linear_density (g/mm)
         node.mass = segment.target_yarn_length * yarn_.linear_density;
@@ -299,15 +306,11 @@ void SurfaceBuilder::initialize_positions() {
     // Passthrough edge rest length (Y spacing between rows)
     float row_offset = gauge_.loop_height(yarn_.relaxed_radius);
 
-    // Position node 0 at origin with orientation-based Z-offset
+    // Position node 0 at origin with orientation-based Z-offset from stitch shape
     if (graph_.node_count() > 0) {
-        float z_offset = 0.0f;
-        if (segments[0].orientation == YarnSegment::LoopOrientation::Front) {
-            z_offset = config_.front_orientation_z_offset;
-        } else if (segments[0].orientation == YarnSegment::LoopOrientation::Back) {
-            z_offset = config_.back_orientation_z_offset;
-        }
+        float z_offset = graph_.node(0).shape.z_bulge;
         graph_.node(0).position = Vec3(0.0f, 0.0f, z_offset);
+        graph_.node(0).last_frame_position = graph_.node(0).position;
     }
 
     // Track current position
@@ -336,14 +339,8 @@ void SurfaceBuilder::initialize_positions() {
             current_x += row_direction * stitch_offset;
         }
 
-        // Calculate Z-offset based on loop orientation (for fabric curl)
-        const auto& segment = segments[i];
-        float z_offset = 0.0f;
-        if (segment.orientation == YarnSegment::LoopOrientation::Front) {
-            z_offset = config_.front_orientation_z_offset;  // Knit stitches curl forward
-        } else if (segment.orientation == YarnSegment::LoopOrientation::Back) {
-            z_offset = config_.back_orientation_z_offset;   // Purl stitches curl backward
-        }
+        // Calculate Z-offset from stitch shape (for fabric curl)
+        float z_offset = node.shape.z_bulge;
 
         // Place node at current position with orientation-based Z
         node.position = Vec3(
@@ -351,6 +348,39 @@ void SurfaceBuilder::initialize_positions() {
             current_y,
             z_offset
         );
+
+        // Initialize frame tracking position
+        node.last_frame_position = node.position;
+    }
+
+    // Initialize stitch_axis for each node from continuity neighbors
+    for (size_t i = 0; i < graph_.node_count(); ++i) {
+        auto& node = graph_.node(static_cast<NodeId>(i));
+        Vec3 axis = Vec3::unit_x();  // Default course direction
+
+        if (i > 0 && i + 1 < graph_.node_count()) {
+            // Interior node: axis from prev to next
+            Vec3 prev_pos = graph_.node(static_cast<NodeId>(i - 1)).position;
+            Vec3 next_pos = graph_.node(static_cast<NodeId>(i + 1)).position;
+            Vec3 dir = next_pos - prev_pos;
+            if (dir.length_squared() > 1e-12f) {
+                axis = dir.normalized();
+            }
+        } else if (i + 1 < graph_.node_count()) {
+            // First node: axis toward next
+            Vec3 dir = graph_.node(static_cast<NodeId>(i + 1)).position - node.position;
+            if (dir.length_squared() > 1e-12f) {
+                axis = dir.normalized();
+            }
+        } else if (i > 0) {
+            // Last node: axis from prev
+            Vec3 dir = node.position - graph_.node(static_cast<NodeId>(i - 1)).position;
+            if (dir.length_squared() > 1e-12f) {
+                axis = dir.normalized();
+            }
+        }
+
+        node.stitch_axis = axis;
     }
 
     log->debug("SurfaceBuilder: initialized {} node positions incrementally",

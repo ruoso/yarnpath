@@ -2,6 +2,8 @@
 #include "surface_forces.hpp"
 #include "logging.hpp"
 #include <cmath>
+#include <algorithm>
+#include <chrono>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -31,11 +33,40 @@ SolveResult SurfaceSolver::solve(SurfaceGraph& graph,
     log->info("SurfaceSolver: starting solve with {} nodes, initial energy = {}",
               graph.node_count(), result.initial_energy);
 
+    // Build collision skip list once (topology doesn't change during solve)
+    std::vector<std::vector<NodeId>> collision_skip_list;
+    if (config.force_config.enable_collision) {
+        collision_skip_list.resize(graph.node_count());
+        for (const auto& edge : graph.edges()) {
+            NodeId a = std::min(edge.node_a, edge.node_b);
+            NodeId b = std::max(edge.node_a, edge.node_b);
+            collision_skip_list[a].push_back(b);
+        }
+        // Also skip adjacent nodes along the yarn path (i, i+1)
+        for (NodeId i = 0; i + 1 < graph.node_count(); ++i) {
+            collision_skip_list[i].push_back(i + 1);
+        }
+        // Sort and deduplicate each skip list for efficient lookup
+        for (auto& skips : collision_skip_list) {
+            std::sort(skips.begin(), skips.end());
+            skips.erase(std::unique(skips.begin(), skips.end()), skips.end());
+        }
+        log->info("SurfaceSolver: built collision skip list for {} nodes", graph.node_count());
+    }
+
     float prev_energy = result.initial_energy;
 
+    using Clock = std::chrono::steady_clock;
+    auto solve_start = Clock::now();
+
     for (int iter = 0; iter < config.max_iterations; ++iter) {
+        auto iter_start = Clock::now();
+
         // Single solver step
-        step(graph, yarn, gauge, config);
+        step(graph, yarn, gauge, config, collision_skip_list);
+
+        auto iter_end = Clock::now();
+        float iter_ms = std::chrono::duration<float, std::milli>(iter_end - iter_start).count();
 
         // Check convergence on every iteration
         float current_energy = graph.compute_energy();
@@ -58,16 +89,20 @@ SolveResult SurfaceSolver::solve(SurfaceGraph& graph,
             result.iterations = iter + 1;
             result.final_energy = current_energy;
 
-            log->info("SurfaceSolver: converged at iteration {} with energy = {}",
-                      result.iterations, result.final_energy);
+            float total_s = std::chrono::duration<float>(Clock::now() - solve_start).count();
+            log->info("SurfaceSolver: converged at iteration {} with energy = {} ({:.1f}s total, {:.1f}ms/iter)",
+                      result.iterations, result.final_energy, total_s, iter_ms);
             return result;
         }
 
         prev_energy = current_energy;
 
-        // Log progress periodically
-        if ((iter + 1) % 100 == 0) {
-            log->debug("SurfaceSolver: iteration {}, energy = {}", iter + 1, current_energy);
+        // Log progress: first 5 iterations, then every 100
+        if (iter < 5 || (iter + 1) % 100 == 0) {
+            float elapsed_s = std::chrono::duration<float>(Clock::now() - solve_start).count();
+            log->debug("SurfaceSolver: iter {}, energy = {:.4f}, delta = {:.6f}, "
+                       "{:.1f}ms/iter, {:.1f}s elapsed",
+                       iter + 1, current_energy, energy_change, iter_ms, elapsed_s);
         }
     }
 
@@ -76,8 +111,9 @@ SolveResult SurfaceSolver::solve(SurfaceGraph& graph,
     result.iterations = config.max_iterations;
     result.final_energy = graph.compute_energy();
 
-    log->warn("SurfaceSolver: did not converge after {} iterations, final energy = {}",
-              result.iterations, result.final_energy);
+    float total_s = std::chrono::duration<float>(Clock::now() - solve_start).count();
+    log->warn("SurfaceSolver: did not converge after {} iterations, final energy = {} ({:.1f}s total)",
+              result.iterations, result.final_energy, total_s);
 
     return result;
 }
@@ -85,21 +121,43 @@ SolveResult SurfaceSolver::solve(SurfaceGraph& graph,
 void SurfaceSolver::step(SurfaceGraph& graph,
                           const YarnProperties& yarn,
                           const Gauge& gauge,
-                          const SolveConfig& config) {
+                          const SolveConfig& config,
+                          const std::vector<std::vector<NodeId>>& collision_skip_list) {
+    using Clock = std::chrono::steady_clock;
+    static int step_count = 0;
+    bool should_time = (step_count < 5 || step_count % 100 == 0);
+    auto log = yarnpath::logging::get_logger();
+
+    auto t0 = Clock::now();
+
     // 1. Compute all forces (including gravity and collision repulsion)
-    compute_forces(graph, yarn, gauge, config.force_config);
+    compute_forces(graph, yarn, gauge, config.force_config, collision_skip_list);
+    auto t1 = Clock::now();
 
     // 2. Integrate using Verlet
     integrate_verlet(graph, config.dt);
+    auto t2 = Clock::now();
 
     // 3. Apply floor constraint if enabled
     if (config.force_config.enable_floor) {
         apply_floor_constraint(graph, config.force_config.floor_position,
                                config.force_config.gravity_direction);
     }
+    auto t3 = Clock::now();
 
     // 4. Project constraints
     project_constraints(graph, config.constraint_iterations);
+    auto t4 = Clock::now();
+
+    if (should_time) {
+        float forces_ms = std::chrono::duration<float, std::milli>(t1 - t0).count();
+        float verlet_ms = std::chrono::duration<float, std::milli>(t2 - t1).count();
+        float floor_ms = std::chrono::duration<float, std::milli>(t3 - t2).count();
+        float constraints_ms = std::chrono::duration<float, std::milli>(t4 - t3).count();
+        log->debug("  step {}: forces={:.1f}ms verlet={:.1f}ms floor={:.1f}ms constraints={:.1f}ms",
+                   step_count, forces_ms, verlet_ms, floor_ms, constraints_ms);
+    }
+    ++step_count;
 }
 
 void SurfaceSolver::integrate_verlet(SurfaceGraph& graph, float dt) {

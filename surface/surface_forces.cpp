@@ -4,6 +4,9 @@
 #include <limits>
 #include <set>
 #include <vector>
+#include <unordered_map>
+#include <algorithm>
+#include <chrono>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -13,28 +16,41 @@ namespace yarnpath {
 void compute_forces(SurfaceGraph& graph,
                     const YarnProperties& yarn,
                     const Gauge& gauge,
-                    const ForceConfig& config) {
+                    const ForceConfig& config,
+                    const std::vector<std::vector<NodeId>>& collision_skip_list) {
+    using Clock = std::chrono::steady_clock;
+    static int force_call_count = 0;
+    bool should_time = (force_call_count < 5 || force_call_count % 100 == 0);
+    auto log = yarnpath::logging::get_logger();
+
     // Clear all forces first
     graph.clear_all_forces();
 
+    auto t0 = Clock::now();
     // Compute spring forces from all edges
     compute_spring_forces(graph);
+    auto t1 = Clock::now();
 
     // Add passthrough tension based on yarn properties
     compute_passthrough_tension(graph, yarn, gauge, config.passthrough_tension_factor);
+    auto t2 = Clock::now();
 
     // Add loop curvature forces
     compute_loop_curvature_forces(graph, yarn, gauge, config.loop_curvature_strength);
+    auto t3 = Clock::now();
 
     // Add collision repulsion forces
     if (config.enable_collision && config.collision_strength > 0) {
-        compute_collision_forces(graph, yarn.min_clearance(), config.collision_strength);
+        compute_collision_forces(graph, yarn.min_clearance(), config.collision_strength,
+                                 collision_skip_list);
     }
+    auto t4 = Clock::now();
 
     // Add bending resistance to prevent sharp folds
     if (config.enable_bending_resistance && config.bending_stiffness > 0) {
         compute_bending_forces(graph, config.bending_stiffness, config.min_bend_angle);
     }
+    auto t5 = Clock::now();
 
     // Add gravity if enabled
     if (config.enable_gravity && config.gravity_strength > 0) {
@@ -43,6 +59,20 @@ void compute_forces(SurfaceGraph& graph,
 
     // Apply velocity damping
     apply_damping(graph, config.damping);
+    auto t6 = Clock::now();
+
+    if (should_time) {
+        float spring_ms = std::chrono::duration<float, std::milli>(t1 - t0).count();
+        float passthrough_ms = std::chrono::duration<float, std::milli>(t2 - t1).count();
+        float curvature_ms = std::chrono::duration<float, std::milli>(t3 - t2).count();
+        float collision_ms = std::chrono::duration<float, std::milli>(t4 - t3).count();
+        float bending_ms = std::chrono::duration<float, std::milli>(t5 - t4).count();
+        float rest_ms = std::chrono::duration<float, std::milli>(t6 - t5).count();
+        log->debug("    forces: spring={:.1f}ms passthrough={:.1f}ms curvature={:.1f}ms "
+                   "collision={:.1f}ms bending={:.1f}ms rest={:.1f}ms",
+                   spring_ms, passthrough_ms, curvature_ms, collision_ms, bending_ms, rest_ms);
+    }
+    ++force_call_count;
 }
 
 void compute_spring_forces(SurfaceGraph& graph) {
@@ -423,49 +453,226 @@ void apply_floor_constraint(SurfaceGraph& graph, float floor_dist, const Vec3& d
     }
 }
 
-void compute_collision_forces(SurfaceGraph& graph, float min_distance, float strength) {
-    // Build a set of connected pairs (edges) to skip during collision check
-    std::set<std::pair<NodeId, NodeId>> connected;
-    for (const auto& edge : graph.edges()) {
-        NodeId a = std::min(edge.node_a, edge.node_b);
-        NodeId b = std::max(edge.node_a, edge.node_b);
-        connected.insert({a, b});
-    }
-
-    // Also skip adjacent nodes along the yarn path (i, i+1)
-    for (NodeId i = 0; i + 1 < graph.node_count(); ++i) {
-        connected.insert({i, i + 1});
-    }
-
+void compute_collision_forces(SurfaceGraph& graph, float min_distance, float strength,
+                              const std::vector<std::vector<NodeId>>& skip_list) {
     auto& nodes = graph.nodes();
+    const size_t num_nodes = nodes.size();
 
-    // Check all pairs of non-connected nodes for potential collisions
-    for (size_t i = 0; i < nodes.size(); ++i) {
-        for (size_t j = i + 1; j < nodes.size(); ++j) {
-            // Skip if connected
-            NodeId a = static_cast<NodeId>(i);
-            NodeId b = static_cast<NodeId>(j);
-            if (connected.count({a, b})) continue;
+    if (num_nodes < 2) return;
 
-            // Check distance using squared distance first (avoids sqrt)
-            Vec3 delta = nodes[j].position - nodes[i].position;
-            float dist_sq = delta.length_squared();
-            float min_dist_sq = min_distance * min_distance;
+    // --- Lazy local frame update ---
+    // Recompute stitch_axis for nodes that have moved significantly
+    const float frame_update_threshold_sq = min_distance * min_distance * 0.25f;  // (min_clearance * 0.5)^2
 
-            // Apply repulsion force when closer than min_distance
-            // Force falls off with distance: F = strength * (1 - dist/min_distance)^2
-            if (dist_sq < min_dist_sq && dist_sq > 1e-12f) {
-                // Only compute sqrt when we know we need it
-                float dist = std::sqrt(dist_sq);
-                float overlap_ratio = 1.0f - dist / min_distance;
-                float force_magnitude = strength * overlap_ratio * overlap_ratio;
+    // Build adjacency index if needed (for frame updates)
+    if (!graph.has_adjacency_index()) {
+        graph.build_adjacency_index();
+    }
 
-                Vec3 direction = delta / dist;  // Points from i to j
-                Vec3 force = direction * force_magnitude;
+    #pragma omp parallel for schedule(static) if(num_nodes > 50)
+    for (size_t i = 0; i < num_nodes; ++i) {
+        auto& node = nodes[i];
+        Vec3 displacement = node.position - node.last_frame_position;
+        if (displacement.length_squared() > frame_update_threshold_sq) {
+            // Recompute stitch_axis from continuity neighbors
+            auto [prev_id, next_id] = graph.get_continuity_neighbors(node.id);
+            Vec3 axis = Vec3::unit_x();
+            if (prev_id != static_cast<NodeId>(-1) && next_id != static_cast<NodeId>(-1)) {
+                Vec3 dir = nodes[next_id].position - nodes[prev_id].position;
+                if (dir.length_squared() > 1e-12f) axis = dir.normalized();
+            } else if (next_id != static_cast<NodeId>(-1)) {
+                Vec3 dir = nodes[next_id].position - node.position;
+                if (dir.length_squared() > 1e-12f) axis = dir.normalized();
+            } else if (prev_id != static_cast<NodeId>(-1)) {
+                Vec3 dir = node.position - nodes[prev_id].position;
+                if (dir.length_squared() > 1e-12f) axis = dir.normalized();
+            }
+            node.stitch_axis = axis;
+            node.last_frame_position = node.position;
+        }
+    }
 
-                // Push nodes apart
-                nodes[i].add_force(-force);
-                nodes[j].add_force(force);
+    // --- Compute world-space AABBs for each node ---
+    // The bounding half-extent is in local stitch frame (course, wale, normal).
+    // We rotate by the local frame and take the axis-aligned envelope.
+    struct NodeAABB {
+        Vec3 min_pt;
+        Vec3 max_pt;
+    };
+    std::vector<NodeAABB> aabbs(num_nodes);
+
+    #pragma omp parallel for schedule(static) if(num_nodes > 50)
+    for (size_t i = 0; i < num_nodes; ++i) {
+        const auto& node = nodes[i];
+        Vec3 half = node.shape.bounding_half_extent(node.shape.z_bulge != 0.0f ?
+            std::abs(node.shape.z_bulge) * 0.1f : min_distance * 0.5f);
+
+        // If bounding half-extent is zero/tiny (non-loop nodes), use min_distance as fallback
+        if (half.x < min_distance * 0.5f) half.x = min_distance * 0.5f;
+        if (half.y < min_distance * 0.5f) half.y = min_distance * 0.5f;
+        if (half.z < min_distance * 0.5f) half.z = min_distance * 0.5f;
+
+        // Local frame axes
+        Vec3 course = node.stitch_axis;
+        // Wale axis: perpendicular to course in the vertical plane
+        Vec3 up = Vec3::unit_y();
+        Vec3 wale = up - course * course.dot(up);
+        float wale_len = wale.length();
+        if (wale_len > 1e-6f) {
+            wale = wale / wale_len;
+        } else {
+            wale = Vec3::unit_z();
+        }
+        Vec3 normal = course.cross(wale);
+
+        // World-space extent: |half.x * course| + |half.y * wale| + |half.z * normal|
+        // For AABB, take the absolute value of each component contribution
+        Vec3 extent;
+        extent.x = std::abs(half.x * course.x) + std::abs(half.y * wale.x) + std::abs(half.z * normal.x);
+        extent.y = std::abs(half.x * course.y) + std::abs(half.y * wale.y) + std::abs(half.z * normal.y);
+        extent.z = std::abs(half.x * course.z) + std::abs(half.y * wale.z) + std::abs(half.z * normal.z);
+
+        aabbs[i].min_pt = node.position - extent;
+        aabbs[i].max_pt = node.position + extent;
+    }
+
+    // --- Build spatial hash grid ---
+    // Cell size = max AABB dimension across all nodes (ensures overlapping boxes are in adjacent cells)
+    float max_extent = 0.0f;
+    for (size_t i = 0; i < num_nodes; ++i) {
+        Vec3 size = aabbs[i].max_pt - aabbs[i].min_pt;
+        max_extent = std::max(max_extent, std::max(size.x, std::max(size.y, size.z)));
+    }
+    float cell_size = std::max(max_extent, min_distance);  // At least min_distance
+
+    if (cell_size < 1e-6f) return;  // Degenerate case
+
+    float inv_cell = 1.0f / cell_size;
+
+    // Hash function for grid cell
+    auto cell_hash = [](int cx, int cy, int cz) -> int64_t {
+        // Use a large prime-based hash to avoid collisions
+        return static_cast<int64_t>(cx) * 73856093LL
+             ^ static_cast<int64_t>(cy) * 19349669LL
+             ^ static_cast<int64_t>(cz) * 83492791LL;
+    };
+
+    // Insert nodes into grid cells (each node may span multiple cells)
+    std::unordered_map<int64_t, std::vector<NodeId>> grid;
+
+    for (size_t i = 0; i < num_nodes; ++i) {
+        int min_cx = static_cast<int>(std::floor(aabbs[i].min_pt.x * inv_cell));
+        int min_cy = static_cast<int>(std::floor(aabbs[i].min_pt.y * inv_cell));
+        int min_cz = static_cast<int>(std::floor(aabbs[i].min_pt.z * inv_cell));
+        int max_cx = static_cast<int>(std::floor(aabbs[i].max_pt.x * inv_cell));
+        int max_cy = static_cast<int>(std::floor(aabbs[i].max_pt.y * inv_cell));
+        int max_cz = static_cast<int>(std::floor(aabbs[i].max_pt.z * inv_cell));
+
+        for (int cx = min_cx; cx <= max_cx; ++cx) {
+            for (int cy = min_cy; cy <= max_cy; ++cy) {
+                for (int cz = min_cz; cz <= max_cz; ++cz) {
+                    grid[cell_hash(cx, cy, cz)].push_back(static_cast<NodeId>(i));
+                }
+            }
+        }
+    }
+
+    // --- Check candidate pairs within each grid cell ---
+    // Collect unique cell keys for parallel iteration
+    std::vector<int64_t> cell_keys;
+    cell_keys.reserve(grid.size());
+    for (const auto& [key, _] : grid) {
+        cell_keys.push_back(key);
+    }
+
+    // Thread-local force accumulation
+    #pragma omp parallel if(num_nodes > 50)
+    {
+        std::vector<Vec3> thread_forces(num_nodes, Vec3::zero());
+
+        #pragma omp for schedule(dynamic)
+        for (size_t ci = 0; ci < cell_keys.size(); ++ci) {
+            const auto& cell_nodes = grid[cell_keys[ci]];
+
+            for (size_t a = 0; a < cell_nodes.size(); ++a) {
+                NodeId id_a = cell_nodes[a];
+
+                for (size_t b = a + 1; b < cell_nodes.size(); ++b) {
+                    NodeId id_b = cell_nodes[b];
+
+                    // Ensure consistent ordering to avoid double-counting
+                    NodeId lo = std::min(id_a, id_b);
+                    NodeId hi = std::max(id_a, id_b);
+
+                    // Skip connected pairs using the cached skip list
+                    if (!skip_list.empty() && lo < skip_list.size()) {
+                        const auto& skips = skip_list[lo];
+                        if (std::find(skips.begin(), skips.end(), hi) != skips.end()) {
+                            continue;
+                        }
+                    }
+
+                    // AABB overlap test (narrow-phase)
+                    if (aabbs[lo].min_pt.x > aabbs[hi].max_pt.x ||
+                        aabbs[hi].min_pt.x > aabbs[lo].max_pt.x ||
+                        aabbs[lo].min_pt.y > aabbs[hi].max_pt.y ||
+                        aabbs[hi].min_pt.y > aabbs[lo].max_pt.y ||
+                        aabbs[lo].min_pt.z > aabbs[hi].max_pt.z ||
+                        aabbs[hi].min_pt.z > aabbs[lo].max_pt.z) {
+                        continue;  // No overlap
+                    }
+
+                    // Compute penetration depth per axis, pick minimum for separation
+                    float overlap_x = std::min(aabbs[lo].max_pt.x - aabbs[hi].min_pt.x,
+                                                aabbs[hi].max_pt.x - aabbs[lo].min_pt.x);
+                    float overlap_y = std::min(aabbs[lo].max_pt.y - aabbs[hi].min_pt.y,
+                                                aabbs[hi].max_pt.y - aabbs[lo].min_pt.y);
+                    float overlap_z = std::min(aabbs[lo].max_pt.z - aabbs[hi].min_pt.z,
+                                                aabbs[hi].max_pt.z - aabbs[lo].min_pt.z);
+
+                    if (overlap_x <= 0 || overlap_y <= 0 || overlap_z <= 0) {
+                        continue;  // No actual overlap
+                    }
+
+                    // Separation direction: axis with minimum penetration
+                    Vec3 delta = nodes[hi].position - nodes[lo].position;
+                    Vec3 sep_dir;
+                    float pen_depth;
+
+                    if (overlap_x <= overlap_y && overlap_x <= overlap_z) {
+                        sep_dir = Vec3(delta.x >= 0 ? 1.0f : -1.0f, 0.0f, 0.0f);
+                        pen_depth = overlap_x;
+                    } else if (overlap_y <= overlap_z) {
+                        sep_dir = Vec3(0.0f, delta.y >= 0 ? 1.0f : -1.0f, 0.0f);
+                        pen_depth = overlap_y;
+                    } else {
+                        sep_dir = Vec3(0.0f, 0.0f, delta.z >= 0 ? 1.0f : -1.0f);
+                        pen_depth = overlap_z;
+                    }
+
+                    // Compute the maximum possible penetration for normalization
+                    Vec3 half_a = aabbs[lo].max_pt - nodes[lo].position;
+                    Vec3 half_b = aabbs[hi].max_pt - nodes[hi].position;
+                    float max_pen = std::abs(half_a.dot(sep_dir)) + std::abs(half_b.dot(sep_dir));
+                    if (max_pen < 1e-6f) max_pen = 1e-6f;
+
+                    // Force proportional to overlap ratio squared
+                    float overlap_ratio = std::min(pen_depth / max_pen, 1.0f);
+                    float force_magnitude = strength * overlap_ratio * overlap_ratio;
+
+                    Vec3 force = sep_dir * force_magnitude;
+
+                    thread_forces[lo] -= force;
+                    thread_forces[hi] += force;
+                }
+            }
+        }
+
+        // Merge thread-local forces
+        #pragma omp critical
+        {
+            for (size_t i = 0; i < num_nodes; ++i) {
+                nodes[i].force += thread_forces[i];
             }
         }
     }

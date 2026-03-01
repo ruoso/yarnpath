@@ -278,10 +278,8 @@ TEST_F(SurfaceBuilderTest, OrientationZOffsetApplied) {
     StitchGraph graph = StitchGraph::from_instructions(pattern);
     YarnPath path = YarnPath::from_stitch_graph(graph, yarn, gauge);
 
-    // Build surface with custom z-offsets
+    // Build surface - z-offsets now come from compute_stitch_shape (yarn + gauge derived)
     SurfaceBuildConfig config;
-    config.front_orientation_z_offset = 2.0f;  // Knit stitches
-    config.back_orientation_z_offset = -3.0f;  // Purl stitches
 
     SurfaceGraph surface = SurfaceBuilder::from_yarn_path(path, yarn, gauge, config);
 
@@ -294,14 +292,17 @@ TEST_F(SurfaceBuilderTest, OrientationZOffsetApplied) {
         SegmentId seg_id = static_cast<SegmentId>(i);
         NodeId node_id = surface.node_for_segment(seg_id);
         float node_z = surface.node(node_id).position.z;
+        float expected_z = surface.node(node_id).shape.z_bulge;
 
         if (segment.orientation == YarnSegment::LoopOrientation::Front) {
-            // Front-facing nodes should have exactly the positive offset
-            EXPECT_FLOAT_EQ(node_z, config.front_orientation_z_offset);
+            // Front-facing nodes should have positive z_bulge
+            EXPECT_GT(expected_z, 0.0f);
+            EXPECT_FLOAT_EQ(node_z, expected_z);
             found_front = true;
         } else if (segment.orientation == YarnSegment::LoopOrientation::Back) {
-            // Back-facing nodes should have exactly the negative offset
-            EXPECT_FLOAT_EQ(node_z, config.back_orientation_z_offset);
+            // Back-facing nodes should have negative z_bulge
+            EXPECT_LT(expected_z, 0.0f);
+            EXPECT_FLOAT_EQ(node_z, expected_z);
             found_back = true;
         }
     }

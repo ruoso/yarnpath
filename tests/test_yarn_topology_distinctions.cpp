@@ -9,7 +9,9 @@ using namespace yarnpath::test;
 
 TEST(YarnTopology, KnitVsPurlOrientation) {
     // Test that Knit and Purl have different orientations
-    // Pattern: Cast on 3, Row 1 (RS): K3, Row 2 (WS): P3
+    // Pattern: Cast on 3, Row 1 (RS): K3, Row 2 (RS): P3
+    // RS Knit = Front-facing, RS Purl = Back-facing
+    // (WS Purl would flip to Front, same as stockinette, so we use RS Purl)
     PatternInstructions pattern;
 
     // Cast on
@@ -18,15 +20,15 @@ TEST(YarnTopology, KnitVsPurlOrientation) {
     row0.stitches = {instruction::CastOn{3}};
     pattern.rows.push_back(row0);
 
-    // Row 1: Knit 3
+    // Row 1: Knit 3 (RS)
     RowInstruction row1;
     row1.side = RowSide::RS;
     row1.stitches = {instruction::Knit{}, instruction::Knit{}, instruction::Knit{}};
     pattern.rows.push_back(row1);
 
-    // Row 2: Purl 3
+    // Row 2: Purl 3 (RS) - creates back-facing loops
     RowInstruction row2;
-    row2.side = RowSide::WS;
+    row2.side = RowSide::RS;
     row2.stitches = {instruction::Purl{}, instruction::Purl{}, instruction::Purl{}};
     pattern.rows.push_back(row2);
 

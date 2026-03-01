@@ -46,7 +46,8 @@ TEST(YarnPath, YarnLengthCalculatedForKnit) {
 }
 
 TEST(YarnPath, YarnLengthCalculatedForPurl) {
-    // Pattern: Cast on 3, Row 1 (WS): P3
+    // Pattern: Cast on 3, Row 1 (RS): P3
+    // RS Purls create back-facing loops which use 12% less yarn
     PatternInstructions pattern;
 
     RowInstruction row0;
@@ -55,7 +56,7 @@ TEST(YarnPath, YarnLengthCalculatedForPurl) {
     pattern.rows.push_back(row0);
 
     RowInstruction row1;
-    row1.side = RowSide::WS;
+    row1.side = RowSide::RS;
     row1.stitches = {instruction::Purl{}, instruction::Purl{}, instruction::Purl{}};
     pattern.rows.push_back(row1);
 

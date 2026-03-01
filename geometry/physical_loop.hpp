@@ -5,6 +5,7 @@
 #include "cubic_bezier.hpp"
 #include <yarn/yarn_properties.hpp>
 #include <yarn/gauge.hpp>
+#include <stitch_shape/loop_dimensions.hpp>
 #include <vector>
 
 namespace yarnpath {
@@ -55,15 +56,8 @@ struct PhysicalLoop {
     void generate_shape(const Gauge& gauge);
 };
 
-// Physical dimensions calculator
-struct LoopDimensions {
-    float opening_diameter;
-    float loop_height;
-    float loop_width;
-    float yarn_length;        // Total yarn in one loop
-
-    static LoopDimensions calculate(const YarnProperties& yarn, const Gauge& gauge);
-};
+// LoopDimensions is now defined in stitch_shape/loop_dimensions.hpp
+// and re-exported here via the #include above for backward compatibility.
 
 }  // namespace yarnpath
 

@@ -35,6 +35,10 @@ std::vector<Vec3> GeometryPath::to_polyline(float segment_length) const {
         // Avoid duplicating start point if continuing from previous segment
         size_t start_idx = points.empty() ? 0 : 1;
         for (size_t i = start_idx; i < seg_points.size(); ++i) {
+            // Phase A4: Deduplicate consecutive polyline points
+            if (!points.empty() && (seg_points[i] - points.back()).length() < 1e-6f) {
+                continue;
+            }
             points.push_back(seg_points[i]);
         }
     }
@@ -50,6 +54,10 @@ std::vector<Vec3> GeometryPath::to_polyline_fixed(int samples_per_segment) const
 
         size_t start_idx = points.empty() ? 0 : 1;
         for (size_t i = start_idx; i < seg_points.size(); ++i) {
+            // Phase A4: Deduplicate consecutive polyline points
+            if (!points.empty() && (seg_points[i] - points.back()).length() < 1e-6f) {
+                continue;
+            }
             points.push_back(seg_points[i]);
         }
     }

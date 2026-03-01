@@ -12,6 +12,20 @@ add_executable(tests
     test_continuity.cpp
     test_yarn_interlocking.cpp
     test_topology_geometry.cpp
+    test_geometry_knit_reference_behavior.cpp
+    test_geometry_reference_self_contact.cpp
+    test_geometry_reference_scaling_symmetry.cpp
+    test_geometry_reference_segment_transitions.cpp
+    test_geometry_ref_join_continuity_ext.cpp
+    test_geometry_ref_local_stitch_shapes.cpp
+    test_geometry_ref_global_clearance_ext.cpp
+    test_geometry_ref_numerical_robustness.cpp
+    test_geometry_ref_curvature_compliance_ext.cpp
+    test_geometry_ref_parameter_sensitivity.cpp
+    test_geometry_ref_symmetry_reflection_ext.cpp
+    test_geometry_ref_degenerate_boundaries.cpp
+    test_geometry_ref_sampling_consistency.cpp
+    test_geometry_ref_output_validity.cpp
     test_surface_graph.cpp
     test_surface_forces.cpp
     test_surface_solver.cpp

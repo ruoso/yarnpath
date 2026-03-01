@@ -14,6 +14,32 @@ static Vec3 safe_normalized(const Vec3& v, const Vec3& fallback = Vec3(1,0,0)) {
     return (len > 1e-8f) ? v * (1.0f / len) : fallback;
 }
 
+// Compute fabric normal from neighboring segment positions.
+// The tangent along the yarn (from prev to next position) lies in the fabric plane.
+// Cross with approximate vertical (Y-up) to get the normal perpendicular to the fabric.
+// Surface relaxation can push positions in Z, tilting the fabric plane.
+static Vec3 compute_fabric_normal(
+    const std::vector<Vec3>& positions, size_t idx, float z_sign) {
+
+    Vec3 prev = (idx > 0) ? positions[idx - 1] : positions[idx];
+    Vec3 next = (idx + 1 < positions.size()) ? positions[idx + 1] : positions[idx];
+    Vec3 tangent = safe_normalized(next - prev);
+
+    // Cross tangent with up to get a vector perpendicular to the fabric
+    Vec3 up = Vec3(0.0f, 1.0f, 0.0f);
+    Vec3 raw_normal = tangent.cross(up);
+    if (raw_normal.length() < 1e-6f) {
+        raw_normal = Vec3(0.0f, 0.0f, 1.0f);  // fallback for vertical tangents
+    }
+    Vec3 normal = safe_normalized(raw_normal);
+
+    // Orient so that positive normal = front side (matching z_bulge convention)
+    if (normal.dot(Vec3(0, 0, z_sign)) < 0) {
+        normal = normal * (-1.0f);
+    }
+    return normal;
+}
+
 // Helper struct to track state during geometry building
 struct GeometryBuildState {
     BezierSpline running_spline;
@@ -124,10 +150,9 @@ using LoopShapeParams = StitchShapeParams;
 
 // Pre-calculated crossover data for a single child passing through a loop
 struct CrossoverData {
-    Vec3 point;      // Where the child passes through the loop opening
-    Vec3 direction;  // Direction (tangent) the yarn should have at the crossover
-    Vec3 entry;      // Approach point below the crossover where child approaches from
-    Vec3 exit;       // Exit point beyond the crossover where child continues to
+    Vec3 entry;           // Where the crossing starts
+    Vec3 exit;            // Where the crossing ends
+    Vec3 exit_direction;  // Tangent direction at exit
 };
 
 // Pre-calculated geometry for a single loop (computed before spline generation)
@@ -143,8 +168,11 @@ struct PrecomputedLoopGeometry {
     Vec3 pass_through_dir;
 
     // Crossover data for children passing through this loop
-    // Key: child segment ID, Value: full crossover geometry
+    // Key: child segment ID, Value: entry crossover geometry
     std::map<SegmentId, CrossoverData> child_crossovers;
+
+    // Exit crossover data for children passing back through this loop after the loop
+    std::map<SegmentId, CrossoverData> child_exit_crossovers;
 
     // Clearance based on child distribution
     float clearance_radius;
@@ -331,8 +359,9 @@ static void add_connector_with_curvature_check(
 }
 
 // Build a surface-guided loop using explicit Hermite curves.
-// 3 curves: rise to front-side peak, cross at the top, fall from back-side peak.
-// Entry/exit are at base Z (no spikes). Z displacement peaks at the apex.
+// 2 curves: rise to apex, fall back down.
+// When entry ≈ exit (stitch through parent), the loop is a vertical arch
+// and travel direction is derived from the apex offset.
 static void build_surface_guided_loop(
     GeometryBuildState& state,
     BezierSpline& segment_spline,
@@ -342,17 +371,28 @@ static void build_surface_guided_loop(
     float z_bulge,
     const CurveAddedCallback& on_curve_added) {
 
-    // Horizontal travel direction (the base direction along the row)
-    Vec3 travel_dir = safe_normalized(exit_pt - entry);
+    // Travel direction: use entry→exit if they differ, otherwise use entry→apex projected horizontal
+    Vec3 entry_to_exit = exit_pt - entry;
+    Vec3 travel_dir;
+    if (entry_to_exit.length() > 1e-5f) {
+        travel_dir = safe_normalized(entry_to_exit);
+    } else {
+        // Entry ≈ exit: loop is a vertical arch at the crossing point.
+        // Use the horizontal component of entry→apex as the travel direction.
+        Vec3 to_apex = apex - entry;
+        Vec3 horizontal_to_apex = Vec3(to_apex.x, 0.0f, to_apex.z);
+        travel_dir = safe_normalized(horizontal_to_apex, Vec3(1.0f, 0.0f, 0.0f));
+    }
 
-    // Z-crossing through tangent lean:
-    // - Entry tangent leans toward +Z (front side) → smooth bulge in middle of rise
-    // - Apex tangent is neutral (horizontal at the top of the loop)
-    // - Exit tangent leans toward -Z (back side) → smooth bulge in middle of fall
-    Vec3 z_lean = Vec3(0.0f, 0.0f, z_bulge);
-    Vec3 entry_dir = safe_normalized(travel_dir + z_lean * 0.5f, travel_dir);
+    // Tangent lean: even mix of Z (fabric normal) and travel direction.
+    // The passthrough handles the pure front/back crossing; the loop lean
+    // adds both Z depth and horizontal spread to avoid overlapping with it.
+    Vec3 z_component = Vec3(0.0f, 0.0f, z_bulge);
+    Vec3 x_component = travel_dir * z_bulge;
+    Vec3 lean = (z_component + x_component) * 0.5f;
+    Vec3 entry_dir = safe_normalized(travel_dir + lean * 0.5f, travel_dir);
     Vec3 apex_dir = travel_dir;
-    Vec3 exit_dir = safe_normalized(travel_dir - z_lean * 0.5f, travel_dir);
+    Vec3 exit_dir = safe_normalized(travel_dir - lean * 0.5f, travel_dir);
 
     // Curve 1: entry -> apex (rising half with front-side Z bulge)
     auto rise_segs = build_curvature_safe_hermite_segments(
@@ -369,51 +409,27 @@ static void build_surface_guided_loop(
     }
 }
 
-// Build a passthrough through a parent loop's opening using Hermite connectors
+// Build a passthrough through a parent loop's opening using a single connector.
+// The crossover is a displacement of compressed_diameter in the fabric normal direction,
+// creating a smooth curve from the approach side to the loop side (or vice versa for exit).
 static void build_parent_passthrough(
     GeometryBuildState& state,
     BezierSpline& segment_spline,
     const CrossoverData& crossover,
     const CurveAddedCallback& on_curve_added) {
 
-    // 1. Approach: curve from current position to crossover entry
-    if (!state.running_spline.empty()) {
-        Vec3 current_end = state.running_spline.segments().back().end();
-        Vec3 current_dir = state.running_spline.segments().back().tangent(1.0f);
-        Vec3 to_entry = crossover.entry - current_end;
-        if (to_entry.length() > 1e-5f) {
-            Vec3 entry_dir = safe_normalized(to_entry);
-            add_connector_with_curvature_check(
-                state, segment_spline,
-                current_end, current_dir,
-                crossover.entry, entry_dir,
-                "crossover_entry", on_curve_added);
-        }
-    }
+    if (state.running_spline.empty()) return;
 
-    // 2. Through: curve through the crossover point with specified direction
-    if (!state.running_spline.empty()) {
-        Vec3 current_end = state.running_spline.segments().back().end();
-        Vec3 current_dir = state.running_spline.segments().back().tangent(1.0f);
-        add_connector_with_curvature_check(
-            state, segment_spline,
-            current_end, current_dir,
-            crossover.point, crossover.direction,
-            "crossover_through", on_curve_added);
-    }
+    Vec3 current_end = state.running_spline.segments().back().end();
+    Vec3 current_dir = state.running_spline.segments().back().tangent(1.0f);
+    Vec3 to_exit = crossover.exit - current_end;
+    if (to_exit.length() < 1e-5f) return;
 
-    // 3. Exit: curve from crossover point to exit point
-    Vec3 to_exit = crossover.exit - crossover.point;
-    if (to_exit.length() > 1e-5f && !state.running_spline.empty()) {
-        Vec3 current_end = state.running_spline.segments().back().end();
-        Vec3 current_dir = state.running_spline.segments().back().tangent(1.0f);
-        Vec3 exit_dir = safe_normalized(to_exit);
-        add_connector_with_curvature_check(
-            state, segment_spline,
-            current_end, current_dir,
-            crossover.exit, exit_dir,
-            "crossover_exit", on_curve_added);
-    }
+    add_connector_with_curvature_check(
+        state, segment_spline,
+        current_end, current_dir,
+        crossover.exit, crossover.exit_direction,
+        "passthrough", on_curve_added);
 }
 
 // Initialize the running spline with a tail segment pointing toward first_target.
@@ -475,7 +491,10 @@ static std::optional<Vec3> get_segment_base_position(
     return std::nullopt;
 }
 
-// Pre-compute all loop geometry before spline generation
+// Pre-compute all loop geometry before spline generation.
+// Two-pass approach:
+//   Pass 1: Compute basic geometry (shape, apex, apex_entry, apex_exit) for all loops.
+//   Pass 2: Compute crossover data, referencing each child's precomputed positions.
 static std::map<SegmentId, PrecomputedLoopGeometry> precompute_loop_geometry(
     const std::vector<YarnSegment>& segments,
     const std::vector<Vec3>& positions,
@@ -485,6 +504,7 @@ static std::map<SegmentId, PrecomputedLoopGeometry> precompute_loop_geometry(
 
     std::map<SegmentId, PrecomputedLoopGeometry> result;
 
+    // --- Pass 1: Basic geometry for all loops ---
     for (size_t i = 0; i < segments.size(); ++i) {
         const auto& seg = segments[i];
         if (!seg.forms_loop) continue;
@@ -492,17 +512,14 @@ static std::map<SegmentId, PrecomputedLoopGeometry> precompute_loop_geometry(
         SegmentId seg_id = static_cast<SegmentId>(i);
         PrecomputedLoopGeometry geom;
 
-        // 1. Get topology-based shape (now includes gauge-proportional parameters)
+        // 1. Get topology-based shape
         geom.shape = get_loop_shape_params(seg, state);
 
         // 2. Get child positions for this loop
         std::vector<Vec3> child_positions;
-        std::vector<SegmentId> child_ids;
         auto child_pos_it = loop_child_positions.find(seg_id);
-        auto child_id_it = loop_child_ids.find(seg_id);
         if (child_pos_it != loop_child_positions.end()) {
             child_positions = child_pos_it->second;
-            child_ids = child_id_it->second;
         }
 
         // 3. Calculate apex position using gauge-derived height
@@ -514,65 +531,107 @@ static std::map<SegmentId, PrecomputedLoopGeometry> precompute_loop_geometry(
         geom.apex.x += geom.shape.apex_lean_x;
         geom.apex.y = curr_pos.y + (geom.apex.y - curr_pos.y) * geom.shape.apex_height_factor * geom.shape.height_multiplier;
 
-        // 4. Calculate travel direction
-        Vec3 to_next = next_pos - curr_pos;
-        (void)to_next;
-
-        // 5. Entry/exit at base positions (no Z offset).
-        // Z-crossing is encoded in loop tangent directions, creating a smooth
-        // bulge through the middle of each half rather than pointy Z spikes.
+        // 4. Entry/exit at base positions
         geom.apex_entry = curr_pos;
         geom.apex_exit = next_pos;
 
         geom.pass_through_end = curr_pos;
         geom.pass_through_dir = safe_normalized(geom.apex - curr_pos, Vec3(0, 1, 0));
 
-        // 6. Calculate crossover data for children
-        // The child yarn passes through the parent loop at the CHILD's own height.
-        // The parent loop wraps around the child — the child doesn't travel to the apex.
-        // Only a Z-crossing is needed to represent the front/back topology.
-        if (!child_positions.empty()) {
-            // Build child_id -> position map for lookup
-            std::map<SegmentId, Vec3> child_pos_map;
-            for (size_t j = 0; j < child_ids.size(); ++j) {
-                child_pos_map[child_ids[j]] = child_positions[j];
-            }
-
-            // Z bulge for crossover direction (child crosses opposite to parent)
-            float crossover_z_bulge = geom.shape.z_bulge;
-
-            for (size_t j = 0; j < child_ids.size(); ++j) {
-                SegmentId child_id = child_ids[j];
-                Vec3 child_pos = child_positions[j];
-                CrossoverData crossover;
-
-                // Crossover point is at the child's own surface position
-                crossover.point = child_pos;
-
-                // Child travels mostly horizontally along its row
-                crossover.direction = safe_normalized(Vec3(1.0f, 0.0f, 0.0f));
-
-                // Entry/exit: small horizontal offset with Z-crossing for topology
-                float dx = state.effective_stitch_width * 0.15f;
-
-                // Child enters from the opposite Z side as the parent's entry
-                crossover.entry = child_pos - Vec3(dx, 0.0f, 0.0f);
-                crossover.entry.z -= crossover_z_bulge * 0.5f;
-
-                crossover.exit = child_pos + Vec3(dx, 0.0f, 0.0f);
-                crossover.exit.z += crossover_z_bulge * 0.5f;
-
-                geom.child_crossovers[child_id] = crossover;
-            }
-        }
-
-        // 7. Calculate clearance radius
+        // 5. Calculate clearance radius
         geom.clearance_radius = state.yarn_compressed_diameter * 1.5f;
         if (child_positions.size() > 1) {
             geom.clearance_radius *= 1.0f + 0.2f * (child_positions.size() - 1);
         }
 
         result[seg_id] = geom;
+    }
+
+    // --- Pass 2: Crossover data and parent/child offsets ---
+    // Now all loops have their basic geometry computed, so we can reference
+    // any child's precomputed apex_entry/apex_exit.
+    for (size_t i = 0; i < segments.size(); ++i) {
+        const auto& seg = segments[i];
+        if (!seg.forms_loop) continue;
+
+        SegmentId seg_id = static_cast<SegmentId>(i);
+        auto& geom = result[seg_id];
+
+        // Get child IDs for this loop
+        std::vector<SegmentId> child_ids;
+        auto child_id_it = loop_child_ids.find(seg_id);
+        if (child_id_it != loop_child_ids.end()) {
+            child_ids = child_id_it->second;
+        }
+        if (child_ids.empty()) continue;
+
+        // Determine the z_sign from the first child's orientation
+        LoopShapeParams first_child_shape = get_loop_shape_params(segments[child_ids[0]], state);
+        float z_sign = (first_child_shape.z_bulge >= 0) ? 1.0f : -1.0f;
+
+        // Compute parent travel direction for blending offsets
+        Vec3 parent_travel = safe_normalized(
+            geom.apex_exit - geom.apex_entry, Vec3(1.0f, 0.0f, 0.0f));
+
+        // Offset parent loop entry/exit: even mix of fabric normal and travel direction
+        Vec3 normal_entry = compute_fabric_normal(positions, i, z_sign);
+        Vec3 normal_exit = compute_fabric_normal(positions, i + 1 < positions.size() ? i + 1 : i, z_sign);
+        Vec3 offset_dir_entry = safe_normalized(normal_entry + parent_travel);
+        Vec3 offset_dir_exit = safe_normalized(normal_exit + parent_travel);
+        geom.apex_entry = geom.apex_entry + offset_dir_entry * state.yarn_compressed_radius;
+        geom.apex_exit = geom.apex_exit + offset_dir_exit * state.yarn_compressed_radius;
+
+        for (size_t j = 0; j < child_ids.size(); ++j) {
+            SegmentId child_id = child_ids[j];
+
+            // Look up the child's precomputed loop geometry for entry/exit positions
+            auto child_geom_it = result.find(child_id);
+            Vec3 child_loop_entry = positions[child_id];  // fallback
+            Vec3 child_loop_exit = (child_id + 1 < static_cast<SegmentId>(positions.size()))
+                ? positions[child_id + 1] : positions[child_id];  // fallback
+            if (child_geom_it != result.end()) {
+                child_loop_entry = child_geom_it->second.apex_entry;
+                child_loop_exit = child_geom_it->second.apex_exit;
+            }
+
+            // Child's travel direction
+            Vec3 child_travel = safe_normalized(
+                child_loop_exit - child_loop_entry,
+                Vec3(1.0f, 0.0f, 0.0f));
+
+            LoopShapeParams child_shape = get_loop_shape_params(segments[child_id], state);
+            float child_z_sign = (child_shape.z_bulge >= 0) ? 1.0f : -1.0f;
+
+            // Crossing offset: even mix of fabric normal and parent's travel direction.
+            // Use parent_travel for the X bias so the crossing direction is consistent
+            // with the parent loop's orientation, regardless of child travel direction.
+            Vec3 normal_at_entry = compute_fabric_normal(positions, child_id, child_z_sign);
+            Vec3 crossing_dir = safe_normalized(normal_at_entry + parent_travel);
+            Vec3 parent_offset_entry = crossing_dir * state.yarn_compressed_radius;
+            Vec3 child_offset_entry = crossing_dir * (-state.yarn_compressed_radius);
+
+            // --- Entry crossover: crossing through parent loop at child's loop entry ---
+            CrossoverData entry_crossover;
+            entry_crossover.entry = child_loop_entry + parent_offset_entry;
+            entry_crossover.exit = child_loop_entry + child_offset_entry;
+            entry_crossover.exit_direction = child_travel;
+
+            geom.child_crossovers[child_id] = entry_crossover;
+
+            // --- Exit crossover: crossing back through the SAME parent loop opening ---
+            // Negate the parent_travel X bias so the exit ends up on the correct side
+            // for the child to continue in its travel direction.
+            Vec3 exit_crossing_dir = safe_normalized(normal_at_entry - parent_travel);
+            Vec3 parent_offset_exit = exit_crossing_dir * state.yarn_compressed_radius;
+            Vec3 child_offset_exit = exit_crossing_dir * (-state.yarn_compressed_radius);
+
+            CrossoverData exit_crossover;
+            exit_crossover.entry = child_loop_entry + child_offset_exit;
+            exit_crossover.exit = child_loop_entry + parent_offset_exit;
+            exit_crossover.exit_direction = child_travel;
+
+            geom.child_exit_crossovers[child_id] = exit_crossover;
+        }
     }
 
     return result;
@@ -731,29 +790,46 @@ GeometryPath build_geometry_with_callback(
             if (precomp_it != precomputed_loops.end()) {
                 const auto& precomp = precomp_it->second;
 
+                // Determine loop entry/exit positions.
+                // If this segment passes through parents, use the crossover points
+                // directly so the loop starts/ends at the side-by-side crossing positions.
+                Vec3 loop_entry = precomp.apex_entry;
+                Vec3 loop_exit = precomp.apex_exit;
+                for (SegmentId parent_id : seg.through) {
+                    auto parent_geom_it = precomputed_loops.find(parent_id);
+                    if (parent_geom_it != precomputed_loops.end()) {
+                        auto entry_it = parent_geom_it->second.child_crossovers.find(seg_id);
+                        if (entry_it != parent_geom_it->second.child_crossovers.end()) {
+                            loop_entry = entry_it->second.exit;  // entry crossover exit = loop start
+                        }
+                        auto exit_it = parent_geom_it->second.child_exit_crossovers.find(seg_id);
+                        if (exit_it != parent_geom_it->second.child_exit_crossovers.end()) {
+                            loop_exit = exit_it->second.entry;  // exit crossover entry = loop end
+                        }
+                    }
+                }
+
                 // Phase B: Surface-guided loop construction
 
                 // 1. Connector from running spline end to loop entry
                 if (!state.running_spline.empty()) {
                     Vec3 spline_end = state.running_spline.segments().back().end();
                     Vec3 spline_dir = state.running_spline.segments().back().tangent(1.0f);
-                    Vec3 entry_pos = precomp.apex_entry;
-                    // Use horizontal travel direction, matching the loop's entry_dir
-                    Vec3 entry_dir = safe_normalized(precomp.apex_exit - precomp.apex_entry, Vec3(1, 0, 0));
+                    Vec3 entry_dir = safe_normalized(loop_exit - loop_entry, Vec3(1, 0, 0));
                     add_connector_with_curvature_check(
                         state, segment_spline,
                         spline_end, spline_dir,
-                        entry_pos, entry_dir,
+                        loop_entry, entry_dir,
                         "loop_entry_connector", on_curve_added);
                 }
 
-                // 2. Build the 2-segment loop using precomputed positions
+                // 2. Build the 2-segment loop using positions
                 //    Z-crossing encoded in tangent directions for smooth bulge
                 build_surface_guided_loop(
                     state, segment_spline,
-                    precomp.apex_entry,
+                    loop_entry,
                     precomp.apex,
-                    precomp.apex_exit,
+                    loop_exit,
                     precomp.shape.z_bulge,
                     on_curve_added);
 
@@ -781,6 +857,17 @@ GeometryPath build_geometry_with_callback(
                     spline_end, spline_dir,
                     next_pos, target_dir,
                     "connector", on_curve_added);
+            }
+        }
+
+        // After loop, build exit passthrough (crossing back through parent)
+        for (SegmentId parent_id : seg.through) {
+            auto parent_geom_it = precomputed_loops.find(parent_id);
+            if (parent_geom_it != precomputed_loops.end()) {
+                auto exit_it = parent_geom_it->second.child_exit_crossovers.find(seg_id);
+                if (exit_it != parent_geom_it->second.child_exit_crossovers.end()) {
+                    build_parent_passthrough(state, segment_spline, exit_it->second, on_curve_added);
+                }
             }
         }
 

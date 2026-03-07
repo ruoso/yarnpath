@@ -6,6 +6,7 @@
 #include <surface/surface_node.hpp>
 #include <surface/surface_edge.hpp>
 #include <surface/surface_constraint.hpp>
+#include <stitch_shape/stitch_shape.hpp>
 #include "config_json.hpp"
 
 namespace yarnpath {
@@ -22,6 +23,33 @@ NLOHMANN_JSON_SERIALIZE_ENUM(ConstraintType, {
     {ConstraintType::MinDistance, "MinDistance"},
 })
 
+// StitchShapeParams serialization
+inline void to_json(nlohmann::json& j, const StitchShapeParams& shape) {
+    j["z_bulge"] = shape.z_bulge;
+    j["loop_height"] = shape.loop_height;
+    j["loop_width"] = shape.loop_width;
+    j["z_bulge_factor"] = shape.z_bulge_factor;
+    j["apex_lean_x"] = shape.apex_lean_x;
+    j["apex_height_factor"] = shape.apex_height_factor;
+    j["symmetric_exit"] = shape.symmetric_exit;
+    j["entry_tangent_scale"] = shape.entry_tangent_scale;
+    j["width_multiplier"] = shape.width_multiplier;
+    j["height_multiplier"] = shape.height_multiplier;
+}
+
+inline void from_json(const nlohmann::json& j, StitchShapeParams& shape) {
+    shape.z_bulge = j.value("z_bulge", 0.0f);
+    shape.loop_height = j.value("loop_height", 0.0f);
+    shape.loop_width = j.value("loop_width", 0.0f);
+    shape.z_bulge_factor = j.value("z_bulge_factor", 1.0f);
+    shape.apex_lean_x = j.value("apex_lean_x", 0.0f);
+    shape.apex_height_factor = j.value("apex_height_factor", 1.0f);
+    shape.symmetric_exit = j.value("symmetric_exit", true);
+    shape.entry_tangent_scale = j.value("entry_tangent_scale", 1.0f);
+    shape.width_multiplier = j.value("width_multiplier", 1.0f);
+    shape.height_multiplier = j.value("height_multiplier", 1.0f);
+}
+
 // SurfaceNode serialization
 inline void to_json(nlohmann::json& j, const SurfaceNode& node) {
     j["id"] = node.id;
@@ -32,6 +60,8 @@ inline void to_json(nlohmann::json& j, const SurfaceNode& node) {
     j["mass"] = node.mass;
     j["is_pinned"] = node.is_pinned;
     j["forms_loop"] = node.forms_loop;
+    j["stitch_axis"] = node.stitch_axis;
+    j["shape"] = node.shape;
 }
 
 inline void from_json(const nlohmann::json& j, SurfaceNode& node) {
@@ -43,6 +73,8 @@ inline void from_json(const nlohmann::json& j, SurfaceNode& node) {
     node.mass = j["mass"].get<float>();
     node.is_pinned = j["is_pinned"].get<bool>();
     node.forms_loop = j["forms_loop"].get<bool>();
+    node.stitch_axis = j.value("stitch_axis", Vec3::unit_x());
+    node.shape = j.value("shape", StitchShapeParams{});
 }
 
 // SurfaceEdge serialization

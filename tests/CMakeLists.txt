@@ -26,6 +26,7 @@ add_executable(tests
     test_geometry_ref_degenerate_boundaries.cpp
     test_geometry_ref_sampling_consistency.cpp
     test_geometry_ref_output_validity.cpp
+    test_serialization.cpp
     test_surface_graph.cpp
     test_surface_forces.cpp
     test_surface_solver.cpp
@@ -40,6 +41,7 @@ target_link_libraries(tests PRIVATE
     yarn_path
     geometry
     surface
+    yarnpath_serialization
     GTest::gtest_main
 )
 

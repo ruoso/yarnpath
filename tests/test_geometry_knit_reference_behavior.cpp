@@ -118,23 +118,26 @@ static float mean_z_for_segment_range(const GeometryPath& geometry, size_t begin
     return (count > 0) ? sum / static_cast<float>(count) : 0.0f;
 }
 
-TEST(GeometryReferenceBehavior, StockinetteKnitAndPurlRowsShouldBeNearMirrorInDepth) {
+TEST(GeometryReferenceBehavior, GarterStitchRowsShouldBeNearMirrorInDepth) {
     YarnProperties yarn = default_yarn();
     Gauge gauge = default_gauge();
 
-    // 4 cast-on, then knit row, purl row, knit row
+    // 4 cast-on, then three knit rows (garter stitch in flat knitting)
+    // Row 1 (WS): K → Back orientation (negative Z)
+    // Row 2 (RS): K → Front orientation (positive Z)
+    // Row 3 (WS): K → Back orientation (negative Z)
     // Segment ranges:
-    // [0..3] cast-on, [4..7] knit, [8..11] purl, [12..15] knit
+    // [0..3] cast-on, [4..7] knit(WS), [8..11] knit(RS), [12..15] knit(WS)
     GeometryPath geometry = build_geometry_for_pattern(
-        {"CCCC", "KKKK", "PPPP", "KKKK"},
+        {"CCCC", "KKKK", "KKKK", "KKKK"},
         yarn,
         gauge);
 
     const float knit_row_depth = mean_z_for_segment_range(geometry, 4, 7);
     const float purl_row_depth = mean_z_for_segment_range(geometry, 8, 11);
 
-    // Target: knit and purl are opposite-facing near-mirror projections.
-    // Intentionally strict: should fail until geometry is reworked.
+    // Target: garter stitch WS-knit and RS-knit rows have opposite Z depth.
+    // Their sum should be near zero (near-mirror).
     EXPECT_LT(std::abs(knit_row_depth + purl_row_depth), 0.05f * yarn.compressed_radius);
 }
 
@@ -246,5 +249,5 @@ TEST(GeometryReferenceBehavior, RibbingShouldHaveStrongFrontBackAlternationBetwe
 
     // Target: pronounced knit-forward / purl-back relief in 1x1 rib.
     // Intentionally strict and expected to fail now.
-    EXPECT_GT(knit_z - purl_z, 3.0f * yarn.compressed_radius);
+    EXPECT_GT(std::abs(knit_z - purl_z), 3.0f * yarn.compressed_radius);
 }

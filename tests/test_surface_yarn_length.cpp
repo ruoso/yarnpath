@@ -168,7 +168,7 @@ TEST(SurfaceYarnLength, KnitVsPurlMass) {
     pattern.rows.push_back(row1);
 
     RowInstruction row2;
-    row2.side = RowSide::WS;
+    row2.side = RowSide::RS;
     row2.stitches = {instruction::Purl{}, instruction::Purl{}};
     pattern.rows.push_back(row2);
 
@@ -184,7 +184,7 @@ TEST(SurfaceYarnLength, KnitVsPurlMass) {
     float knit_mass_avg = (surface.node(2).mass + surface.node(3).mass) / 2.0f;
     float purl_mass_avg = (surface.node(4).mass + surface.node(5).mass) / 2.0f;
 
-    // Purl should have ~88% of knit mass
+    // RS Purl → Back orientation → 0.88 factor, should have ~88% of knit mass
     float mass_ratio = purl_mass_avg / knit_mass_avg;
     EXPECT_NEAR(mass_ratio, 0.88f, 0.02f)
         << "Purl nodes should have ~88% mass of knit nodes";
@@ -305,7 +305,7 @@ TEST(SurfaceYarnLength, StiffnessProportionalToYarnDensity) {
     pattern.rows.push_back(row1);
 
     RowInstruction row2;
-    row2.side = RowSide::WS;
+    row2.side = RowSide::RS;
     row2.stitches = {instruction::Purl{}, instruction::Purl{}};
     pattern.rows.push_back(row2);
 
@@ -317,7 +317,7 @@ TEST(SurfaceYarnLength, StiffnessProportionalToYarnDensity) {
     SurfaceGraph surface = SurfaceBuilder::from_yarn_path(yarn_path, yarn, gauge);
 
     // Find continuity edges in knit row (2->3) and purl row (4->5)
-    // Segments: 0-1=CastOn, 2-3=Knit, 4-5=Purl
+    // Segments: 0-1=CastOn, 2-3=Knit, 4-5=RS Purl (Back orientation)
     float knit_continuity_stiffness = 0.0f;
     float purl_continuity_stiffness = 0.0f;
 
@@ -353,7 +353,7 @@ TEST(SurfaceYarnLength, OrientationAffectsZPosition) {
     pattern.rows.push_back(row1);
 
     RowInstruction row2;
-    row2.side = RowSide::WS;
+    row2.side = RowSide::RS;
     row2.stitches = {instruction::Purl{}, instruction::Purl{}};
     pattern.rows.push_back(row2);
 
@@ -364,8 +364,8 @@ TEST(SurfaceYarnLength, OrientationAffectsZPosition) {
 
     SurfaceGraph surface = SurfaceBuilder::from_yarn_path(yarn_path, yarn, gauge);
 
-    // Knit segments: 2-3 should have positive Z
-    // Purl segments: 4-5 should have negative Z
+    // RS Knit segments: 2-3 → Front orientation → positive Z
+    // RS Purl segments: 4-5 → Back orientation → negative Z
     float knit_z_avg = (surface.node(2).position.z + surface.node(3).position.z) / 2.0f;
     float purl_z_avg = (surface.node(4).position.z + surface.node(5).position.z) / 2.0f;
 

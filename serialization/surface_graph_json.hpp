@@ -61,6 +61,7 @@ inline void to_json(nlohmann::json& j, const SurfaceNode& node) {
     j["is_pinned"] = node.is_pinned;
     j["forms_loop"] = node.forms_loop;
     j["stitch_axis"] = node.stitch_axis;
+    j["fabric_normal"] = node.fabric_normal;
     j["shape"] = node.shape;
 }
 
@@ -74,6 +75,7 @@ inline void from_json(const nlohmann::json& j, SurfaceNode& node) {
     node.is_pinned = j["is_pinned"].get<bool>();
     node.forms_loop = j["forms_loop"].get<bool>();
     node.stitch_axis = j.value("stitch_axis", Vec3::unit_x());
+    node.fabric_normal = j.value("fabric_normal", Vec3::unit_z());
     node.shape = j.value("shape", StitchShapeParams{});
 }
 

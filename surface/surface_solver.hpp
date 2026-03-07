@@ -79,6 +79,10 @@ private:
 
     // Check if all constraints are satisfied
     static bool constraints_satisfied(const SurfaceGraph& graph, float tolerance = 1e-4f);
+
+    // Compute fabric normals for all nodes after solve completes.
+    // Uses stitch_axis and continuity neighbors to determine the fabric surface normal.
+    static void compute_fabric_normals(SurfaceGraph& graph);
 };
 
 }  // namespace yarnpath

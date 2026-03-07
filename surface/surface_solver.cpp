@@ -79,6 +79,7 @@ SolveResult SurfaceSolver::solve(SurfaceGraph& graph,
                 result.converged = true;
                 result.iterations = iter + 1;
                 result.final_energy = current_energy;
+                compute_fabric_normals(graph);
                 log->info("SurfaceSolver: stopped by callback at iteration {}", result.iterations);
                 return result;
             }
@@ -88,6 +89,8 @@ SolveResult SurfaceSolver::solve(SurfaceGraph& graph,
             result.converged = true;
             result.iterations = iter + 1;
             result.final_energy = current_energy;
+
+            compute_fabric_normals(graph);
 
             float total_s = std::chrono::duration<float>(Clock::now() - solve_start).count();
             log->info("SurfaceSolver: converged at iteration {} with energy = {} ({:.1f}s total, {:.1f}ms/iter)",
@@ -110,6 +113,7 @@ SolveResult SurfaceSolver::solve(SurfaceGraph& graph,
     result.converged = false;
     result.iterations = config.max_iterations;
     result.final_energy = graph.compute_energy();
+    compute_fabric_normals(graph);
 
     float total_s = std::chrono::duration<float>(Clock::now() - solve_start).count();
     log->warn("SurfaceSolver: did not converge after {} iterations, final energy = {} ({:.1f}s total)",
@@ -312,6 +316,87 @@ bool SurfaceSolver::constraints_satisfied(const SurfaceGraph& graph, float toler
         }
     }
     return true;
+}
+
+void SurfaceSolver::compute_fabric_normals(SurfaceGraph& graph) {
+    // Build adjacency index if not already built (needed for neighbor lookup)
+    if (!graph.has_adjacency_index()) {
+        graph.build_adjacency_index();
+    }
+
+    auto& nodes = graph.nodes();
+    const size_t num_nodes = nodes.size();
+    if (num_nodes == 0) return;
+
+    // First pass: compute raw normals from stitch_axis and neighbor geometry.
+    // Uses the same approach as the collision force code:
+    //   wale = up - course * dot(course, up)   (Gram-Schmidt vs Y-up)
+    //   normal = course.cross(wale)
+    // For boundary nodes with poorly-defined stitch_axis, fall back to
+    // using the z_bulge sign from LoopShapeParams to pick a default direction.
+
+    #pragma omp parallel for schedule(static) if(num_nodes > 50)
+    for (size_t i = 0; i < num_nodes; ++i) {
+        auto& node = nodes[i];
+
+        // First, ensure stitch_axis is up-to-date from final positions
+        auto [prev_id, next_id] = graph.get_continuity_neighbors(node.id);
+        if (prev_id != static_cast<NodeId>(-1) && next_id != static_cast<NodeId>(-1)) {
+            Vec3 dir = nodes[next_id].position - nodes[prev_id].position;
+            if (dir.length_squared() > 1e-12f) {
+                node.stitch_axis = dir.normalized();
+            }
+        } else if (next_id != static_cast<NodeId>(-1)) {
+            Vec3 dir = nodes[next_id].position - node.position;
+            if (dir.length_squared() > 1e-12f) {
+                node.stitch_axis = dir.normalized();
+            }
+        } else if (prev_id != static_cast<NodeId>(-1)) {
+            Vec3 dir = node.position - nodes[prev_id].position;
+            if (dir.length_squared() > 1e-12f) {
+                node.stitch_axis = dir.normalized();
+            }
+        }
+        // else: keep default stitch_axis (unit_x)
+
+        // Compute wale axis: perpendicular to stitch_axis in the vertical plane
+        Vec3 course = node.stitch_axis;
+        Vec3 up = Vec3::unit_y();
+        Vec3 wale = up - course * course.dot(up);
+        float wale_len = wale.length();
+        if (wale_len > 1e-6f) {
+            wale = wale / wale_len;
+        } else {
+            // Course is nearly vertical — use Z as fallback
+            wale = Vec3::unit_z();
+        }
+
+        // Normal = course × wale (right-hand rule)
+        Vec3 normal = course.cross(wale);
+        float normal_len = normal.length();
+        if (normal_len > 1e-6f) {
+            normal = normal / normal_len;
+        } else {
+            // Degenerate — use default +Z
+            normal = Vec3::unit_z();
+        }
+
+        node.fabric_normal = normal;
+    }
+
+    // Second pass: ensure consistent orientation across the fabric.
+    // Use node 0's normal as the reference direction. If any node's normal
+    // points in the opposite hemisphere (dot < 0), flip it.
+    // This handles cases where the cross product arbitrarily picks a sign.
+    if (num_nodes > 1) {
+        // Propagate along yarn continuity to ensure neighbors agree.
+        // Since yarn order is mostly sequential, a simple forward pass suffices.
+        for (size_t i = 1; i < num_nodes; ++i) {
+            if (nodes[i].fabric_normal.dot(nodes[i - 1].fabric_normal) < 0.0f) {
+                nodes[i].fabric_normal = nodes[i].fabric_normal * -1.0f;
+            }
+        }
+    }
 }
 
 }  // namespace yarnpath

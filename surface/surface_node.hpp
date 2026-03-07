@@ -32,6 +32,11 @@ struct SurfaceNode {
     // Used to orient the anisotropic bounding volume in world space
     Vec3 stitch_axis = Vec3::unit_x();
 
+    // Local frame: fabric surface normal (front-facing direction)
+    // Computed at end of solve from stitch_axis and neighbor geometry.
+    // Points toward the "front" face of the fabric (positive Z in default layout).
+    Vec3 fabric_normal = Vec3::unit_z();
+
     // Position when stitch_axis was last computed (for lazy frame updates)
     Vec3 last_frame_position;
 

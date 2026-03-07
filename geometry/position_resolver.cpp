@@ -4,44 +4,75 @@
 
 namespace yarnpath {
 
-std::optional<Vec3> get_segment_base_position(
+std::vector<SegmentFrame> resolve_segment_frames(
     const YarnPath& yarn_path,
     const SurfaceGraph& surface,
     const YarnProperties& yarn,
     const std::map<SegmentId, std::vector<SegmentId>>& parent_map,
-    const std::map<SegmentId, std::vector<SegmentId>>& children_map,
-    SegmentId segment_id) {
-    if (surface.has_segment(segment_id)) {
-        NodeId node_id = surface.node_for_segment(segment_id);
-        Vec3 base_pos = surface.node(node_id).position;
-        auto parents_it = parent_map.find(segment_id);
-        auto children_it = children_map.find(segment_id);
-        if (parents_it == parent_map.end() ||
-            (parents_it != parent_map.end() && parents_it->second.empty())) {
-            // no parents, go through children, find the lowest Y,
-            // make the base that - yarn diameter
-            float min_y = std::numeric_limits<float>::max();
-            if (children_it != children_map.end()) {
+    const std::map<SegmentId, std::vector<SegmentId>>& children_map) {
+
+    auto log = yarnpath::logging::get_logger();
+    const auto& segments = yarn_path.segments();
+    std::vector<SegmentFrame> frames(segments.size());
+
+    // First pass: read all data from surface nodes
+    for (size_t i = 0; i < segments.size(); ++i) {
+        SegmentId seg_id = static_cast<SegmentId>(i);
+        SegmentFrame& frame = frames[i];
+
+        if (surface.has_segment(seg_id)) {
+            NodeId node_id = surface.node_for_segment(seg_id);
+            const auto& node = surface.node(node_id);
+
+            frame.position = node.position;
+            frame.stitch_axis = node.stitch_axis;
+            frame.fabric_normal = node.fabric_normal;
+            frame.shape = node.shape;
+        } else {
+            log->warn("resolve_segment_frames: segment {} not in surface graph, using defaults", seg_id);
+            frame.position = Vec3::zero();
+            frame.stitch_axis = Vec3::unit_x();
+            frame.fabric_normal = Vec3::unit_z();
+            frame.shape = StitchShapeParams{};
+        }
+
+        // Derive wale_axis from fabric_normal and stitch_axis
+        frame.wale_axis = frame.fabric_normal.cross(frame.stitch_axis);
+        float wale_len = frame.wale_axis.length();
+        if (wale_len > 1e-6f) {
+            frame.wale_axis = frame.wale_axis * (1.0f / wale_len);
+        } else {
+            // Degenerate: fabric_normal parallel to stitch_axis
+            frame.wale_axis = Vec3::unit_y();
+        }
+    }
+
+    // Second pass: adjust parentless segments to sit below their children
+    for (size_t i = 0; i < segments.size(); ++i) {
+        SegmentId seg_id = static_cast<SegmentId>(i);
+        auto parents_it = parent_map.find(seg_id);
+        bool has_parents = (parents_it != parent_map.end() && !parents_it->second.empty());
+
+        if (!has_parents) {
+            auto children_it = children_map.find(seg_id);
+            if (children_it != children_map.end() && !children_it->second.empty()) {
+                float min_y = std::numeric_limits<float>::max();
                 for (SegmentId child_id : children_it->second) {
-                    auto child_pos_opt = get_segment_base_position(
-                        yarn_path, surface, yarn,
-                        parent_map, children_map, child_id);
-                    if (child_pos_opt.has_value()) {
-                        Vec3 child_pos = child_pos_opt.value();
-                        min_y = std::min(min_y, child_pos.y - yarn.compressed_radius * 2);
+                    if (child_id < frames.size()) {
+                        float child_y = frames[child_id].position.y - yarn.compressed_radius * 2;
+                        min_y = std::min(min_y, child_y);
                     }
                 }
-            }
-            if (min_y > base_pos.y) {
-                yarnpath::logging::get_logger()->debug(
-                    "get_segment_base_position: segment {} has no parents, adjusting base position from {} to {}",
-                    segment_id, base_pos.y, min_y - yarn.compressed_radius);
-                base_pos.y = min_y - yarn.compressed_radius;
+                if (min_y < frames[i].position.y) {
+                    log->debug("resolve_segment_frames: segment {} has no parents, adjusting Y from {} to {}",
+                               seg_id, frames[i].position.y, min_y - yarn.compressed_radius);
+                    frames[i].position.y = min_y - yarn.compressed_radius;
+                }
             }
         }
-        return base_pos;
     }
-    return std::nullopt;
+
+    return frames;
 }
 
 }  // namespace yarnpath

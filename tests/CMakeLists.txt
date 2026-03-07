@@ -28,6 +28,7 @@ add_executable(tests
     test_geometry_ref_output_validity.cpp
     test_serialization.cpp
     test_fabric_normal.cpp
+    test_segment_frame.cpp
     test_surface_graph.cpp
     test_surface_forces.cpp
     test_surface_solver.cpp

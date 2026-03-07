@@ -41,31 +41,9 @@ Vec3 calculate_apex_position(
     }
 }
 
-Vec3 compute_fabric_normal(
-    const std::vector<Vec3>& positions, size_t idx, float z_sign) {
-
-    Vec3 prev = (idx > 0) ? positions[idx - 1] : positions[idx];
-    Vec3 next = (idx + 1 < positions.size()) ? positions[idx + 1] : positions[idx];
-    Vec3 tangent = safe_normalized(next - prev);
-
-    // Cross tangent with up to get a vector perpendicular to the fabric
-    Vec3 up = Vec3(0.0f, 1.0f, 0.0f);
-    Vec3 raw_normal = tangent.cross(up);
-    if (raw_normal.length() < 1e-6f) {
-        raw_normal = Vec3(0.0f, 0.0f, 1.0f);  // fallback for vertical tangents
-    }
-    Vec3 normal = safe_normalized(raw_normal);
-
-    // Orient so that positive normal = front side (matching z_bulge convention)
-    if (normal.dot(Vec3(0, 0, z_sign)) < 0) {
-        normal = normal * (-1.0f);
-    }
-    return normal;
-}
-
 std::map<SegmentId, PrecomputedLoopGeometry> precompute_loop_geometry(
     const std::vector<YarnSegment>& segments,
-    const std::vector<Vec3>& positions,
+    const std::vector<SegmentFrame>& frames,
     const std::map<SegmentId, std::vector<Vec3>>& loop_child_positions,
     const std::map<SegmentId, std::vector<SegmentId>>& loop_child_ids,
     const YarnProperties& yarn,
@@ -95,8 +73,8 @@ std::map<SegmentId, PrecomputedLoopGeometry> precompute_loop_geometry(
         }
 
         // 3. Calculate apex position using gauge-derived height
-        Vec3 curr_pos = positions[i];
-        Vec3 next_pos = (i < positions.size() - 1) ? positions[i + 1] : positions[i];
+        Vec3 curr_pos = frames[i].position;
+        Vec3 next_pos = (i < frames.size() - 1) ? frames[i + 1].position : frames[i].position;
         geom.apex = calculate_apex_position(curr_pos, child_positions,
                                             effective_loop_height, yarn_compressed_diameter);
 
@@ -146,9 +124,10 @@ std::map<SegmentId, PrecomputedLoopGeometry> precompute_loop_geometry(
         Vec3 parent_travel = safe_normalized(
             geom.apex_exit - geom.apex_entry, Vec3(1.0f, 0.0f, 0.0f));
 
-        // Offset parent loop entry/exit: even mix of fabric normal and travel direction
-        Vec3 normal_entry = compute_fabric_normal(positions, i, z_sign);
-        Vec3 normal_exit = compute_fabric_normal(positions, i + 1 < positions.size() ? i + 1 : i, z_sign);
+        // Use the fabric normal from the segment frame (computed by the surface solver)
+        Vec3 normal_entry = frames[i].fabric_normal;
+        size_t next_idx = (i + 1 < frames.size()) ? i + 1 : i;
+        Vec3 normal_exit = frames[next_idx].fabric_normal;
         Vec3 offset_dir_entry = safe_normalized(normal_entry + parent_travel);
         Vec3 offset_dir_exit = safe_normalized(normal_exit + parent_travel);
         geom.apex_entry = geom.apex_entry + offset_dir_entry * yarn_compressed_radius;
@@ -164,7 +143,7 @@ std::map<SegmentId, PrecomputedLoopGeometry> precompute_loop_geometry(
         // Distribute slots clustered at the apex, where the loop opening is widest.
         // Slots are spread along the travel direction by yarn_compressed_diameter
         // for clearance, centered on the apex position.
-        Vec3 fabric_normal = compute_fabric_normal(positions, i, z_sign);
+        Vec3 fabric_normal = frames[i].fabric_normal;
 
         for (int s = 0; s < total_slots; ++s) {
             float offset = (static_cast<float>(s) - (total_slots - 1) / 2.0f)

@@ -6,6 +6,7 @@
 #include <math/cubic_bezier.hpp>
 #include "crossover_geometry.hpp"
 #include "geometry_build_state.hpp"
+#include "position_resolver.hpp"
 #include "yarn_path.hpp"
 #include <yarn/yarn_properties.hpp>
 #include <yarn/gauge.hpp>
@@ -53,19 +54,13 @@ Vec3 calculate_apex_position(
     float effective_loop_height,
     float yarn_compressed_diameter);
 
-// Compute fabric normal from neighboring segment positions.
-// The tangent along the yarn (from prev to next position) lies in the fabric plane.
-// Cross with approximate vertical (Y-up) to get the normal perpendicular to the fabric.
-Vec3 compute_fabric_normal(
-    const std::vector<Vec3>& positions, size_t idx, float z_sign);
-
 // Pre-compute all loop geometry before spline generation.
 // Two-pass approach:
 //   Pass 1: Compute basic geometry (shape, apex, apex_entry, apex_exit) for all loops.
 //   Pass 2: Compute crossover data, referencing each child's precomputed positions.
 std::map<SegmentId, PrecomputedLoopGeometry> precompute_loop_geometry(
     const std::vector<YarnSegment>& segments,
-    const std::vector<Vec3>& positions,
+    const std::vector<SegmentFrame>& frames,
     const std::map<SegmentId, std::vector<Vec3>>& loop_child_positions,
     const std::map<SegmentId, std::vector<SegmentId>>& loop_child_ids,
     const YarnProperties& yarn,

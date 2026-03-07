@@ -52,21 +52,9 @@ GeometryPath build_geometry_with_callback(
         }
     }
 
-    // Collect all positions from surface in yarn order
-    std::vector<Vec3> positions;
-    positions.reserve(segments.size());
-
-    for (size_t i = 0; i < segments.size(); ++i) {
-        SegmentId seg_id = static_cast<SegmentId>(i);
-        auto pos_opt = get_segment_base_position(
-            yarn_path, surface, yarn,
-            segment_parents, segment_children, seg_id);
-        if (!pos_opt.has_value()) {
-            log->warn("build_geometry: segment {} position could not be determined, using origin", seg_id);
-            pos_opt = Vec3::zero();
-        }
-        positions.push_back(pos_opt.value());
-    }
+    // Resolve full segment frames (position + local axes) from the surface
+    auto frames = resolve_segment_frames(
+        yarn_path, surface, yarn, segment_parents, segment_children);
 
     // Create a cache of which segments have parents
     std::vector<bool> segment_has_parent(segments.size(), false);
@@ -84,7 +72,7 @@ GeometryPath build_geometry_with_callback(
         const auto& seg = segments[i];
         SegmentId child_id = static_cast<SegmentId>(i);
         for (SegmentId parent_id : seg.through) {
-            loop_apex_positions[parent_id].push_back(positions[i]);
+            loop_apex_positions[parent_id].push_back(frames[i].position);
             loop_child_ids[parent_id].push_back(child_id);
         }
     }
@@ -99,7 +87,7 @@ GeometryPath build_geometry_with_callback(
 
     // Pre-compute all loop geometry before spline generation
     auto precomputed_loops = precompute_loop_geometry(
-        segments, positions, loop_apex_positions, loop_child_ids,
+        segments, frames, loop_apex_positions, loop_child_ids,
         yarn, gauge,
         state.effective_loop_height,
         state.yarn_compressed_diameter, state.yarn_compressed_radius);
@@ -108,7 +96,7 @@ GeometryPath build_geometry_with_callback(
     // Compute the first target point for the init tail direction.
     // This ensures the init tail points where segment 0 actually goes,
     // so there's no sharp direction change at the start.
-    Vec3 first_target = positions.size() > 1 ? positions[1] : positions[0] + Vec3(1, 0, 0);
+    Vec3 first_target = frames.size() > 1 ? frames[1].position : frames[0].position + Vec3(1, 0, 0);
     if (!segments.empty() && segments[0].forms_loop) {
         auto precomp_it = precomputed_loops.find(0);
         if (precomp_it != precomputed_loops.end()) {
@@ -117,7 +105,7 @@ GeometryPath build_geometry_with_callback(
             first_target = precomp_it->second.apex;
         }
     }
-    initialize_running_spline(state, positions[0], first_target);
+    initialize_running_spline(state, frames[0].position, first_target);
 
     // Slot claiming state: tracks which crossover slots have been consumed per parent
     std::map<SegmentId, std::set<size_t>> claimed_slots;
@@ -134,8 +122,8 @@ GeometryPath build_geometry_with_callback(
         SegmentGeometry geom;
         geom.segment_id = seg_id;
 
-        Vec3 curr_pos = positions[i];
-        Vec3 next_pos = (i < positions.size() - 1) ? positions[i + 1] : positions[i];
+        Vec3 curr_pos = frames[i].position;
+        Vec3 next_pos = (i < frames.size() - 1) ? frames[i + 1].position : frames[i].position;
 
         // Get child positions if this is a loop
         std::vector<Vec3> child_positions;
@@ -165,7 +153,7 @@ GeometryPath build_geometry_with_callback(
                 auto entry_crossover = claim_nearest_slot(
                     parent_geom_it->second.crossover_slots,
                     claimed_slots[parent_id],
-                    positions[seg_id],
+                    frames[seg_id].position,
                     state.yarn_compressed_radius,
                     /*as_entry=*/true);
                 claimed_entry_crossovers[{parent_id, seg_id}] = entry_crossover;
@@ -175,7 +163,7 @@ GeometryPath build_geometry_with_callback(
                     auto exit_crossover = claim_nearest_slot(
                         parent_geom_it->second.crossover_slots,
                         claimed_slots[parent_id],
-                        positions[seg_id],
+                        frames[seg_id].position,
                         state.yarn_compressed_radius,
                         /*as_entry=*/false);
                     claimed_exit_crossovers[{parent_id, seg_id}] = exit_crossover;

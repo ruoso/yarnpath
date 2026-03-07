@@ -105,7 +105,19 @@ GeometryPath build_geometry_with_callback(
             first_target = precomp_it->second.apex;
         }
     }
-    initialize_running_spline(state, frames[0].position, first_target);
+    // Initialize the running spline with a tail segment.
+    // We route it through the callback so every curve is tracked.
+    {
+        BezierSpline init_spline;
+        CurveAddedCallback init_cb = nullptr;
+        if (callback_ptr) {
+            init_cb = [&](const std::string& description) {
+                (*callback_ptr)(0, description, state.running_spline);
+            };
+        }
+        initialize_running_spline(state, frames[0].position, first_target,
+                                  init_spline, init_cb);
+    }
 
     // Slot claiming state: tracks which crossover slots have been consumed per parent
     std::map<SegmentId, std::set<size_t>> claimed_slots;
@@ -171,84 +183,41 @@ GeometryPath build_geometry_with_callback(
             }
         }
 
-        // Build entry passthrough through parent crossover points
-        for (SegmentId parent_id : seg.through) {
-            auto entry_it = claimed_entry_crossovers.find({parent_id, seg_id});
-            if (entry_it != claimed_entry_crossovers.end()) {
-                build_parent_passthrough(state, segment_spline, entry_it->second, on_curve_added);
-            }
-        }
-
         // Then build this segment's own geometry
         if (seg.forms_loop) {
             auto precomp_it = precomputed_loops.find(seg_id);
             if (precomp_it != precomputed_loops.end()) {
                 auto& precomp = precomp_it->second;
 
-                // Determine loop entry/exit positions.
-                // Use claimed crossover points so the loop connects to crossings.
-                Vec3 loop_entry = precomp.apex_entry;
-                Vec3 loop_exit = precomp.apex_exit;
+                // Collect entry and exit crossover data for the unified chain
+                std::vector<CrossoverData> entry_xovers;
+                std::vector<CrossoverData> exit_xovers;
                 for (SegmentId parent_id : seg.through) {
                     auto entry_it = claimed_entry_crossovers.find({parent_id, seg_id});
                     if (entry_it != claimed_entry_crossovers.end()) {
-                        loop_entry = entry_it->second.exit;  // entry crossover exit = loop start
+                        entry_xovers.push_back(entry_it->second);
                     }
                     auto exit_it = claimed_exit_crossovers.find({parent_id, seg_id});
                     if (exit_it != claimed_exit_crossovers.end()) {
-                        loop_exit = exit_it->second.entry;  // exit crossover entry = loop end
+                        exit_xovers.push_back(exit_it->second);
                     }
                 }
 
-                // Update crossover slot positions to cluster at apex on the actual
-                // loop path. Uses the actual loop travel direction so children
-                // (processed later) claim correctly positioned slots.
-                {
-                    int num_slots = static_cast<int>(precomp.crossover_slots.size());
-                    Vec3 travel = safe_normalized(loop_exit - loop_entry, Vec3(1, 0, 0));
-                    for (int s = 0; s < num_slots; ++s) {
-                        float offset = (static_cast<float>(s) - (num_slots - 1) / 2.0f)
-                                     * state.yarn_compressed_diameter;
-                        Vec3 normal = precomp.crossover_slots[s].crossing_normal;
-                        precomp.crossover_slots[s].position = precomp.apex + travel * offset
-                                                            + normal * state.yarn_compressed_radius;
-                        precomp.crossover_slots[s].tangent = travel;
-                    }
-                }
-
-                // Phase B: Surface-guided loop construction
-
-                // 1. Connector from running spline end to loop entry
-                if (!state.running_spline.empty()) {
-                    Vec3 spline_end = state.running_spline.segments().back().end();
-                    Vec3 spline_dir = state.running_spline.segments().back().tangent(1.0f);
-                    Vec3 entry_dir = safe_normalized(loop_exit - loop_entry, Vec3(1, 0, 0));
-                    add_connector_with_curvature_check(
-                        state, segment_spline,
-                        spline_end, spline_dir,
-                        loop_entry, entry_dir,
-                        "loop_entry_connector", on_curve_added);
-                }
-
-                // 2. Build the loop: route through crossover slot waypoints if any,
-                //    otherwise use simple 2-segment loop
-                if (!precomp.crossover_slots.empty()) {
-                    build_surface_guided_loop_with_crossings(
-                        state, segment_spline,
-                        loop_entry, precomp.apex, loop_exit,
-                        precomp.shape.z_bulge,
-                        precomp.crossover_slots,
-                        on_curve_added);
-                } else {
-                    build_surface_guided_loop(
-                        state, segment_spline,
-                        loop_entry, precomp.apex, loop_exit,
-                        precomp.shape.z_bulge,
-                        on_curve_added);
-                }
+                // Build unified chain: crossover entry → loop → crossover exit
+                // All waypoints in one natural spline for globally smooth tangents.
+                build_full_loop_chain(
+                    state, segment_spline, precomp,
+                    entry_xovers, exit_xovers,
+                    on_curve_added);
 
             } else {
-                // Fallback: simple connector if no precomputed data
+                // Fallback: entry passthroughs + simple connector
+                for (SegmentId parent_id : seg.through) {
+                    auto entry_it = claimed_entry_crossovers.find({parent_id, seg_id});
+                    if (entry_it != claimed_entry_crossovers.end()) {
+                        build_parent_passthrough(state, segment_spline, entry_it->second, on_curve_added);
+                    }
+                }
                 if (!state.running_spline.empty()) {
                     Vec3 spline_end = state.running_spline.segments().back().end();
                     Vec3 spline_dir = state.running_spline.segments().back().tangent(1.0f);
@@ -261,7 +230,13 @@ GeometryPath build_geometry_with_callback(
                 }
             }
         } else {
-            // Non-loop segment: simple connector
+            // Non-loop segment: entry passthroughs + simple connector
+            for (SegmentId parent_id : seg.through) {
+                auto entry_it = claimed_entry_crossovers.find({parent_id, seg_id});
+                if (entry_it != claimed_entry_crossovers.end()) {
+                    build_parent_passthrough(state, segment_spline, entry_it->second, on_curve_added);
+                }
+            }
             if (!state.running_spline.empty()) {
                 Vec3 spline_end = state.running_spline.segments().back().end();
                 Vec3 spline_dir = state.running_spline.segments().back().tangent(1.0f);
@@ -271,17 +246,6 @@ GeometryPath build_geometry_with_callback(
                     spline_end, spline_dir,
                     next_pos, target_dir,
                     "connector", on_curve_added);
-            }
-        }
-
-        // Build exit passthrough (only if this segment forms a loop,
-        // since non-loop children only cross once through the parent).
-        if (seg.forms_loop) {
-            for (SegmentId parent_id : seg.through) {
-                auto exit_it = claimed_exit_crossovers.find({parent_id, seg_id});
-                if (exit_it != claimed_exit_crossovers.end()) {
-                    build_parent_passthrough(state, segment_spline, exit_it->second, on_curve_added);
-                }
             }
         }
 

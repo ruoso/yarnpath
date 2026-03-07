@@ -45,8 +45,9 @@ inline PatternInstructions create_pattern(const std::vector<std::string>& rows) 
 // Default yarn properties for testing (typical worsted weight)
 inline YarnProperties default_yarn() {
     YarnProperties yarn;
-    yarn.relaxed_radius = 0.75f;      // mm
-    yarn.compressed_radius = 0.5f;    // mm
+    yarn.relaxed_radius = 1.75f;      // mm (3.5mm diameter relaxed)
+    yarn.compressed_radius = 0.75f;   // mm (1.5mm diameter in fabric)
+    yarn.min_bend_radius = 2.25f;     // mm (3x compressed_radius)
     yarn.stiffness = 0.8f;            // relative stiffness
     yarn.elasticity = 0.3f;           // 30% max stretch
     yarn.tension = 0.5f;              // medium tension

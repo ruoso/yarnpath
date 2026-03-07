@@ -28,8 +28,16 @@ struct PrecomputedLoopGeometry {
     Vec3 apex;
     Vec3 apex_entry;
     Vec3 apex_exit;
-    Vec3 pass_through_end;
-    Vec3 pass_through_dir;
+
+    // U-shape through-opening waypoints (where yarn passes through parent opening)
+    Vec3 entry_through;   // Below entry, at base Z (no z_bulge)
+    Vec3 exit_through;    // Below exit, at base Z (no z_bulge)
+
+    // Fabric normal direction for computing leg bulge at build time
+    Vec3 fabric_normal;
+
+    // Needle wrap radius: curvature at apex ≤ 1/wrap_radius
+    float wrap_radius = 0.0f;
 
     // Crossover slots distributed evenly along the parent loop path.
     // Ordered from entry → apex → exit. Count = sum(2 if child.forms_loop else 1).
@@ -88,27 +96,22 @@ void add_connector_with_curvature_check(
     const std::string& description,
     const CurveAddedCallback& on_curve_added);
 
-// Build a surface-guided loop using explicit Hermite curves.
-// 2 curves: rise to apex, fall back down.
+// Build a U-shaped loop using 5 waypoints:
+// entry → entry_through (dip) → apex (rise) → exit_through (dip) → exit
+// Tangent directions derived from Catmull-Rom through the waypoint sequence.
 void build_surface_guided_loop(
     GeometryBuildState& state,
     BezierSpline& segment_spline,
-    const Vec3& entry,
-    const Vec3& apex,
-    const Vec3& exit_pt,
-    float z_bulge,
+    const PrecomputedLoopGeometry& loop_geom,
     const CurveAddedCallback& on_curve_added);
 
-// Build a surface-guided loop with waypoints at crossover slot positions.
-// Slots are clustered near the apex; they replace the explicit apex waypoint.
+// Build a U-shaped loop with crossover waypoints inserted between the
+// through-opening points. Sequence:
+// entry → entry_through → [crossover slots near apex] → exit_through → exit
 void build_surface_guided_loop_with_crossings(
     GeometryBuildState& state,
     BezierSpline& segment_spline,
-    const Vec3& entry,
-    const Vec3& apex,
-    const Vec3& exit_pt,
-    float z_bulge,
-    const std::vector<CrossoverSlot>& crossover_slots,
+    const PrecomputedLoopGeometry& loop_geom,
     const CurveAddedCallback& on_curve_added);
 
 // Build a passthrough through a parent loop's opening using a single connector.
@@ -118,11 +121,27 @@ void build_parent_passthrough(
     const CrossoverData& crossover,
     const CurveAddedCallback& on_curve_added);
 
+// Build the full chain for a loop-forming segment as one unified natural spline.
+// Includes crossover entry waypoints, loop interior waypoints (with child
+// crossover slots if present), and crossover exit waypoints.  By feeding all
+// waypoints to the natural spline solver at once, the tangents at every junction
+// are globally optimized, eliminating the high-curvature connectors that result
+// from stitching independent curves together.
+void build_full_loop_chain(
+    GeometryBuildState& state,
+    BezierSpline& segment_spline,
+    const PrecomputedLoopGeometry& loop_geom,
+    const std::vector<CrossoverData>& entry_crossovers,
+    const std::vector<CrossoverData>& exit_crossovers,
+    const CurveAddedCallback& on_curve_added);
+
 // Initialize the running spline with a tail segment pointing toward first_target.
 void initialize_running_spline(
     GeometryBuildState& state,
     const Vec3& start_pos,
-    const Vec3& first_target);
+    const Vec3& first_target,
+    BezierSpline& segment_spline,
+    const CurveAddedCallback& on_curve_added);
 
 }  // namespace yarnpath
 

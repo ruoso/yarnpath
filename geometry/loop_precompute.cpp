@@ -79,17 +79,33 @@ std::map<SegmentId, PrecomputedLoopGeometry> precompute_loop_geometry(
                                             effective_loop_height, yarn_compressed_diameter);
 
         // Apply shape modifiers to apex
-        geom.apex.x += geom.shape.apex_lean_x;
         geom.apex.y = curr_pos.y + (geom.apex.y - curr_pos.y) * geom.shape.apex_height_factor * geom.shape.height_multiplier;
+
+        // Apply lean along stitch_axis (not world X) for decreases
+        geom.apex = geom.apex + frames[i].stitch_axis * geom.shape.apex_lean_x;
+
+        // Apex wraps the needle and returns to the real Z position.
+        // z_bulge is applied to the legs (entry_through/exit_through), not here.
 
         // 4. Entry/exit at base positions
         geom.apex_entry = curr_pos;
         geom.apex_exit = next_pos;
 
-        geom.pass_through_end = curr_pos;
-        geom.pass_through_dir = safe_normalized(geom.apex - curr_pos, Vec3(0, 1, 0));
+        // 5. U-shape through-opening waypoints: yarn dips below base.
+        // No z_bulge here — the dip is at base Z.  The z_bulge appears
+        // on the loop legs (between dip and apex), added at build time.
+        float dip_depth = yarn_compressed_diameter;
+        Vec3 wale = frames[i].wale_axis;
+        Vec3 fnormal = frames[i].fabric_normal;
 
-        // 5. Calculate clearance radius
+        geom.entry_through = curr_pos - wale * dip_depth;
+        geom.exit_through = next_pos - wale * dip_depth;
+        geom.fabric_normal = fnormal;
+
+        // Wrap radius: curvature at apex bounded by needle wrap
+        geom.wrap_radius = gauge.needle_diameter * 0.5f + yarn_compressed_radius;
+
+        // 6. Calculate clearance radius
         geom.clearance_radius = yarn_compressed_diameter * 1.5f;
         if (child_positions.size() > 1) {
             geom.clearance_radius *= 1.0f + 0.2f * (child_positions.size() - 1);
@@ -124,15 +140,6 @@ std::map<SegmentId, PrecomputedLoopGeometry> precompute_loop_geometry(
         Vec3 parent_travel = safe_normalized(
             geom.apex_exit - geom.apex_entry, Vec3(1.0f, 0.0f, 0.0f));
 
-        // Use the fabric normal from the segment frame (computed by the surface solver)
-        Vec3 normal_entry = frames[i].fabric_normal;
-        size_t next_idx = (i + 1 < frames.size()) ? i + 1 : i;
-        Vec3 normal_exit = frames[next_idx].fabric_normal;
-        Vec3 offset_dir_entry = safe_normalized(normal_entry + parent_travel);
-        Vec3 offset_dir_exit = safe_normalized(normal_exit + parent_travel);
-        geom.apex_entry = geom.apex_entry + offset_dir_entry * yarn_compressed_radius;
-        geom.apex_exit = geom.apex_exit + offset_dir_exit * yarn_compressed_radius;
-
         // Count total crossover slots needed:
         // loop-forming children need 2 (entry + exit), others need 1
         int total_slots = 0;
@@ -140,9 +147,10 @@ std::map<SegmentId, PrecomputedLoopGeometry> precompute_loop_geometry(
             total_slots += segments[child_id].forms_loop ? 2 : 1;
         }
 
-        // Distribute slots clustered at the apex, where the loop opening is widest.
-        // Slots are spread along the travel direction by yarn_compressed_diameter
-        // for clearance, centered on the apex position.
+        // Distribute slots at the parent loop's APEX, where the loop is
+        // most flexible and has the widest opening.  The parent loop path
+        // passes through these positions, and children cross here on their
+        // rising / falling legs.
         Vec3 fabric_normal = frames[i].fabric_normal;
 
         for (int s = 0; s < total_slots; ++s) {
@@ -150,8 +158,7 @@ std::map<SegmentId, PrecomputedLoopGeometry> precompute_loop_geometry(
                          * yarn_compressed_diameter;
 
             CrossoverSlot slot;
-            slot.position = geom.apex + parent_travel * offset
-                          + fabric_normal * yarn_compressed_radius;
+            slot.position = geom.apex + parent_travel * offset;
             slot.tangent = parent_travel;
             slot.crossing_normal = fabric_normal;
 
@@ -190,87 +197,70 @@ void add_connector_with_curvature_check(
     const std::string& description,
     const CurveAddedCallback& on_curve_added) {
 
-    auto segments = build_curvature_safe_hermite_segments(
+    auto curve = build_curvature_safe_hermite(
         start, start_dir, end, end_dir, state.max_curvature);
-    for (auto& seg : segments) {
-        add_curve_if_valid(state, segment_spline, seg, description, on_curve_added);
-    }
+    add_curve_if_valid(state, segment_spline, curve, description, on_curve_added);
 }
 
 void build_surface_guided_loop(
     GeometryBuildState& state,
     BezierSpline& segment_spline,
-    const Vec3& entry,
-    const Vec3& apex,
-    const Vec3& exit_pt,
-    float z_bulge,
+    const PrecomputedLoopGeometry& loop_geom,
     const CurveAddedCallback& on_curve_added) {
 
-    // Travel direction: use entry→exit if they differ, otherwise use entry→apex projected horizontal
-    Vec3 entry_to_exit = exit_pt - entry;
-    Vec3 travel_dir;
-    if (entry_to_exit.length() > 1e-5f) {
-        travel_dir = safe_normalized(entry_to_exit);
+    // 5-waypoint U-shaped loop:
+    //   entry → entry_through (dip into parent opening)
+    //   entry_through → apex   (rise to top of loop)
+    //   apex → exit_through    (descend back into parent opening)
+    //   exit_through → exit    (rise to base level)
+    std::vector<Vec3> waypoints = {
+        loop_geom.apex_entry,
+        loop_geom.entry_through,
+        loop_geom.apex,
+        loop_geom.exit_through,
+        loop_geom.apex_exit
+    };
+    std::vector<std::string> names = {
+        "loop_entry_dip", "loop_rise", "loop_fall", "loop_exit_rise"
+    };
+
+    // Entry tangent direction from the running spline, scaled to the first
+    // chord length.  The natural spline expects M_0 with magnitude ~chord.
+    // Using the raw connector derivative (whose magnitude reflects the
+    // connector's own chord length) would cause overshooting.
+    Vec3 entry_tangent;
+    if (!state.running_spline.segments().empty()) {
+        Vec3 dir = safe_normalized(
+            state.running_spline.segments().back().derivative(1.0f));
+        float first_chord = (waypoints[1] - waypoints[0]).length();
+        entry_tangent = dir * first_chord;
     } else {
-        // Entry ≈ exit: loop is a vertical arch at the crossing point.
-        // Use the horizontal component of entry→apex as the travel direction.
-        Vec3 to_apex = apex - entry;
-        Vec3 horizontal_to_apex = Vec3(to_apex.x, 0.0f, to_apex.z);
-        travel_dir = safe_normalized(horizontal_to_apex, Vec3(1.0f, 0.0f, 0.0f));
+        entry_tangent = waypoints[1] - waypoints[0];
     }
 
-    // Tangent lean: even mix of Z (fabric normal) and travel direction.
-    // The passthrough handles the pure front/back crossing; the loop lean
-    // adds both Z depth and horizontal spread to avoid overlapping with it.
-    Vec3 z_component = Vec3(0.0f, 0.0f, z_bulge);
-    Vec3 x_component = travel_dir * z_bulge;
-    Vec3 lean = (z_component + x_component) * 0.5f;
-    Vec3 entry_dir = safe_normalized(travel_dir + lean * 0.5f, travel_dir);
-    Vec3 apex_dir = travel_dir;
-    Vec3 exit_dir = safe_normalized(travel_dir - lean * 0.5f, travel_dir);
-
-    // Curve 1: entry -> apex (rising half with front-side Z bulge)
-    auto rise_segs = build_curvature_safe_hermite_segments(
-        entry, entry_dir, apex, apex_dir, state.max_curvature);
-    for (auto& seg : rise_segs) {
-        add_curve_if_valid(state, segment_spline, seg, "loop_rise", on_curve_added);
-    }
-
-    // Curve 2: apex -> exit (falling half with back-side Z bulge)
-    auto fall_segs = build_curvature_safe_hermite_segments(
-        apex, apex_dir, exit_pt, exit_dir, state.max_curvature);
-    for (auto& seg : fall_segs) {
-        add_curve_if_valid(state, segment_spline, seg, "loop_fall", on_curve_added);
+    auto curves = build_curvature_safe_hermite_chain(
+        waypoints, entry_tangent, state.max_curvature);
+    for (int i = 0; i < static_cast<int>(curves.size()); ++i) {
+        add_curve_if_valid(state, segment_spline, curves[i], names[i], on_curve_added);
     }
 }
 
 void build_surface_guided_loop_with_crossings(
     GeometryBuildState& state,
     BezierSpline& segment_spline,
-    const Vec3& entry,
-    const Vec3& apex,
-    const Vec3& exit_pt,
-    float z_bulge,
-    const std::vector<CrossoverSlot>& crossover_slots,
+    const PrecomputedLoopGeometry& loop_geom,
     const CurveAddedCallback& on_curve_added) {
 
+    const Vec3& entry = loop_geom.apex_entry;
+    const Vec3& entry_through = loop_geom.entry_through;
+    const Vec3& exit_through = loop_geom.exit_through;
+    const Vec3& exit_pt = loop_geom.apex_exit;
+    const auto& crossover_slots = loop_geom.crossover_slots;
+
     // Travel direction
-    Vec3 entry_to_exit = exit_pt - entry;
-    Vec3 travel_dir;
-    if (entry_to_exit.length() > 1e-5f) {
-        travel_dir = safe_normalized(entry_to_exit);
-    } else {
-        Vec3 to_apex = apex - entry;
-        Vec3 horizontal_to_apex = Vec3(to_apex.x, 0.0f, to_apex.z);
-        travel_dir = safe_normalized(horizontal_to_apex, Vec3(1.0f, 0.0f, 0.0f));
-    }
+    Vec3 travel_dir = safe_normalized(exit_pt - entry, Vec3(1.0f, 0.0f, 0.0f));
 
-    // Z lean for entry/exit tangents
-    Vec3 z_component = Vec3(0.0f, 0.0f, z_bulge);
-    Vec3 x_component = travel_dir * z_bulge;
-    Vec3 lean = (z_component + x_component) * 0.5f;
-
-    // Sort slots by projection onto travel direction for correct ordering
+    // Sort crossover slots by projection onto travel direction
     int total_slots = static_cast<int>(crossover_slots.size());
     struct SlotWithProj {
         int index;
@@ -284,12 +274,15 @@ void build_surface_guided_loop_with_crossings(
     std::sort(sorted.begin(), sorted.end(),
         [](const SlotWithProj& a, const SlotWithProj& b) { return a.proj < b.proj; });
 
-    // Build waypoints: entry → sorted slot positions → exit
-    // Slots are clustered at the apex, so they replace the explicit apex waypoint.
+    // Build waypoint sequence:
+    // entry → entry_through → [crossover slots near apex] → exit_through → exit
     std::vector<Vec3> waypoints;
     std::vector<std::string> names;
 
     waypoints.push_back(entry);
+    names.push_back("loop_entry_dip");
+
+    waypoints.push_back(entry_through);
     names.push_back("loop_rise");
 
     for (const auto& sp : sorted) {
@@ -297,26 +290,26 @@ void build_surface_guided_loop_with_crossings(
         names.push_back("loop_crossing");
     }
 
+    waypoints.push_back(exit_through);
+    names.push_back("loop_fall");
+
     waypoints.push_back(exit_pt);
 
-    // Compute tangent directions: Z-lean at entry/exit, travel_dir at slots
-    int n = static_cast<int>(waypoints.size());
-    std::vector<Vec3> dirs(n);
-    dirs[0] = safe_normalized(travel_dir + lean * 0.5f, travel_dir);
-    dirs[n - 1] = safe_normalized(travel_dir - lean * 0.5f, travel_dir);
-
-    for (int i = 1; i < n - 1; ++i) {
-        // Catmull-Rom: chord from prev to next
-        dirs[i] = safe_normalized(waypoints[i + 1] - waypoints[i - 1], travel_dir);
+    // Entry tangent: direction from running spline, magnitude = first chord.
+    Vec3 entry_tangent;
+    if (!state.running_spline.segments().empty()) {
+        Vec3 dir = safe_normalized(
+            state.running_spline.segments().back().derivative(1.0f));
+        float first_chord = (waypoints[1] - waypoints[0]).length();
+        entry_tangent = dir * first_chord;
+    } else {
+        entry_tangent = waypoints[1] - waypoints[0];
     }
 
-    // Build curve segments between consecutive waypoints
-    for (int i = 0; i < n - 1; ++i) {
-        auto segs = build_curvature_safe_hermite_segments(
-            waypoints[i], dirs[i], waypoints[i + 1], dirs[i + 1], state.max_curvature);
-        for (auto& s : segs) {
-            add_curve_if_valid(state, segment_spline, s, names[i], on_curve_added);
-        }
+    auto curves = build_curvature_safe_hermite_chain(
+        waypoints, entry_tangent, state.max_curvature);
+    for (int i = 0; i < static_cast<int>(curves.size()); ++i) {
+        add_curve_if_valid(state, segment_spline, curves[i], names[i], on_curve_added);
     }
 }
 
@@ -340,10 +333,123 @@ void build_parent_passthrough(
         "passthrough", on_curve_added);
 }
 
+void build_full_loop_chain(
+    GeometryBuildState& state,
+    BezierSpline& segment_spline,
+    const PrecomputedLoopGeometry& loop_geom,
+    const std::vector<CrossoverData>& entry_crossovers,
+    const std::vector<CrossoverData>& exit_crossovers,
+    const CurveAddedCallback& on_curve_added) {
+
+    if (state.running_spline.empty()) return;
+
+    std::vector<Vec3> waypoints;
+    std::vector<std::string> names;
+
+    // Helper: add a waypoint only if it differs from the previous one
+    auto push_waypoint = [&](const Vec3& pt, const std::string& name) {
+        if (!waypoints.empty() && (pt - waypoints.back()).length() < 1e-4f) return;
+        if (!waypoints.empty()) names.push_back(name);  // name labels the *curve* from prev to this
+        waypoints.push_back(pt);
+    };
+
+    // Start: current running spline position
+    waypoints.push_back(state.running_spline.segments().back().end());
+
+    // Approach: guide toward loop entry (base level)
+    push_waypoint(loop_geom.apex_entry, "loop_approach");
+
+    // Entry dip: yarn dips below parent base through the opening (no z_bulge)
+    push_waypoint(loop_geom.entry_through, "loop_entry_dip");
+
+    // z_bulge offset for leg waypoints
+    Vec3 leg_bulge = loop_geom.fabric_normal * loop_geom.shape.z_bulge;
+
+    // Compute the convex wrapping clearance for child yarns.
+    // Children passing through form a bundle of cylinders.  Rather than
+    // lining them up and computing min/max extents, we model the bundle
+    // as a single equivalent circle whose area equals N child circles:
+    //   bundle_radius = yarn_compressed_radius * sqrt(N)
+    // The parent loop wraps around this bundle.
+    Vec3 travel = safe_normalized(
+        loop_geom.apex_exit - loop_geom.apex_entry, Vec3(1, 0, 0));
+    bool has_children = !loop_geom.crossover_slots.empty();
+    int num_slots = static_cast<int>(loop_geom.crossover_slots.size());
+    float bundle_radius = state.yarn_compressed_radius * std::sqrt(static_cast<float>(std::max(num_slots, 1)));
+
+    // The parent must clear the bundle plus its own radius in the
+    // fabric-normal direction.  The wrap must follow the same side as
+    // z_bulge: knit loops bulge toward +fabric_normal, purl toward -.
+    float wrap_clearance = bundle_radius + state.yarn_compressed_radius;
+    float bulge_sign = (loop_geom.shape.z_bulge >= 0.0f) ? -1.0f : 1.0f;
+    Vec3 wrap_offset = loop_geom.fabric_normal * (wrap_clearance * bulge_sign);
+
+    // RISING LEG: midpoint between dip and apex, with z_bulge
+    {
+        Vec3 leg_mid = (loop_geom.entry_through + loop_geom.apex) * 0.5f + leg_bulge;
+        push_waypoint(leg_mid, "loop_entry_leg");
+    }
+
+    if (has_children) {
+        // Neutralize the leg bulge before the wrap begins: a waypoint
+        // at the apex level (no bulge) just outside the wrap region.
+        Vec3 pre_wrap = loop_geom.apex - travel * wrap_clearance;
+        push_waypoint(pre_wrap, "loop_pre_wrap");
+
+        // Wrap waypoints sit one yarn radius from the bundle circle edge,
+        // i.e. wrap_clearance = bundle_radius + yarn_compressed_radius
+        // from the bundle center, in both travel and normal directions.
+        Vec3 bundle_entry = loop_geom.apex - travel * wrap_clearance;
+        push_waypoint(bundle_entry + wrap_offset, "loop_wrap_entry");
+
+        // Apex: over the center of the bundle, offset outward
+        push_waypoint(loop_geom.apex + wrap_offset, "loop_apex");
+
+        Vec3 bundle_exit = loop_geom.apex + travel * wrap_clearance;
+        push_waypoint(bundle_exit + wrap_offset, "loop_wrap_exit");
+
+        // Neutralize the wrap offset after exiting: back to apex level.
+        Vec3 post_wrap = loop_geom.apex + travel * wrap_clearance;
+        push_waypoint(post_wrap, "loop_post_wrap");
+    } else {
+        push_waypoint(loop_geom.apex, "loop_apex");
+    }
+
+    // FALLING LEG: midpoint between apex and dip, with z_bulge
+    {
+        Vec3 leg_mid = (loop_geom.apex + loop_geom.exit_through) * 0.5f + leg_bulge;
+        push_waypoint(leg_mid, "loop_exit_leg");
+    }
+
+    // Exit dip: yarn dips back below parent base (no z_bulge)
+    push_waypoint(loop_geom.exit_through, "loop_exit_dip");
+
+    // Exit: back to base level
+    push_waypoint(loop_geom.apex_exit, "loop_exit");
+
+    // Need at least 2 waypoints for a chain
+    if (waypoints.size() < 2) return;
+
+    // Entry tangent: direction from running spline, magnitude = first chord
+    Vec3 dir = safe_normalized(
+        state.running_spline.segments().back().derivative(1.0f));
+    float first_chord = (waypoints[1] - waypoints[0]).length();
+    Vec3 entry_tangent = dir * first_chord;
+
+    auto curves = build_curvature_safe_hermite_chain(
+        waypoints, entry_tangent, state.max_curvature);
+    for (int i = 0; i < static_cast<int>(curves.size()); ++i) {
+        std::string name = (i < static_cast<int>(names.size())) ? names[i] : "chain_curve";
+        add_curve_if_valid(state, segment_spline, curves[i], name, on_curve_added);
+    }
+}
+
 void initialize_running_spline(
     GeometryBuildState& state,
     const Vec3& start_pos,
-    const Vec3& first_target) {
+    const Vec3& first_target,
+    BezierSpline& segment_spline,
+    const CurveAddedCallback& on_curve_added) {
 
     Vec3 initial_dir = safe_normalized(first_target - start_pos);
 
@@ -354,7 +460,7 @@ void initialize_running_spline(
         start_pos - initial_dir * init_length, initial_dir,
         start_pos, initial_dir,
         state.max_curvature);
-    state.running_spline.add_segment(init_seg);
+    add_curve_if_valid(state, segment_spline, init_seg, "init_tail", on_curve_added);
 }
 
 }  // namespace yarnpath

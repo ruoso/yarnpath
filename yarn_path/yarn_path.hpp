@@ -14,22 +14,38 @@ namespace yarnpath {
 // Segment index is the identity
 using SegmentId = uint32_t;
 
-// A yarn segment - may pass through parent loops, may form a loop at its end
+/// A yarn segment represents a piece of yarn between two loop events.
+///
+/// Each segment may pass through zero or more parent loops (via `through`) and
+/// may itself form a new loop (when `forms_loop` is true). The sequence of
+/// YarnSegments constitutes the linear yarn path through the fabric.
+///
+/// Orientation metadata describes the fabric-space appearance of the loop:
+/// - `orientation`: Front (knit face) or Back (purl face), after WS flipping.
+///   On WS rows, Front↔Back is swapped so the value reflects the finished fabric.
+/// - `wrap_direction`: Clockwise (right-leaning: K2tog, M1R) or CounterClockwise
+///   (left-leaning: SSK, M1L, S2KP). None for plain knit/purl.
+/// - `work_type`: Worked (yarn pulled through parents), Transferred (slip),
+///   or Created (cast-on, yarn-over, M1L/M1R — no parent loops).
+///
+/// `target_yarn_length` is pre-calculated in mm using gauge geometry and
+/// modifiers for orientation (purl ×0.88), wrap direction (K2tog ×0.82,
+/// SSK ×0.86, S2KP ×0.80), created loops (π × loop_height), slips
+/// (0.5 × stitch_width), and twisted pickups (M1L/M1R ×1.1).
 struct YarnSegment {
-    std::vector<SegmentId> through;  // Parent loop segments this passes through
-    bool forms_loop;                  // True if this segment ends by forming a loop
+    std::vector<SegmentId> through;   ///< Parent loop segments this passes through.
+    bool forms_loop;                   ///< True if this segment ends by forming a loop.
 
     // Re-export enums from stitch_shape for backward compatibility
     using LoopOrientation = yarnpath::LoopOrientation;
     using WrapDirection = yarnpath::WrapDirection;
     using WorkType = yarnpath::WorkType;
 
-    LoopOrientation orientation = LoopOrientation::Neutral;
-    WrapDirection wrap_direction = WrapDirection::None;
-    WorkType work_type = WorkType::Worked;
+    LoopOrientation orientation = LoopOrientation::Neutral;    ///< Fabric-space loop face (after WS flip).
+    WrapDirection wrap_direction = WrapDirection::None;         ///< Lean direction for decreases/increases.
+    WorkType work_type = WorkType::Worked;                     ///< How the yarn interacts with parents.
 
-    // Pre-calculated yarn length for this segment (mm of yarn consumed)
-    float target_yarn_length = 0.0f;
+    float target_yarn_length = 0.0f;  ///< Pre-calculated yarn consumption in mm.
 };
 
 // Forward declaration

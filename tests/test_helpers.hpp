@@ -17,7 +17,11 @@ inline PatternInstructions create_pattern(const std::vector<std::string>& rows) 
     PatternInstructions pattern;
     for (size_t i = 0; i < rows.size(); ++i) {
         RowInstruction row;
-        row.side = (i % 2 == 0) ? RowSide::RS : RowSide::WS;
+        if (i == 0) {
+            row.side = RowSide::RS;  // Cast-on is always RS
+        } else {
+            row.side = ((i - 1) % 2 == 0) ? RowSide::RS : RowSide::WS;  // Row 1=RS, Row 2=WS, ...
+        }
 
         // Parse simple notation
         for (char c : rows[i]) {

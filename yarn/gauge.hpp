@@ -1,6 +1,8 @@
 #ifndef YARNPATH_YARN_GAUGE_HPP
 #define YARNPATH_YARN_GAUGE_HPP
 
+#include <algorithm>
+
 namespace yarnpath {
 
 // Mapping from stitch grid to fabric space

@@ -1,4 +1,5 @@
 #include "stitch_shape.hpp"
+#include <algorithm>
 
 namespace yarnpath {
 

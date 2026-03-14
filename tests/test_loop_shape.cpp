@@ -425,6 +425,30 @@ TEST(LoopShapeTest, Loop_TubeNoSelfOverlap) {
     Gauge gauge = default_gauge();
     auto data = build_geometry_for({"CCC", "KKK", "BBB"}, yarn, gauge);
 
+    // Dump surface node positions for debugging
+    {
+        std::cerr << "Surface node positions:" << std::endl;
+        for (size_t i = 0; i < data.surface.node_count(); ++i) {
+            const auto& node = data.surface.node(static_cast<NodeId>(i));
+            std::cerr << "  Node " << i
+                      << " pos(" << node.position.x << "," << node.position.y << "," << node.position.z << ")"
+                      << " z_bulge=" << node.shape.z_bulge
+                      << " fabric_normal=(" << node.fabric_normal.x << "," << node.fabric_normal.y << "," << node.fabric_normal.z << ")"
+                      << std::endl;
+        }
+        // Check pairwise distances between non-adjacent nodes
+        for (size_t i = 0; i < data.surface.node_count(); ++i) {
+            for (size_t j = i + 2; j < data.surface.node_count(); ++j) {
+                float dist = (data.surface.node(static_cast<NodeId>(j)).position -
+                              data.surface.node(static_cast<NodeId>(i)).position).length();
+                if (dist < 3.0f) {
+                    std::cerr << "  Close nodes: " << i << " ↔ " << j
+                              << " dist=" << dist << std::endl;
+                }
+            }
+        }
+    }
+
     float tube_radius = yarn.compressed_radius;
     float min_clearance = 2.0f * tube_radius;  // two tubes touching
 
@@ -433,20 +457,47 @@ TEST(LoopShapeTest, Loop_TubeNoSelfOverlap) {
     struct SamplePoint {
         Vec3 pos;
         float arc;  // cumulative arc-length from yarn start
+        int seg_idx;
     };
 
     std::vector<SamplePoint> pts;
     float cumul = 0.0f;
     const int SPB = 20;  // samples per Bézier curve
 
+    int seg_idx = 0;
     for (const auto& seg : data.geometry.segments()) {
         for (const auto& curve : seg.curve.segments()) {
             float curve_len = curve.arc_length(SPB);
             for (int j = 0; j <= SPB; ++j) {
                 float t = static_cast<float>(j) / static_cast<float>(SPB);
-                pts.push_back({curve.evaluate(t), cumul + curve_len * t});
+                pts.push_back({curve.evaluate(t), cumul + curve_len * t, seg_idx});
             }
             cumul += curve_len;
+        }
+        seg_idx++;
+    }
+
+    // Print per-segment bounding info for debugging
+    {
+        int si = 0;
+        float seg_start_arc = 0.0f;
+        for (const auto& seg : data.geometry.segments()) {
+            float seg_arc = 0.0f;
+            Vec3 lo(1e9f, 1e9f, 1e9f), hi(-1e9f, -1e9f, -1e9f);
+            for (const auto& curve : seg.curve.segments()) {
+                seg_arc += curve.arc_length(SPB);
+                for (int j = 0; j <= SPB; ++j) {
+                    float t = static_cast<float>(j) / static_cast<float>(SPB);
+                    Vec3 p = curve.evaluate(t);
+                    lo.x = std::min(lo.x, p.x); lo.y = std::min(lo.y, p.y); lo.z = std::min(lo.z, p.z);
+                    hi.x = std::max(hi.x, p.x); hi.y = std::max(hi.y, p.y); hi.z = std::max(hi.z, p.z);
+                }
+            }
+            std::cerr << "Seg " << si << " arc=[" << seg_start_arc << ".." << (seg_start_arc + seg_arc)
+                      << "] bbox X[" << lo.x << "," << hi.x << "] Y[" << lo.y << "," << hi.y
+                      << "] Z[" << lo.z << "," << hi.z << "]" << std::endl;
+            seg_start_arc += seg_arc;
+            si++;
         }
     }
 
@@ -466,12 +517,15 @@ TEST(LoopShapeTest, Loop_TubeNoSelfOverlap) {
             float dist = (pts[j].pos - pts[i].pos).length();
             if (dist < min_clearance) {
                 violations++;
-                if (violations <= 5) {  // report first few
+                if (violations <= 10) {  // report first few
                     EXPECT_GE(dist, min_clearance)
-                        << "Tube overlap: arc " << pts[i].arc
-                        << " ↔ " << pts[j].arc
-                        << " (Δarc=" << (pts[j].arc - pts[i].arc) << ")"
-                        << " spatial dist=" << dist
+                        << "Tube overlap: seg " << pts[i].seg_idx
+                        << " arc " << pts[i].arc
+                        << " pos(" << pts[i].pos.x << "," << pts[i].pos.y << "," << pts[i].pos.z << ")"
+                        << " ↔ seg " << pts[j].seg_idx
+                        << " arc " << pts[j].arc
+                        << " pos(" << pts[j].pos.x << "," << pts[j].pos.y << "," << pts[j].pos.z << ")"
+                        << " dist=" << dist
                         << " < min_clearance=" << min_clearance;
                 }
             }

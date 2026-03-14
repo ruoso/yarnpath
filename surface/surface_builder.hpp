@@ -45,6 +45,7 @@ private:
                    const Gauge& gauge, const SurfaceBuildConfig& config);
 
     void create_nodes();
+    void widen_loops_for_crossovers();
     void create_continuity_edges();
     void create_passthrough_edges();
     void create_constraints();

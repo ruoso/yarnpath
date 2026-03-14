@@ -1,5 +1,6 @@
 #include "surface_builder.hpp"
 #include "logging.hpp"
+#include <algorithm>
 #include <random>
 #include <cmath>
 #include <limits>
@@ -16,6 +17,7 @@ SurfaceGraph SurfaceBuilder::from_yarn_path(
 
     SurfaceBuilder builder(path, yarn, gauge, config);
     builder.create_nodes();
+    builder.widen_loops_for_crossovers();
     builder.create_continuity_edges();
     builder.create_passthrough_edges();
     builder.create_constraints();
@@ -68,6 +70,40 @@ void SurfaceBuilder::create_nodes() {
                graph_.node_count());
 }
 
+void SurfaceBuilder::widen_loops_for_crossovers() {
+    auto log = yarnpath::logging::get_logger();
+    const auto& segments = path_.segments();
+    float compressed_diameter = yarn_.compressed_radius * 2.0f;
+
+    // Count crossover slots needed per parent: loop-forming children need 2
+    // (entry + exit), non-loop children need 1.
+    std::map<SegmentId, int> slots_per_parent;
+    for (size_t i = 0; i < segments.size(); ++i) {
+        const auto& seg = segments[i];
+        for (SegmentId parent_id : seg.through) {
+            slots_per_parent[parent_id] += seg.forms_loop ? 2 : 1;
+        }
+    }
+
+    // Each parent also contributes its own passes through the opening:
+    // a loop-forming parent has 2 legs (entry + exit), others have 1.
+    // Minimum width = total_cross_sections × compressed_diameter.
+    for (auto& [parent_id, num_slots] : slots_per_parent) {
+        const auto& parent_seg = segments[parent_id];
+        int parent_passes = parent_seg.forms_loop ? 2 : 1;
+        int total_cross_sections = num_slots + parent_passes;
+        float min_width = static_cast<float>(total_cross_sections) * compressed_diameter;
+
+        auto& node = graph_.node(parent_id);
+        if (node.shape.loop_width < min_width) {
+            log->debug("SurfaceBuilder: widening node {} loop_width {:.2f} -> {:.2f} "
+                       "for {} crossover slots + {} parent passes",
+                       parent_id, node.shape.loop_width, min_width, num_slots, parent_passes);
+            node.shape.loop_width = min_width;
+        }
+    }
+}
+
 void SurfaceBuilder::create_continuity_edges() {
     auto log = yarnpath::logging::get_logger();
     const auto& segments = path_.segments();
@@ -96,11 +132,20 @@ void SurfaceBuilder::create_continuity_edges() {
         // Stiffness proportional to yarn density - more yarn packed = stiffer
         float stiffness = base_stiffness * yarn_density * config_.continuity_stiffness_factor;
 
+        // Minimum rest length = half-width of each node's envelope so they
+        // don't overlap in the stitch (course) direction.
+        float half_width_a = graph_.node(static_cast<NodeId>(i)).shape.loop_width * 0.5f;
+        float half_width_b = graph_.node(static_cast<NodeId>(i + 1)).shape.loop_width * 0.5f;
+        float min_rest = half_width_a + half_width_b;
+
+        float rest = base_rest_length * config_.continuity_rest_length_factor;
+        rest = std::max(rest, min_rest);
+
         SurfaceEdge edge;
         edge.node_a = static_cast<NodeId>(i);
         edge.node_b = static_cast<NodeId>(i + 1);
         edge.type = EdgeType::YarnContinuity;
-        edge.rest_length = base_rest_length * config_.continuity_rest_length_factor;
+        edge.rest_length = rest;
         edge.stiffness = stiffness;
 
         graph_.add_edge(edge);
@@ -115,10 +160,12 @@ void SurfaceBuilder::create_passthrough_edges() {
     const auto& segments = path_.segments();
     size_t passthrough_count = 0;
 
-    // Passthrough rest length: distance from child loop center to parent loop center
+    // Passthrough rest length: distance from child loop center to parent loop center.
+    // This must account for the Y (wale) extent and the Z (bulge) extent of the
+    // loop, since the geometry extends in both directions beyond the node point.
     float loop_height = gauge_.loop_height(yarn_.relaxed_radius);
     float comfortable_clearance = yarn_.min_clearance() * 1.5f;
-    float base_rest_length = loop_height + comfortable_clearance;
+    float y_component = loop_height + comfortable_clearance;
 
     // Base stiffness calculation (dimensionally consistent)
     float typical_mass = yarn_.loop_mass(gauge_.needle_diameter);
@@ -150,11 +197,20 @@ void SurfaceBuilder::create_passthrough_edges() {
                 stiffness *= 0.3f;
             }
 
+            // The Z (bulge) extent of the parent's loop: the geometry
+            // extends ±z_bulge beyond the node position, plus yarn radius.
+            float parent_z_bulge = std::abs(graph_.node(static_cast<NodeId>(parent_seg)).shape.z_bulge);
+            float z_component = parent_z_bulge + yarn_.compressed_radius;
+
+            // 3D rest length: Pythagorean between wale (Y) and bulge (Z)
+            float rest = std::sqrt(y_component * y_component + z_component * z_component)
+                         * config_.passthrough_rest_length_factor;
+
             SurfaceEdge edge;
             edge.node_a = static_cast<NodeId>(i);
             edge.node_b = static_cast<NodeId>(parent_seg);
             edge.type = EdgeType::PassThrough;
-            edge.rest_length = base_rest_length * config_.passthrough_rest_length_factor;
+            edge.rest_length = rest;
             edge.stiffness = stiffness;
 
             graph_.add_edge(edge);

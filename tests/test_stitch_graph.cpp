@@ -681,7 +681,7 @@ TEST(StitchGraph, WsRowParentChildTopology) {
 }
 
 TEST(StitchGraph, ColumnAssignment) {
-    // Cast on 3, row 1: K K K
+    // Cast on 3, row 1 (RS): K K K, row 2 (WS): P P P
     PatternInstructions pattern;
 
     RowInstruction row0;
@@ -697,16 +697,33 @@ TEST(StitchGraph, ColumnAssignment) {
     row1.stitches = {rep};
     pattern.rows.push_back(row1);
 
+    RowInstruction row2;
+    row2.side = RowSide::WS;
+    instruction::Repeat rep2;
+    rep2.instructions = {instruction::Purl{}};
+    rep2.times = 3;
+    row2.stitches = {rep2};
+    pattern.rows.push_back(row2);
+
     auto graph = StitchGraph::from_instructions(pattern);
 
     auto r0 = graph.row(0);
     auto r1 = graph.row(1);
+    auto r2 = graph.row(2);
 
-    // Verify columns are assigned sequentially
+    // Verify columns are assigned sequentially for RS rows
     for (uint32_t i = 0; i < 3; ++i) {
         EXPECT_EQ(r0[i].column, i);
         EXPECT_EQ(r1[i].column, i);
     }
+
+    // WS row: nodes are stored in processing order (right-to-left in fabric),
+    // but columns are remapped to fabric position.
+    // Processing order: r2[0] worked stitch at fabric-right, r2[2] at fabric-left
+    // So r2[0].column = 2, r2[1].column = 1, r2[2].column = 0
+    EXPECT_EQ(r2[0].column, 2u);
+    EXPECT_EQ(r2[1].column, 1u);
+    EXPECT_EQ(r2[2].column, 0u);
 
     // Verify row assignment
     for (const auto& node : r0) {
@@ -714,6 +731,9 @@ TEST(StitchGraph, ColumnAssignment) {
     }
     for (const auto& node : r1) {
         EXPECT_EQ(node.row, 1u);
+    }
+    for (const auto& node : r2) {
+        EXPECT_EQ(node.row, 2u);
     }
 }
 
@@ -946,4 +966,215 @@ TEST(StitchGraph, NoPanelId) {
     for (const auto& node : graph.nodes()) {
         EXPECT_FALSE(node.panel_id.has_value());
     }
+}
+
+// ============== WS + Shaping Tests ==============
+
+TEST(StitchGraph, WsRowWithDecrease) {
+    // Cast on 4, RS: K4, WS: P K2tog P
+    // WS processes right-to-left: live stitches reversed before processing
+    PatternInstructions pattern;
+
+    RowInstruction row0;
+    row0.side = RowSide::RS;
+    row0.stitches = {instruction::CastOn{4}};
+    pattern.rows.push_back(row0);
+
+    RowInstruction row1;
+    row1.side = RowSide::RS;
+    instruction::Repeat rep;
+    rep.instructions = {instruction::Knit{}};
+    rep.times = 4;
+    row1.stitches = {rep};
+    pattern.rows.push_back(row1);
+
+    RowInstruction row2;
+    row2.side = RowSide::WS;
+    row2.stitches = {instruction::Purl{}, instruction::K2tog{}, instruction::Purl{}};
+    pattern.rows.push_back(row2);
+
+    auto graph = StitchGraph::from_instructions(pattern);
+
+    // 4 cast-on + 4 row1 + 3 row2 = 11
+    EXPECT_EQ(graph.size(), 11u);
+
+    auto r2 = graph.row(2);
+    ASSERT_EQ(r2.size(), 3u);
+
+    // WS row: live stitches [4,5,6,7] reversed to [7,6,5,4]
+    // P consumes 7, K2tog consumes 6,5, P consumes 4
+    // After WS reversal, live stitches reversed back
+
+    // Check parent links
+    // r2[0] (Purl) worked through row1 stitch 7
+    EXPECT_TRUE(std::holds_alternative<stitch::Purl>(r2[0].operation));
+    EXPECT_EQ(r2[0].worked_through[0], 7u);
+
+    // r2[1] (K2tog) worked through row1 stitches 6, 5
+    EXPECT_TRUE(std::holds_alternative<stitch::K2tog>(r2[1].operation));
+    ASSERT_EQ(r2[1].worked_through.size(), 2u);
+    EXPECT_EQ(r2[1].worked_through[0], 6u);
+    EXPECT_EQ(r2[1].worked_through[1], 5u);
+
+    // r2[2] (Purl) worked through row1 stitch 4
+    EXPECT_TRUE(std::holds_alternative<stitch::Purl>(r2[2].operation));
+    EXPECT_EQ(r2[2].worked_through[0], 4u);
+
+    // WS columns should be in fabric order (remapped)
+    EXPECT_EQ(r2[0].column, 2u);
+    EXPECT_EQ(r2[1].column, 1u);
+    EXPECT_EQ(r2[2].column, 0u);
+}
+
+TEST(StitchGraph, WsRowWithIncrease) {
+    // Cast on 2, RS: K2, WS: P YO P
+    PatternInstructions pattern;
+
+    RowInstruction row0;
+    row0.side = RowSide::RS;
+    row0.stitches = {instruction::CastOn{2}};
+    pattern.rows.push_back(row0);
+
+    RowInstruction row1;
+    row1.side = RowSide::RS;
+    row1.stitches = {instruction::Knit{}, instruction::Knit{}};
+    pattern.rows.push_back(row1);
+
+    RowInstruction row2;
+    row2.side = RowSide::WS;
+    row2.stitches = {instruction::Purl{}, instruction::YarnOver{}, instruction::Purl{}};
+    pattern.rows.push_back(row2);
+
+    auto graph = StitchGraph::from_instructions(pattern);
+
+    // 2 cast-on + 2 row1 + 3 row2 = 7
+    EXPECT_EQ(graph.size(), 7u);
+
+    auto r2 = graph.row(2);
+    ASSERT_EQ(r2.size(), 3u);
+
+    // WS: live [2,3] reversed to [3,2]
+    // P consumes 3, YO consumes 0, P consumes 2
+    EXPECT_TRUE(std::holds_alternative<stitch::Purl>(r2[0].operation));
+    EXPECT_EQ(r2[0].worked_through[0], 3u);
+
+    EXPECT_TRUE(std::holds_alternative<stitch::YarnOver>(r2[1].operation));
+    EXPECT_EQ(r2[1].worked_through.size(), 0u);
+
+    EXPECT_TRUE(std::holds_alternative<stitch::Purl>(r2[2].operation));
+    EXPECT_EQ(r2[2].worked_through[0], 2u);
+
+    // WS columns in fabric order
+    EXPECT_EQ(r2[0].column, 2u);
+    EXPECT_EQ(r2[1].column, 1u);
+    EXPECT_EQ(r2[2].column, 0u);
+}
+
+TEST(StitchGraph, WsRowWithCable) {
+    // Cast on 6, RS: K6, WS: P CableLeft{2,2} P
+    PatternInstructions pattern;
+
+    RowInstruction row0;
+    row0.side = RowSide::RS;
+    row0.stitches = {instruction::CastOn{6}};
+    pattern.rows.push_back(row0);
+
+    RowInstruction row1;
+    row1.side = RowSide::RS;
+    instruction::Repeat rep;
+    rep.instructions = {instruction::Knit{}};
+    rep.times = 6;
+    row1.stitches = {rep};
+    pattern.rows.push_back(row1);
+
+    RowInstruction row2;
+    row2.side = RowSide::WS;
+    row2.stitches = {instruction::Purl{}, instruction::CableLeft{2, 2}, instruction::Purl{}};
+    pattern.rows.push_back(row2);
+
+    auto graph = StitchGraph::from_instructions(pattern);
+
+    // 6 cast-on + 6 row1 + 6 row2 = 18
+    EXPECT_EQ(graph.size(), 18u);
+
+    auto r2 = graph.row(2);
+    ASSERT_EQ(r2.size(), 6u);
+
+    // WS: live [6,7,8,9,10,11] reversed to [11,10,9,8,7,6]
+    // P consumes 11
+    // CableLeft{2,2}: hold=[10,9], cross=[8,7], output order: crossed first [8,7], then held [10,9]
+    // P consumes 6
+
+    EXPECT_TRUE(std::holds_alternative<stitch::Purl>(r2[0].operation));
+    EXPECT_EQ(r2[0].worked_through[0], 11u);
+
+    // Cable stitches: crossed first (8,7), then held (10,9)
+    EXPECT_TRUE(std::holds_alternative<stitch::CableLeft>(r2[1].operation));
+    EXPECT_EQ(r2[1].worked_through[0], 8u);
+    EXPECT_TRUE(std::holds_alternative<stitch::CableLeft>(r2[2].operation));
+    EXPECT_EQ(r2[2].worked_through[0], 7u);
+    EXPECT_TRUE(std::holds_alternative<stitch::CableLeft>(r2[3].operation));
+    EXPECT_EQ(r2[3].worked_through[0], 10u);
+    EXPECT_TRUE(std::holds_alternative<stitch::CableLeft>(r2[4].operation));
+    EXPECT_EQ(r2[4].worked_through[0], 9u);
+
+    EXPECT_TRUE(std::holds_alternative<stitch::Purl>(r2[5].operation));
+    EXPECT_EQ(r2[5].worked_through[0], 6u);
+
+    // WS columns in fabric order (reversed from processing order 0..5 to 5..0)
+    EXPECT_EQ(r2[0].column, 5u);
+    EXPECT_EQ(r2[5].column, 0u);
+}
+
+// ============== Error Path Tests ==============
+
+TEST(StitchGraph, ErrorRowConsumesMoreThanAvailable) {
+    // Cast on 2, row 1: BindOff{3} — tries to bind off 3 with only 2 available
+    PatternInstructions pattern;
+
+    RowInstruction row0;
+    row0.side = RowSide::RS;
+    row0.stitches = {instruction::CastOn{2}};
+    pattern.rows.push_back(row0);
+
+    RowInstruction row1;
+    row1.side = RowSide::RS;
+    row1.stitches = {instruction::BindOff{3}};
+    pattern.rows.push_back(row1);
+
+    EXPECT_THROW(StitchGraph::from_instructions(pattern), std::runtime_error);
+}
+
+TEST(StitchGraph, ErrorK2togWithOnlyOneLiveStitch) {
+    // Cast on 1, row 1: K2tog — only 1 live stitch
+    PatternInstructions pattern;
+
+    RowInstruction row0;
+    row0.side = RowSide::RS;
+    row0.stitches = {instruction::CastOn{1}};
+    pattern.rows.push_back(row0);
+
+    RowInstruction row1;
+    row1.side = RowSide::RS;
+    row1.stitches = {instruction::K2tog{}};
+    pattern.rows.push_back(row1);
+
+    EXPECT_THROW(StitchGraph::from_instructions(pattern), std::runtime_error);
+}
+
+TEST(StitchGraph, ErrorS2kpWithOnlyTwoLiveStitches) {
+    // Cast on 2, row 1: S2KP — only 2 live stitches
+    PatternInstructions pattern;
+
+    RowInstruction row0;
+    row0.side = RowSide::RS;
+    row0.stitches = {instruction::CastOn{2}};
+    pattern.rows.push_back(row0);
+
+    RowInstruction row1;
+    row1.side = RowSide::RS;
+    row1.stitches = {instruction::S2KP{}};
+    pattern.rows.push_back(row1);
+
+    EXPECT_THROW(StitchGraph::from_instructions(pattern), std::runtime_error);
 }

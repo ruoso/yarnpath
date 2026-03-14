@@ -11,30 +11,33 @@ PatternInstructions Emitter::emit(const ast::PatternAST& ast) {
     auto log = yarnpath::logging::get_logger();
     PatternInstructions pattern;
     uint32_t live_stitches = 0;
+    RowSide next_side = RowSide::RS;
 
     log->debug("Emitter: processing {} AST nodes", ast.nodes.size());
 
     for (const auto& node : ast.nodes) {
         if (auto* cast_on = std::get_if<ast::CastOnNode>(&node)) {
-            // Cast on creates the initial stitches
+            // Cast on creates the initial stitches — always RS
             RowInstruction row;
             row.side = RowSide::RS;
             row.stitches.push_back(instruction::CastOn{cast_on->count});
             pattern.rows.push_back(row);
             live_stitches = cast_on->count;
+            next_side = RowSide::WS;
             log->debug("Emitter: cast-on {} stitches, live_stitches={}", cast_on->count, live_stitches);
         }
         else if (auto* bind_off = std::get_if<ast::BindOffNode>(&node)) {
             RowInstruction row;
-            row.side = RowSide::RS;
+            row.side = next_side;
             uint32_t count = bind_off->all ? live_stitches : bind_off->count.value_or(live_stitches);
             row.stitches.push_back(instruction::BindOff{count});
             pattern.rows.push_back(row);
             live_stitches -= count;
+            next_side = (next_side == RowSide::RS) ? RowSide::WS : RowSide::RS;
             log->debug("Emitter: bind-off {} stitches, live_stitches={}", count, live_stitches);
         }
         else if (auto* row_node = std::get_if<ast::RowNode>(&node)) {
-            auto row = emit_row(*row_node, live_stitches);
+            auto row = emit_row(*row_node, live_stitches, next_side);
             pattern.rows.push_back(row);
 
             // Calculate new stitch count
@@ -46,6 +49,7 @@ PatternInstructions Emitter::emit(const ast::PatternAST& ast) {
             }
             uint32_t old_stitches = live_stitches;
             live_stitches = live_stitches - consumed + produced;
+            next_side = (row.side == RowSide::RS) ? RowSide::WS : RowSide::RS;
             log->debug("Emitter: row {} - consumed={}, produced={}, live_stitches: {} -> {}",
                        row_node->row_number.value_or(0), consumed, produced, old_stitches, live_stitches);
         }
@@ -56,9 +60,9 @@ PatternInstructions Emitter::emit(const ast::PatternAST& ast) {
     return pattern;
 }
 
-RowInstruction Emitter::emit_row(const ast::RowNode& row, uint32_t live_stitch_count) {
+RowInstruction Emitter::emit_row(const ast::RowNode& row, uint32_t live_stitch_count, RowSide fallback_side) {
     RowInstruction result;
-    result.side = row.side.value_or(RowSide::RS);
+    result.side = row.side.value_or(fallback_side);
     result.stitches = emit_elements(row.elements, live_stitch_count, true);
     return result;
 }

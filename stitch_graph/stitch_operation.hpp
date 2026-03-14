@@ -9,6 +9,12 @@ namespace yarnpath {
 
 using StitchId = uint32_t;
 
+/// Per-node stitch operations in the StitchGraph.
+///
+/// These mirror the instruction types but are per-node (no counts, no repeats).
+/// Each node in the graph holds exactly one StitchOperation.
+/// Cable operations additionally store the specific StitchIds involved,
+/// recording which stitches were held and which were crossed.
 namespace stitch {
 
 struct Knit {};
@@ -24,15 +30,15 @@ struct K2tog {};
 struct SSK {};
 struct S2KP {};
 
-// Cables: which specific stitches crossed
+/// Cable operations store the specific StitchIds of the held and crossed groups.
 struct CableLeft {
-    std::vector<StitchId> held;    // Stitches held to front
-    std::vector<StitchId> crossed; // Stitches worked first
+    std::vector<StitchId> held;    ///< Stitches held to front.
+    std::vector<StitchId> crossed; ///< Stitches crossed behind (worked first).
 };
 
 struct CableRight {
-    std::vector<StitchId> held;    // Stitches held to back
-    std::vector<StitchId> crossed; // Stitches worked first
+    std::vector<StitchId> held;    ///< Stitches held to back.
+    std::vector<StitchId> crossed; ///< Stitches crossed in front (worked second).
 };
 
 }  // namespace stitch

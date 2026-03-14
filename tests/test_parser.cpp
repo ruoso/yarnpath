@@ -284,9 +284,44 @@ TEST(Emitter, RepeatToLast) {
     );
     Parser parser(std::move(tokenizer));
     auto ast = parser.parse();
+    ASSERT_FALSE(parser.has_errors());
 
-    // This is a complex pattern - just verify it parses
-    EXPECT_FALSE(parser.has_errors());
+    Emitter emitter;
+    auto pattern = emitter.emit(ast);
+
+    ASSERT_EQ(pattern.rows.size(), 2u);
+
+    const auto& row1 = pattern.rows[1];
+
+    // Total consumed should be 14
+    uint32_t consumed = 0;
+    for (const auto& instr : row1.stitches) {
+        consumed += stitches_consumed(instr);
+    }
+    EXPECT_EQ(consumed, 14u);
+
+    // Expected: K K (prefix), (K K P P) × 2 (repeat body), K K K K (suffix)
+    // Total: 2 + 8 + 4 = 14
+    ASSERT_EQ(row1.stitches.size(), 14u);
+
+    // Prefix: K K
+    EXPECT_TRUE(std::holds_alternative<instruction::Knit>(row1.stitches[0]));
+    EXPECT_TRUE(std::holds_alternative<instruction::Knit>(row1.stitches[1]));
+
+    // Body: K K P P K K P P
+    EXPECT_TRUE(std::holds_alternative<instruction::Knit>(row1.stitches[2]));
+    EXPECT_TRUE(std::holds_alternative<instruction::Knit>(row1.stitches[3]));
+    EXPECT_TRUE(std::holds_alternative<instruction::Purl>(row1.stitches[4]));
+    EXPECT_TRUE(std::holds_alternative<instruction::Purl>(row1.stitches[5]));
+    EXPECT_TRUE(std::holds_alternative<instruction::Knit>(row1.stitches[6]));
+    EXPECT_TRUE(std::holds_alternative<instruction::Knit>(row1.stitches[7]));
+    EXPECT_TRUE(std::holds_alternative<instruction::Purl>(row1.stitches[8]));
+    EXPECT_TRUE(std::holds_alternative<instruction::Purl>(row1.stitches[9]));
+
+    // Suffix: K K K K
+    for (size_t i = 10; i < 14; ++i) {
+        EXPECT_TRUE(std::holds_alternative<instruction::Knit>(row1.stitches[i]));
+    }
 }
 
 TEST(Emitter, BracketRepeat) {
@@ -386,6 +421,77 @@ TEST(Emitter, Cables) {
         }
     }
     EXPECT_TRUE(found_cable);
+}
+
+// ============== Emitter RS/WS Alternation Tests ==============
+
+TEST(Emitter, AutoAlternation) {
+    // Pattern with no explicit sides — should auto-alternate RS, WS, RS...
+    Tokenizer tokenizer(
+        "Cast on 4 sts.\n"
+        "Row 1: K4.\n"
+        "Row 2: P4.\n"
+        "Row 3: K4."
+    );
+    Parser parser(std::move(tokenizer));
+    auto ast = parser.parse();
+    ASSERT_FALSE(parser.has_errors());
+
+    Emitter emitter;
+    auto pattern = emitter.emit(ast);
+
+    ASSERT_EQ(pattern.rows.size(), 4u);
+
+    // Cast-on is always RS
+    EXPECT_EQ(pattern.rows[0].side, RowSide::RS);
+    // Row 1: no explicit side, should be WS (next after RS cast-on)
+    EXPECT_EQ(pattern.rows[1].side, RowSide::WS);
+    // Row 2: no explicit side, should be RS
+    EXPECT_EQ(pattern.rows[2].side, RowSide::RS);
+    // Row 3: no explicit side, should be WS
+    EXPECT_EQ(pattern.rows[3].side, RowSide::WS);
+}
+
+TEST(Emitter, BindOffAfterWsRow) {
+    // Bind-off after a WS row should get RS side
+    Tokenizer tokenizer(
+        "Cast on 4 sts.\n"
+        "Row 1 (RS): K4.\n"
+        "Row 2 (WS): P4.\n"
+        "Bind off all sts."
+    );
+    Parser parser(std::move(tokenizer));
+    auto ast = parser.parse();
+    ASSERT_FALSE(parser.has_errors());
+
+    Emitter emitter;
+    auto pattern = emitter.emit(ast);
+
+    ASSERT_EQ(pattern.rows.size(), 4u);
+
+    // Bind-off should be RS (next after WS row 2)
+    EXPECT_EQ(pattern.rows[3].side, RowSide::RS);
+}
+
+TEST(Emitter, ExplicitSideOverridesAlternation) {
+    // Explicit side should override auto-alternation
+    Tokenizer tokenizer(
+        "Cast on 4 sts.\n"
+        "Row 1 (WS): P4.\n"
+        "Row 2 (WS): P4."
+    );
+    Parser parser(std::move(tokenizer));
+    auto ast = parser.parse();
+    ASSERT_FALSE(parser.has_errors());
+
+    Emitter emitter;
+    auto pattern = emitter.emit(ast);
+
+    ASSERT_EQ(pattern.rows.size(), 3u);
+
+    // Both rows explicitly WS — override the alternation
+    EXPECT_EQ(pattern.rows[1].side, RowSide::WS);
+    EXPECT_EQ(pattern.rows[2].side, RowSide::WS);
 }
 
 // ============== Integration Tests ==============

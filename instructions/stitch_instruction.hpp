@@ -8,29 +8,30 @@
 namespace yarnpath {
 namespace instruction {
 
-// Basic stitches (consume 1, produce 1)
+/// Basic stitches: consume 1 live stitch, produce 1 new stitch.
 struct Knit {};
 struct Purl {};
-struct Slip {};  // Pass through without working
+struct Slip {};  ///< Pass stitch through without working it.
 
-// Structural
-struct CastOn { uint32_t count; };
-struct BindOff { uint32_t count; };
+/// Structural instructions: operate on multiple stitches at once via `count`.
+struct CastOn { uint32_t count; };   ///< Consume 0, produce `count` new stitches.
+struct BindOff { uint32_t count; };  ///< Consume `count`, produce 0 (removes from live set).
 
-// Increases (produce more than consume)
-struct YarnOver {};                    // Consume 0, produce 1
-struct KFB {};                         // Consume 1, produce 2
-struct M1L {};                         // Consume 0, produce 1 (lift bar)
-struct M1R {};                         // Consume 0, produce 1
+/// Increases: produce more stitches than consumed.
+struct YarnOver {};                    ///< Consume 0, produce 1 (wrap yarn around needle).
+struct KFB {};                         ///< Consume 1, produce 2 (knit front and back).
+struct M1L {};                         ///< Consume 0, produce 1 (lift bar, left-leaning).
+struct M1R {};                         ///< Consume 0, produce 1 (lift bar, right-leaning).
 
-// Decreases (consume more than produce)
-struct K2tog {};                       // Consume 2, produce 1
-struct SSK {};                         // Consume 2, produce 1
-struct S2KP {};                        // Consume 3, produce 1
+/// Decreases: consume more stitches than produced.
+struct K2tog {};                       ///< Consume 2, produce 1 (right-leaning decrease).
+struct SSK {};                         ///< Consume 2, produce 1 (left-leaning decrease).
+struct S2KP {};                        ///< Consume 3, produce 1 (centered double decrease).
 
-// Cables (consume N, produce N, but reordered)
-struct CableLeft { uint8_t hold; uint8_t cross; };
-struct CableRight { uint8_t hold; uint8_t cross; };
+/// Cables: consume hold+cross stitches, produce the same number, reordered.
+/// `hold` and `cross` specify the number of stitches in each group.
+struct CableLeft { uint8_t hold; uint8_t cross; };   ///< Hold to front, work crossed first.
+struct CableRight { uint8_t hold; uint8_t cross; };  ///< Hold to back, work held first.
 
 // Forward declaration for Repeat
 struct Repeat;
@@ -49,7 +50,9 @@ using StitchInstruction = std::variant<
 
 namespace instruction {
 
-// Repeat a sequence
+/// Repeat a sequence of instructions a fixed number of times.
+/// Repeats are expanded into flat instruction sequences by expand_instructions()
+/// before being passed to the graph builder.
 struct Repeat {
     std::vector<StitchInstruction> instructions;
     uint32_t times;

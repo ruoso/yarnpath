@@ -9,12 +9,13 @@
 
 namespace yarnpath {
 
+/// A single stitch node in the fabric topology graph.
 struct StitchNode {
     StitchId id;
     StitchOperation operation;
     uint32_t row;
-    uint32_t column;
-    std::vector<StitchId> worked_through;  // Parent stitches
+    uint32_t column;              ///< Fabric position (consistent across RS/WS rows).
+    std::vector<StitchId> worked_through;  ///< Parent stitches this one was pulled through.
     std::optional<uint32_t> panel_id;
 };
 
@@ -25,20 +26,26 @@ struct RowInfo {
     uint32_t stitch_count;
 };
 
+/// Fabric topology graph built from PatternInstructions.
+///
+/// Invariants:
+/// - Nodes are ordered by id (which equals their index in the nodes vector).
+/// - Rows are contiguous spans of nodes; row(N) returns a span starting at
+///   first_stitch_id with stitch_count elements.
+/// - Live stitches left unconsumed at the end is valid (short rows, partial bind-off).
+/// - For WS rows, live stitches are reversed before processing (modeling right-to-left
+///   working direction), and columns are remapped to fabric position afterward.
 class StitchGraph {
     std::vector<StitchNode> nodes_;
     std::vector<RowInfo> rows_;
 
 public:
-    // Constructors
     StitchGraph() = default;
     StitchGraph(std::vector<StitchNode> nodes, std::vector<RowInfo> rows)
         : nodes_(std::move(nodes)), rows_(std::move(rows)) {}
 
-    // Build from instructions
     static StitchGraph from_instructions(const PatternInstructions& pattern);
 
-    // Access
     const StitchNode* get(StitchId id) const;
     std::span<const StitchNode> row(uint32_t row_num) const;
     std::vector<StitchId> children_of(StitchId id) const;
@@ -46,7 +53,6 @@ public:
     size_t size() const { return nodes_.size(); }
     uint32_t row_count() const { return static_cast<uint32_t>(rows_.size()); }
 
-    // Access all nodes
     const std::vector<StitchNode>& nodes() const { return nodes_; }
     const std::vector<RowInfo>& row_infos() const { return rows_; }
 };

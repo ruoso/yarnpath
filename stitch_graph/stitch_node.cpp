@@ -285,6 +285,15 @@ StitchGraph StitchGraph::from_instructions(const PatternInstructions& pattern) {
         }
 
         row_info.stitch_count = static_cast<uint32_t>(graph.nodes_.size()) - row_info.first_stitch_id;
+
+        // For WS rows, remap columns to fabric position (reverse of processing order)
+        if (row_instr.side == RowSide::WS && row_info.stitch_count > 0) {
+            for (uint32_t i = row_info.first_stitch_id;
+                 i < row_info.first_stitch_id + row_info.stitch_count; ++i) {
+                graph.nodes_[i].column = row_info.stitch_count - 1 - graph.nodes_[i].column;
+            }
+        }
+
         graph.rows_.push_back(row_info);
 
         log->debug("StitchGraph: row {} complete, {} stitches added, {} live stitches",

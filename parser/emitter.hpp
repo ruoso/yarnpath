@@ -13,7 +13,7 @@ class Emitter {
 public:
     PatternInstructions emit(const ast::PatternAST& ast);
 
-    RowInstruction emit_row(const ast::RowNode& row, uint32_t live_stitch_count);
+    RowInstruction emit_row(const ast::RowNode& row, uint32_t live_stitch_count, RowSide fallback_side = RowSide::RS);
 
     const std::vector<std::string>& warnings() const { return warnings_; }
     const std::vector<std::string>& errors() const { return errors_; }

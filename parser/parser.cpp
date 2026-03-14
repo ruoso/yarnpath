@@ -187,15 +187,16 @@ std::vector<ast::RowElement> Parser::parse_stitch_sequence() {
     std::vector<ast::RowElement> elements;
 
     while (!check(TokenType::Period) && !check(TokenType::EndOfLine) &&
-           !check(TokenType::EndOfFile) && !check(TokenType::RBracket) &&
-           !check(TokenType::Asterisk)) {
+           !check(TokenType::EndOfFile) && !check(TokenType::RBracket)) {
 
         // Skip commas
         match(TokenType::Comma);
 
-        // After consuming comma, we might be at an asterisk - break to handle it
+        // Asterisk repeat: *body*, rep from * to ...
         if (check(TokenType::Asterisk)) {
-            break;
+            auto repeat = parse_asterisk_repeat();
+            elements.push_back(repeat);
+            continue;
         }
 
         if (check(TokenType::LBracket)) {
@@ -211,15 +212,6 @@ std::vector<ast::RowElement> Parser::parse_stitch_sequence() {
             // Skip unexpected token
             advance();
         }
-    }
-
-    // Check for asterisk repeat after the sequence
-    // Pattern: elements... *body*, rep from * to ...
-    if (check(TokenType::Asterisk)) {
-        auto repeat = parse_asterisk_repeat();
-        // Insert the collected elements before the repeat as prefix
-        // The repeat body comes from inside the asterisks
-        elements.push_back(repeat);
     }
 
     return elements;

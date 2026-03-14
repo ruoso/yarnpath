@@ -182,3 +182,190 @@ TEST_F(SurfaceForcesTest, LoopCurvatureForce) {
     // The middle node should have positive Y force (pushed up to form loop)
     EXPECT_GT(graph.node(1).force.y, 0.0f);
 }
+
+// --- Collision force tests ---
+
+TEST_F(SurfaceForcesTest, CollisionForceRepelsCloseNodes) {
+    // Place two non-adjacent nodes closer than min_clearance.
+    // We need 3+ nodes: 0 and 2 are non-adjacent (not connected by an edge).
+    SurfaceNode node0, node1, node2;
+    node0.segment_id = 0;
+    node0.position = Vec3(0.0f, 0.0f, 0.0f);
+    // Give node0 a shape with reasonable bounding extents
+    node0.shape.loop_width = 2.0f;
+    node0.shape.loop_height = 2.0f;
+    node0.shape.z_bulge = 1.0f;
+
+    node1.segment_id = 1;
+    node1.position = Vec3(10.0f, 0.0f, 0.0f);  // Far away, not involved
+    node1.shape.loop_width = 2.0f;
+    node1.shape.loop_height = 2.0f;
+    node1.shape.z_bulge = 1.0f;
+
+    node2.segment_id = 2;
+    // Place very close to node0 — within bounding volumes
+    node2.position = Vec3(0.3f, 0.0f, 0.0f);
+    node2.shape.loop_width = 2.0f;
+    node2.shape.loop_height = 2.0f;
+    node2.shape.z_bulge = 1.0f;
+
+    graph.add_node(node0);
+    graph.add_node(node1);
+    graph.add_node(node2);
+
+    // Only connect 0-1 and 1-2 (so 0 and 2 are non-adjacent)
+    SurfaceEdge edge01, edge12;
+    edge01.node_a = 0; edge01.node_b = 1;
+    edge01.type = EdgeType::YarnContinuity;
+    edge01.rest_length = 5.0f; edge01.stiffness = 1.0f;
+    edge12.node_a = 1; edge12.node_b = 2;
+    edge12.type = EdgeType::YarnContinuity;
+    edge12.rest_length = 5.0f; edge12.stiffness = 1.0f;
+
+    graph.add_edge(edge01);
+    graph.add_edge(edge12);
+
+    // Build skip list (connected pairs)
+    std::vector<std::vector<NodeId>> skip_list(3);
+    skip_list[0].push_back(1);
+    skip_list[1].push_back(2);
+
+    float min_clearance = yarn.min_clearance();
+    compute_collision_forces(graph, min_clearance, 100.0f, skip_list);
+
+    // Nodes 0 and 2 are overlapping — they should be pushed apart.
+    // Node 0 should get force in negative X direction (away from node 2)
+    // Node 2 should get force in positive X direction (away from node 0)
+    // Due to AABB overlap detection, the exact direction depends on penetration axis,
+    // but the forces should be non-zero and opposing.
+    Vec3 force0 = graph.node(0).force;
+    Vec3 force2 = graph.node(2).force;
+    float net_separation = force2.x - force0.x;
+    EXPECT_GT(net_separation, 0.0f)
+        << "Collision should push overlapping nodes 0 and 2 apart";
+}
+
+TEST_F(SurfaceForcesTest, CollisionForceZeroWhenFarApart) {
+    // Place two non-adjacent nodes far apart.
+    SurfaceNode node0, node1, node2;
+    node0.segment_id = 0;
+    node0.position = Vec3(0.0f, 0.0f, 0.0f);
+    node0.shape.loop_width = 2.0f;
+    node0.shape.loop_height = 2.0f;
+    node0.shape.z_bulge = 1.0f;
+
+    node1.segment_id = 1;
+    node1.position = Vec3(5.0f, 0.0f, 0.0f);
+    node1.shape.loop_width = 2.0f;
+    node1.shape.loop_height = 2.0f;
+    node1.shape.z_bulge = 1.0f;
+
+    node2.segment_id = 2;
+    node2.position = Vec3(50.0f, 0.0f, 0.0f);  // Very far from node 0
+    node2.shape.loop_width = 2.0f;
+    node2.shape.loop_height = 2.0f;
+    node2.shape.z_bulge = 1.0f;
+
+    graph.add_node(node0);
+    graph.add_node(node1);
+    graph.add_node(node2);
+
+    SurfaceEdge edge01, edge12;
+    edge01.node_a = 0; edge01.node_b = 1;
+    edge01.type = EdgeType::YarnContinuity;
+    edge01.rest_length = 5.0f; edge01.stiffness = 1.0f;
+    edge12.node_a = 1; edge12.node_b = 2;
+    edge12.type = EdgeType::YarnContinuity;
+    edge12.rest_length = 5.0f; edge12.stiffness = 1.0f;
+
+    graph.add_edge(edge01);
+    graph.add_edge(edge12);
+
+    std::vector<std::vector<NodeId>> skip_list(3);
+    skip_list[0].push_back(1);
+    skip_list[1].push_back(2);
+
+    compute_collision_forces(graph, yarn.min_clearance(), 100.0f, skip_list);
+
+    // No collision force between nodes 0 and 2 (far apart).
+    // Note: spring forces are NOT computed here, only collision.
+    // Node 0 should have zero force (node 1 is adjacent → skipped, node 2 far away)
+    EXPECT_FLOAT_EQ(graph.node(0).force.x, 0.0f);
+    EXPECT_FLOAT_EQ(graph.node(0).force.y, 0.0f);
+    EXPECT_FLOAT_EQ(graph.node(0).force.z, 0.0f);
+}
+
+// --- Bending force tests ---
+
+TEST_F(SurfaceForcesTest, BendingForceResistsFolding) {
+    // Place 3 consecutive nodes in a sharp V shape.
+    SurfaceNode node0, node1, node2;
+    node0.segment_id = 0;
+    node0.position = Vec3(0.0f, 0.0f, 0.0f);
+    node1.segment_id = 1;
+    node1.position = Vec3(2.0f, 0.0f, 0.0f);  // Middle
+    node2.segment_id = 2;
+    node2.position = Vec3(1.0f, 0.0f, 0.0f);  // Folded back (sharp bend)
+
+    graph.add_node(node0);
+    graph.add_node(node1);
+    graph.add_node(node2);
+
+    SurfaceEdge edge01, edge12;
+    edge01.node_a = 0; edge01.node_b = 1;
+    edge01.type = EdgeType::YarnContinuity;
+    edge01.rest_length = 2.0f; edge01.stiffness = 1.0f;
+    edge12.node_a = 1; edge12.node_b = 2;
+    edge12.type = EdgeType::YarnContinuity;
+    edge12.rest_length = 2.0f; edge12.stiffness = 1.0f;
+
+    graph.add_edge(edge01);
+    graph.add_edge(edge12);
+
+    // This is a complete fold-back: dir1 = (1,0,0), dir2 = (-1,0,0)
+    // cos_angle = -1.0, which is below the threshold.
+    compute_bending_forces(graph, 50.0f, 0.5f);
+
+    // The middle node (1) should receive a force.
+    // The end nodes should also receive straightening forces.
+    // Node 2 should be pushed in the +X direction to straighten.
+    Vec3 force2 = graph.node(2).force;
+    EXPECT_GT(force2.x, 0.0f)
+        << "Node 2 should be pushed forward to straighten the V";
+}
+
+TEST_F(SurfaceForcesTest, BendingForceZeroWhenStraight) {
+    // Place 3 consecutive nodes in a straight line.
+    SurfaceNode node0, node1, node2;
+    node0.segment_id = 0;
+    node0.position = Vec3(0.0f, 0.0f, 0.0f);
+    node1.segment_id = 1;
+    node1.position = Vec3(2.0f, 0.0f, 0.0f);
+    node2.segment_id = 2;
+    node2.position = Vec3(4.0f, 0.0f, 0.0f);
+
+    graph.add_node(node0);
+    graph.add_node(node1);
+    graph.add_node(node2);
+
+    SurfaceEdge edge01, edge12;
+    edge01.node_a = 0; edge01.node_b = 1;
+    edge01.type = EdgeType::YarnContinuity;
+    edge01.rest_length = 2.0f; edge01.stiffness = 1.0f;
+    edge12.node_a = 1; edge12.node_b = 2;
+    edge12.type = EdgeType::YarnContinuity;
+    edge12.rest_length = 2.0f; edge12.stiffness = 1.0f;
+
+    graph.add_edge(edge01);
+    graph.add_edge(edge12);
+
+    compute_bending_forces(graph, 50.0f, 0.5f);
+
+    // Straight line: cos_angle = 1.0 > cos(PI - 0.5) → no bending force
+    EXPECT_FLOAT_EQ(graph.node(0).force.x, 0.0f);
+    EXPECT_FLOAT_EQ(graph.node(1).force.x, 0.0f);
+    EXPECT_FLOAT_EQ(graph.node(2).force.x, 0.0f);
+    EXPECT_FLOAT_EQ(graph.node(0).force.y, 0.0f);
+    EXPECT_FLOAT_EQ(graph.node(1).force.y, 0.0f);
+    EXPECT_FLOAT_EQ(graph.node(2).force.y, 0.0f);
+}

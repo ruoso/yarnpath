@@ -5,6 +5,8 @@
 #include "stitch_node.hpp"
 #include "stitch_instruction.hpp"
 #include "row_instruction.hpp"
+#include <cmath>
+#include <map>
 
 using namespace yarnpath;
 
@@ -310,4 +312,224 @@ TEST_F(SurfaceBuilderTest, OrientationZOffsetApplied) {
     // Verify we found both orientations
     EXPECT_TRUE(found_front);
     EXPECT_TRUE(found_back);
+}
+
+// --- Widen loops for crossovers tests ---
+
+TEST_F(SurfaceBuilderTest, SingleChildWidening) {
+    // Cast on 2, K2: each cast-on parent has 1 child.
+    // Each child forms a loop → 2 child slots per parent.
+    // Each parent forms a loop → 2 parent passes.
+    // Total cross-sections = 4 → min_width = 4 × compressed_diameter.
+    PatternInstructions pattern;
+    {
+        RowInstruction row;
+        row.side = RowSide::RS;
+        row.stitches = {instruction::CastOn{2}};
+        pattern.rows.push_back(row);
+    }
+    {
+        RowInstruction row;
+        row.side = RowSide::RS;
+        instruction::Repeat rep;
+        rep.instructions = {instruction::Knit{}};
+        rep.times = 2;
+        row.stitches = {rep};
+        pattern.rows.push_back(row);
+    }
+
+    StitchGraph sg = StitchGraph::from_instructions(pattern);
+    YarnPath path = YarnPath::from_stitch_graph(sg, yarn, gauge);
+    SurfaceGraph graph = SurfaceBuilder::from_yarn_path(path, yarn, gauge);
+
+    float compressed_diameter = yarn.compressed_radius * 2.0f;
+
+    // Find parent nodes (segments with children passing through them)
+    const auto& segments = path.segments();
+    std::map<SegmentId, int> slots_per_parent;
+    for (size_t i = 0; i < segments.size(); ++i) {
+        for (SegmentId parent_id : segments[i].through) {
+            slots_per_parent[parent_id] += segments[i].forms_loop ? 2 : 1;
+        }
+    }
+
+    for (auto& [parent_id, num_slots] : slots_per_parent) {
+        int parent_passes = segments[parent_id].forms_loop ? 2 : 1;
+        int total_cross_sections = num_slots + parent_passes;
+        float min_width = static_cast<float>(total_cross_sections) * compressed_diameter;
+
+        EXPECT_GE(graph.node(parent_id).shape.loop_width, min_width)
+            << "Parent node " << parent_id << " not wide enough for "
+            << total_cross_sections << " cross-sections";
+    }
+}
+
+TEST_F(SurfaceBuilderTest, DecreaseWidening) {
+    // Cast on 3, K2tog K: the K2tog parent consumes 2 loops.
+    PatternInstructions pattern;
+    {
+        RowInstruction row;
+        row.side = RowSide::RS;
+        row.stitches = {instruction::CastOn{3}};
+        pattern.rows.push_back(row);
+    }
+    {
+        RowInstruction row;
+        row.side = RowSide::RS;
+        row.stitches = {instruction::K2tog{}, instruction::Knit{}};
+        pattern.rows.push_back(row);
+    }
+
+    StitchGraph sg = StitchGraph::from_instructions(pattern);
+    YarnPath path = YarnPath::from_stitch_graph(sg, yarn, gauge);
+    SurfaceGraph graph = SurfaceBuilder::from_yarn_path(path, yarn, gauge);
+
+    float compressed_diameter = yarn.compressed_radius * 2.0f;
+
+    const auto& segments = path.segments();
+    std::map<SegmentId, int> slots_per_parent;
+    for (size_t i = 0; i < segments.size(); ++i) {
+        for (SegmentId parent_id : segments[i].through) {
+            slots_per_parent[parent_id] += segments[i].forms_loop ? 2 : 1;
+        }
+    }
+
+    // Verify widening was applied for parents with children
+    for (auto& [parent_id, num_slots] : slots_per_parent) {
+        int parent_passes = segments[parent_id].forms_loop ? 2 : 1;
+        int total_cross_sections = num_slots + parent_passes;
+        float min_width = static_cast<float>(total_cross_sections) * compressed_diameter;
+
+        EXPECT_GE(graph.node(parent_id).shape.loop_width, min_width)
+            << "Parent node " << parent_id << " with " << num_slots
+            << " child slots needs widening";
+    }
+}
+
+TEST_F(SurfaceBuilderTest, NoWideningNeeded) {
+    // Cast on only — no children, no widening needed.
+    YarnPath path = create_cast_on_only();
+
+    // Compute shape before building (to compare)
+    auto base_shape = compute_stitch_shape(yarn, gauge,
+        LoopOrientation::Neutral, WrapDirection::None, WorkType::Created);
+
+    SurfaceGraph graph = SurfaceBuilder::from_yarn_path(path, yarn, gauge);
+
+    // All nodes should have original loop_width (no widening)
+    for (size_t i = 0; i < graph.node_count(); ++i) {
+        EXPECT_FLOAT_EQ(graph.node(i).shape.loop_width, base_shape.loop_width)
+            << "Node " << i << " was unexpectedly widened";
+    }
+}
+
+// --- Continuity edge min-width enforcement ---
+
+TEST_F(SurfaceBuilderTest, ContinuityRestLengthMinWidth) {
+    // After widen_loops_for_crossovers, continuity edge rest_length should be
+    // >= half_width_a + half_width_b for adjacent widened nodes.
+    YarnPath path = create_simple_yarn_path();
+    SurfaceGraph graph = SurfaceBuilder::from_yarn_path(path, yarn, gauge);
+
+    for (const auto& edge : graph.edges()) {
+        if (edge.type == EdgeType::YarnContinuity) {
+            float half_width_a = graph.node(edge.node_a).shape.loop_width * 0.5f;
+            float half_width_b = graph.node(edge.node_b).shape.loop_width * 0.5f;
+            float min_rest = half_width_a + half_width_b;
+
+            EXPECT_GE(edge.rest_length, min_rest - 1e-6f)
+                << "Continuity edge " << edge.node_a << "->" << edge.node_b
+                << " rest_length=" << edge.rest_length
+                << " < min_rest=" << min_rest;
+        }
+    }
+}
+
+// --- Passthrough edge 3D rest length ---
+
+TEST_F(SurfaceBuilderTest, PassthroughRestLength3D) {
+    // Build Cast-on + Knit pattern.
+    YarnPath path = create_simple_yarn_path();
+    SurfaceGraph graph = SurfaceBuilder::from_yarn_path(path, yarn, gauge);
+
+    // Expected formula: sqrt(y² + z²) × passthrough_rest_length_factor
+    float loop_height = gauge.loop_height(yarn.relaxed_radius);
+    float comfortable_clearance = yarn.min_clearance() * 1.5f;
+    float y_component = loop_height + comfortable_clearance;
+
+    for (const auto& edge : graph.edges()) {
+        if (edge.type == EdgeType::PassThrough) {
+            // The z_component uses the parent node's z_bulge
+            float parent_z_bulge = std::abs(graph.node(edge.node_b).shape.z_bulge);
+            float z_component = parent_z_bulge + yarn.compressed_radius;
+
+            float expected_rest = std::sqrt(y_component * y_component + z_component * z_component);
+
+            // Default passthrough_rest_length_factor = 1.0
+            EXPECT_NEAR(edge.rest_length, expected_rest, expected_rest * 0.01f)
+                << "Passthrough edge " << edge.node_a << "->" << edge.node_b
+                << " rest_length doesn't match 3D formula";
+        }
+    }
+}
+
+// --- Slip stitch passthrough stiffness reduction ---
+
+TEST_F(SurfaceBuilderTest, SlipPassthroughStiffnessReduced) {
+    // Build Cast-on 2, then Knit + Slip
+    PatternInstructions pattern;
+    {
+        RowInstruction row;
+        row.side = RowSide::RS;
+        row.stitches = {instruction::CastOn{2}};
+        pattern.rows.push_back(row);
+    }
+    {
+        RowInstruction row;
+        row.side = RowSide::RS;
+        row.stitches = {instruction::Knit{}, instruction::Slip{}};
+        pattern.rows.push_back(row);
+    }
+
+    StitchGraph sg = StitchGraph::from_instructions(pattern);
+    YarnPath path = YarnPath::from_stitch_graph(sg, yarn, gauge);
+    SurfaceGraph graph = SurfaceBuilder::from_yarn_path(path, yarn, gauge);
+
+    const auto& segments = path.segments();
+
+    // Find passthrough edges for knit vs slip children
+    float knit_stiffness = 0.0f;
+    float slip_stiffness = 0.0f;
+    bool found_knit = false, found_slip = false;
+
+    for (const auto& edge : graph.edges()) {
+        if (edge.type == EdgeType::PassThrough) {
+            // node_a is the child segment
+            const auto& child_seg = segments[edge.node_a];
+            if (child_seg.work_type == WorkType::Transferred) {
+                slip_stiffness = edge.stiffness;
+                found_slip = true;
+            } else if (child_seg.work_type == WorkType::Worked) {
+                knit_stiffness = edge.stiffness;
+                found_knit = true;
+            }
+        }
+    }
+
+    ASSERT_TRUE(found_knit) << "No knit passthrough edge found";
+    ASSERT_TRUE(found_slip) << "No slip passthrough edge found";
+
+    // Slip stiffness should be 0.3× the knit stiffness (within tolerance for
+    // different yarn densities between the two segments)
+    // The 0.3 factor is applied multiplicatively to the base stiffness
+    EXPECT_LT(slip_stiffness, knit_stiffness)
+        << "Slip stiffness should be less than knit stiffness";
+
+    // The ratio should be approximately 0.3 (but yarn density differences
+    // between the two segments may cause some deviation)
+    if (knit_stiffness > 0.0f) {
+        float ratio = slip_stiffness / knit_stiffness;
+        EXPECT_LT(ratio, 0.6f)
+            << "Slip/knit stiffness ratio " << ratio << " should be close to 0.3";
+    }
 }

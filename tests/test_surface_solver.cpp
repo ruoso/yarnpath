@@ -1,7 +1,13 @@
 #include <gtest/gtest.h>
 #include <surface/surface_solver.hpp>
+#include <surface/surface_builder.hpp>
 #include <surface/surface_graph.hpp>
+#include "yarn_path.hpp"
+#include "stitch_node.hpp"
+#include "stitch_instruction.hpp"
+#include "row_instruction.hpp"
 #include <cmath>
+#include <map>
 
 using namespace yarnpath;
 
@@ -193,4 +199,192 @@ TEST_F(SurfaceSolverTest, SingleStepDoesNotCrash) {
 
     // Positions should have changed
     EXPECT_NE(graph.node(1).position.x, 3.0f);
+}
+
+// After solving, every parent loop node must have enough space for its
+// crossover slots.  The minimum width is (num_child_slots + parent_passes)
+// × compressed_diameter.  We verify this by checking that consecutive
+// nodes along the same row are at least that far apart in the stitch
+// direction.
+TEST(SurfaceSolverIntegration, CrossoverWidthSatisfiedAfterSolve) {
+    YarnProperties yarn;
+    yarn.relaxed_radius = 1.75f;
+    yarn.compressed_radius = 0.75f;
+    yarn.min_bend_radius = 2.25f;
+    yarn.stiffness = 0.8f;
+    yarn.elasticity = 0.3f;
+    yarn.tension = 0.5f;
+    Gauge gauge{5.0f};
+    float compressed_diameter = yarn.compressed_radius * 2.0f;
+
+    // Build a 3-row stockinette (CCC / KKK / BBB)
+    PatternInstructions pattern;
+    {
+        RowInstruction row;
+        row.side = RowSide::RS;
+        row.stitches = {instruction::CastOn{3}};
+        pattern.rows.push_back(row);
+    }
+    {
+        RowInstruction row;
+        row.side = RowSide::RS;
+        instruction::Repeat rep;
+        rep.instructions = {instruction::Knit{}};
+        rep.times = 3;
+        row.stitches = {rep};
+        pattern.rows.push_back(row);
+    }
+    {
+        RowInstruction row;
+        row.side = RowSide::RS;
+        row.stitches = {instruction::BindOff{3}};
+        pattern.rows.push_back(row);
+    }
+
+    StitchGraph stitch_graph = StitchGraph::from_instructions(pattern);
+    YarnPath yarn_path = YarnPath::from_stitch_graph(stitch_graph, yarn, gauge);
+
+    SurfaceBuildConfig build_config;
+    build_config.random_seed = 42;
+    SurfaceGraph surface = SurfaceBuilder::from_yarn_path(yarn_path, yarn, gauge, build_config);
+
+    SolveConfig solve_config;
+    solve_config.max_iterations = 1000;
+    solve_config.convergence_threshold = 1e-4f;
+    SurfaceSolver::solve(surface, yarn, gauge, solve_config);
+
+    const auto& segments = yarn_path.segments();
+
+    // Count crossover slots per parent (same logic as widen_loops_for_crossovers)
+    std::map<SegmentId, int> slots_per_parent;
+    for (size_t i = 0; i < segments.size(); ++i) {
+        for (SegmentId parent_id : segments[i].through) {
+            slots_per_parent[parent_id] += segments[i].forms_loop ? 2 : 1;
+        }
+    }
+
+    // For each parent with children, check that the solved loop_width
+    // (distance between continuity neighbors along the stitch axis)
+    // is at least the required minimum.
+    int violations = 0;
+    for (auto& [parent_id, num_slots] : slots_per_parent) {
+        int parent_passes = segments[parent_id].forms_loop ? 2 : 1;
+        int total_cross_sections = num_slots + parent_passes;
+        float min_width = static_cast<float>(total_cross_sections) * compressed_diameter;
+
+        // Find the continuity neighbors (prev and next in yarn order)
+        // Only check neighbors that are actually different nodes
+        float available = std::numeric_limits<float>::max();
+
+        if (parent_id > 0) {
+            float dist_prev = (surface.node(parent_id).position -
+                               surface.node(parent_id - 1).position).length();
+            available = std::min(available, dist_prev);
+        }
+        if (parent_id + 1 < static_cast<SegmentId>(surface.node_count())) {
+            float dist_next = (surface.node(parent_id + 1).position -
+                               surface.node(parent_id).position).length();
+            available = std::min(available, dist_next);
+        }
+
+        if (available == std::numeric_limits<float>::max()) continue;
+
+        // Allow 10% tolerance for numerical relaxation
+        if (available < min_width * 0.9f) {
+            violations++;
+            EXPECT_GE(available, min_width * 0.9f)
+                << "Node " << parent_id
+                << " needs " << total_cross_sections << " cross-sections"
+                << " (" << num_slots << " slots + " << parent_passes << " parent passes)"
+                << " → min_width=" << min_width
+                << " but available=" << available;
+        }
+    }
+    EXPECT_EQ(violations, 0)
+        << "Found " << violations << " nodes with insufficient crossover width";
+}
+
+// --- Fabric normal tests ---
+
+static SurfaceGraph build_and_solve_stockinette_2row(
+    const YarnProperties& yarn, const Gauge& gauge) {
+    PatternInstructions pattern;
+    {
+        RowInstruction row;
+        row.side = RowSide::RS;
+        row.stitches = {instruction::CastOn{3}};
+        pattern.rows.push_back(row);
+    }
+    {
+        RowInstruction row;
+        row.side = RowSide::RS;
+        instruction::Repeat rep;
+        rep.instructions = {instruction::Knit{}};
+        rep.times = 3;
+        row.stitches = {rep};
+        pattern.rows.push_back(row);
+    }
+
+    StitchGraph sg = StitchGraph::from_instructions(pattern);
+    YarnPath path = YarnPath::from_stitch_graph(sg, yarn, gauge);
+
+    SurfaceBuildConfig build_config;
+    SurfaceGraph surface = SurfaceBuilder::from_yarn_path(path, yarn, gauge, build_config);
+
+    SolveConfig solve_config;
+    solve_config.max_iterations = 500;
+    solve_config.convergence_threshold = 1e-4f;
+    SurfaceSolver::solve(surface, yarn, gauge, solve_config);
+
+    return surface;
+}
+
+TEST(SurfaceSolverFabricNormal, FabricNormalComputedAfterSolve) {
+    YarnProperties yarn = YarnProperties::worsted();
+    Gauge gauge = Gauge::worsted();
+
+    SurfaceGraph surface = build_and_solve_stockinette_2row(yarn, gauge);
+
+    // All nodes should have non-zero fabric_normal after solve
+    for (size_t i = 0; i < surface.node_count(); ++i) {
+        Vec3 normal = surface.node(i).fabric_normal;
+        EXPECT_GT(normal.length(), 0.5f)
+            << "Node " << i << " has near-zero fabric_normal";
+    }
+}
+
+TEST(SurfaceSolverFabricNormal, FabricNormalConsistentDirection) {
+    YarnProperties yarn = YarnProperties::worsted();
+    Gauge gauge = Gauge::worsted();
+
+    SurfaceGraph surface = build_and_solve_stockinette_2row(yarn, gauge);
+
+    // All fabric normals should point in the same hemisphere
+    // (consistent orientation propagation)
+    Vec3 ref_normal = surface.node(0).fabric_normal;
+    for (size_t i = 1; i < surface.node_count(); ++i) {
+        float dot = surface.node(i).fabric_normal.dot(ref_normal);
+        EXPECT_GT(dot, 0.0f)
+            << "Node " << i << " fabric_normal is in opposite hemisphere from node 0";
+    }
+}
+
+TEST(SurfaceSolverFabricNormal, FabricNormalPerpendicularity) {
+    YarnProperties yarn = YarnProperties::worsted();
+    Gauge gauge = Gauge::worsted();
+
+    SurfaceGraph surface = build_and_solve_stockinette_2row(yarn, gauge);
+
+    // For interior nodes, fabric_normal should be roughly perpendicular to stitch_axis
+    // (dot product close to 0)
+    for (size_t i = 1; i + 1 < surface.node_count(); ++i) {
+        Vec3 normal = surface.node(i).fabric_normal;
+        Vec3 axis = surface.node(i).stitch_axis;
+        float dot = std::abs(normal.dot(axis));
+
+        // Allow generous tolerance since stitch_axis and normal are derived independently
+        EXPECT_LT(dot, 0.5f)
+            << "Node " << i << " fabric_normal not perpendicular to stitch_axis"
+            << " (|dot|=" << dot << ")";
+    }
 }

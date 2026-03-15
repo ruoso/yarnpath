@@ -36,6 +36,11 @@ struct PrecomputedLoopGeometry {
     // Fabric normal direction for computing leg bulge at build time
     Vec3 fabric_normal;
 
+    // Oriented wale axis: consistently points in the row-stacking direction
+    // (toward children / away from parents), unlike the frame's wale_axis
+    // which follows the right-hand rule and may flip on WS rows.
+    Vec3 oriented_wale;
+
     // Needle wrap radius: curvature at apex ≤ 1/wrap_radius
     float wrap_radius = 0.0f;
 
@@ -54,13 +59,14 @@ LoopShapeParams get_loop_shape_params(
     const YarnProperties& yarn,
     const Gauge& gauge);
 
-// Calculate apex position from child positions or default height
-// Uses gauge-derived loop height for proper dimensioning
+// Calculate apex position from child positions or default height.
+// Uses gauge-derived loop height along the wale_axis for proper dimensioning.
 Vec3 calculate_apex_position(
     const Vec3& curr_pos,
     const std::vector<Vec3>& child_positions,
     float effective_loop_height,
-    float yarn_compressed_diameter);
+    float yarn_compressed_diameter,
+    const Vec3& wale_axis);
 
 // Pre-compute all loop geometry before spline generation.
 // Two-pass approach:

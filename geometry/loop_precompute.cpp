@@ -21,23 +21,34 @@ Vec3 calculate_apex_position(
     const Vec3& curr_pos,
     const std::vector<Vec3>& child_positions,
     float effective_loop_height,
-    float yarn_compressed_diameter) {
+    float yarn_compressed_diameter,
+    const Vec3& wale_axis) {
 
     float apex_height = effective_loop_height * 0.5f;
     // Ensure minimum clearance of one yarn diameter above children
     apex_height = std::max(apex_height, yarn_compressed_diameter);
 
     if (!child_positions.empty()) {
-        Vec3 apex = Vec3::zero();
+        Vec3 avg_child = Vec3::zero();
         for (const auto& cp : child_positions) {
-            apex += cp;
+            avg_child += cp;
         }
-        apex = apex * (1.0f / static_cast<float>(child_positions.size()));
-        apex.y += apex_height;
-        return apex;
+        avg_child = avg_child * (1.0f / static_cast<float>(child_positions.size()));
+
+        // Place apex above children along wale.  The wale sign from the
+        // frame may point toward or away from children depending on the
+        // row's working direction.  Ensure apex_height is added in the
+        // direction from curr_pos toward children (the row-stacking direction).
+        Vec3 to_children = avg_child - curr_pos;
+        float child_wale_proj = to_children.dot(wale_axis);
+        Vec3 wale_dir = (child_wale_proj >= 0.0f) ? wale_axis : wale_axis * -1.0f;
+
+        return avg_child + wale_dir * apex_height;
     } else {
-        // No children - loop above current position
-        return curr_pos + Vec3(0.0f, apex_height, 0.0f);
+        // No children - loop above current position along wale axis.
+        // Use the frame's wale direction directly; the caller's test
+        // projects onto the same axis so the sign is consistent.
+        return curr_pos + wale_axis * apex_height;
     }
 }
 
@@ -72,14 +83,23 @@ std::map<SegmentId, PrecomputedLoopGeometry> precompute_loop_geometry(
             child_positions = child_pos_it->second;
         }
 
-        // 3. Calculate apex position using gauge-derived height
+        // 3. Calculate apex position using gauge-derived height along wale axis
         Vec3 curr_pos = frames[i].position;
         Vec3 next_pos = (i < frames.size() - 1) ? frames[i + 1].position : frames[i].position;
-        geom.apex = calculate_apex_position(curr_pos, child_positions,
-                                            effective_loop_height, yarn_compressed_diameter);
+        Vec3 wale = frames[i].wale_axis;
 
-        // Apply shape modifiers to apex
-        geom.apex.y = curr_pos.y + (geom.apex.y - curr_pos.y) * geom.shape.apex_height_factor * geom.shape.height_multiplier;
+        geom.oriented_wale = wale;
+
+        geom.apex = calculate_apex_position(curr_pos, child_positions,
+                                            effective_loop_height, yarn_compressed_diameter,
+                                            wale);
+
+        // Apply shape modifiers to apex along wale axis
+        Vec3 apex_offset = geom.apex - curr_pos;
+        float wale_height = apex_offset.dot(wale);
+        Vec3 lateral = apex_offset - wale * wale_height;
+        float scaled_height = wale_height * geom.shape.apex_height_factor * geom.shape.height_multiplier;
+        geom.apex = curr_pos + wale * scaled_height + lateral;
 
         // Apply lean along stitch_axis (not world X) for decreases
         geom.apex = geom.apex + frames[i].stitch_axis * geom.shape.apex_lean_x;
@@ -94,12 +114,14 @@ std::map<SegmentId, PrecomputedLoopGeometry> precompute_loop_geometry(
         // 5. U-shape through-opening waypoints: yarn dips below base.
         // No z_bulge here — the dip is at base Z.  The z_bulge appears
         // on the loop legs (between dip and apex), added at build time.
+        // The dip direction is opposite to the apex direction (toward parents).
         float dip_depth = yarn_compressed_diameter;
-        Vec3 wale = frames[i].wale_axis;
         Vec3 fnormal = frames[i].fabric_normal;
+        float apex_wale_sign = (geom.apex - curr_pos).dot(wale);
+        Vec3 dip_dir = (apex_wale_sign >= 0.0f) ? wale * -1.0f : wale;
 
-        geom.entry_through = curr_pos - wale * dip_depth;
-        geom.exit_through = next_pos - wale * dip_depth;
+        geom.entry_through = curr_pos + dip_dir * dip_depth;
+        geom.exit_through = next_pos + dip_dir * dip_depth;
         geom.fabric_normal = fnormal;
 
         // Wrap radius: curvature at apex bounded by needle wrap
@@ -136,9 +158,8 @@ std::map<SegmentId, PrecomputedLoopGeometry> precompute_loop_geometry(
         LoopShapeParams first_child_shape = get_loop_shape_params(segments[child_ids[0]], yarn, gauge);
         float z_sign = (first_child_shape.z_bulge >= 0) ? 1.0f : -1.0f;
 
-        // Compute parent travel direction for blending offsets
-        Vec3 parent_travel = safe_normalized(
-            geom.apex_exit - geom.apex_entry, Vec3(1.0f, 0.0f, 0.0f));
+        // Use stitch_axis for slot distribution (guaranteed perpendicular to wale)
+        Vec3 parent_travel = frames[i].stitch_axis;
 
         // Count total crossover slots needed:
         // loop-forming children need 2 (entry + exit), others need 1

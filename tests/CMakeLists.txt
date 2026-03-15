@@ -35,6 +35,9 @@ add_executable(tests
     test_stitch_shape.cpp
     test_surface_builder.cpp
     test_surface_yarn_length.cpp
+    test_loop_precompute.cpp
+    test_crossover_claiming.cpp
+    test_loop_chain_geometry.cpp
 )
 
 target_link_libraries(tests PRIVATE

@@ -39,6 +39,8 @@ inline PatternInstructions create_pattern(const std::vector<std::string>& rows) 
                 row.stitches.push_back(instruction::K2tog{});
             } else if (c == 'S') {
                 row.stitches.push_back(instruction::SSK{});
+            } else if (c == 'L') {
+                row.stitches.push_back(instruction::Slip{});
             }
         }
         pattern.rows.push_back(row);

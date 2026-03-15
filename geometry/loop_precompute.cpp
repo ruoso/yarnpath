@@ -35,16 +35,10 @@ Vec3 calculate_apex_position(
             avg_child += cp;
         }
         avg_child = avg_child * (1.0f / static_cast<float>(child_positions.size()));
-
-        // Place apex above children along wale.  The wale sign from the
-        // frame may point toward or away from children depending on the
-        // row's working direction.  Ensure apex_height is added in the
-        // direction from curr_pos toward children (the row-stacking direction).
-        Vec3 to_children = avg_child - curr_pos;
-        float child_wale_proj = to_children.dot(wale_axis);
-        Vec3 wale_dir = (child_wale_proj >= 0.0f) ? wale_axis : wale_axis * -1.0f;
-
-        return avg_child + wale_dir * apex_height;
+        // Apex is at the average child position. The solver already places
+        // children at the correct physical distance. 3D wrapping around
+        // children is handled by build_full_loop_chain().
+        return avg_child;
     } else {
         // No children - loop above current position along wale axis.
         // Use the frame's wale direction directly; the caller's test
@@ -95,12 +89,15 @@ std::map<SegmentId, PrecomputedLoopGeometry> precompute_loop_geometry(
                                             effective_loop_height, yarn_compressed_diameter,
                                             wale);
 
-        // Apply shape modifiers to apex along wale axis
-        Vec3 apex_offset = geom.apex - curr_pos;
-        float wale_height = apex_offset.dot(wale);
-        Vec3 lateral = apex_offset - wale * wale_height;
-        float scaled_height = wale_height * geom.shape.apex_height_factor * geom.shape.height_multiplier;
-        geom.apex = curr_pos + wale * scaled_height + lateral;
+        // Apply shape modifiers to apex along wale axis (only when no
+        // children exist — solver-derived child positions are authoritative)
+        if (child_positions.empty()) {
+            Vec3 apex_offset = geom.apex - curr_pos;
+            float wale_height = apex_offset.dot(wale);
+            Vec3 lateral = apex_offset - wale * wale_height;
+            float scaled_height = wale_height * geom.shape.apex_height_factor * geom.shape.height_multiplier;
+            geom.apex = curr_pos + wale * scaled_height + lateral;
+        }
 
         // Apply lean along stitch_axis (not world X) for decreases
         geom.apex = geom.apex + frames[i].stitch_axis * geom.shape.apex_lean_x;

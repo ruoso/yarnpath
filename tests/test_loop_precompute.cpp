@@ -118,9 +118,9 @@ TEST(LoopPrecomputeTest, ApexAboveBase) {
 }
 
 // ---------------------------------------------------------------------------
-// Test 2: Apex is above children when children exist
+// Test 2: Apex is at child wale height when children exist
 // ---------------------------------------------------------------------------
-TEST(LoopPrecomputeTest, ApexAboveChildren) {
+TEST(LoopPrecomputeTest, ApexAtChildWaleHeight) {
     auto data = build_loop_data({"CCC", "KKK"});
 
     int checked = 0;
@@ -128,9 +128,10 @@ TEST(LoopPrecomputeTest, ApexAboveChildren) {
         auto child_it = data.children_map.find(seg_id);
         if (child_it == data.children_map.end() || child_it->second.empty()) continue;
 
-        // Apex should be further from base than children along wale axis.
-        // Since wale sign may vary, check that |apex_proj| > |avg_child_proj|
-        // and they're on the same side.
+        // Apex wale projection should match the average child wale projection.
+        // The child stitch sits at the top of the parent loop — the apex
+        // should be AT the child position. 3D wrapping around the child
+        // is handled by build_full_loop_chain().
         Vec3 wale = data.frames[seg_id].wale_axis;
         Vec3 base = data.frames[seg_id].position;
         float avg_child_wale = 0.0f;
@@ -140,9 +141,9 @@ TEST(LoopPrecomputeTest, ApexAboveChildren) {
         avg_child_wale /= static_cast<float>(child_it->second.size());
 
         float apex_wale = (geom.apex - base).dot(wale);
-        // Apex and children should be on the same side, with apex further out
-        EXPECT_GT(std::abs(apex_wale), std::abs(avg_child_wale))
-            << "Segment " << seg_id << ": apex should be further from base than children"
+        // Apex wale projection should match average child wale projection
+        EXPECT_NEAR(apex_wale, avg_child_wale, 0.05f)
+            << "Segment " << seg_id << ": apex should be at child wale height"
             << " (apex=" << apex_wale << ", avg_child=" << avg_child_wale << ")";
         checked++;
     }

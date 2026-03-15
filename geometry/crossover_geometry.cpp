@@ -9,7 +9,7 @@ CrossoverData claim_nearest_slot(
     const Vec3& child_position,
     float yarn_compressed_radius,
     bool as_entry,
-    const Vec3& child_fabric_normal,
+    const Vec3& crossing_wale,
     const Vec3& travel_direction) {
 
     // Select the slot on the correct side of the child:
@@ -33,17 +33,17 @@ CrossoverData claim_nearest_slot(
     claimed.insert(best_idx);
     const auto& slot = slots[best_idx];
 
-    // Use the child's fabric_normal for the crossing offset so that
-    // entry/exit points are perpendicular to the child's stitch_axis.
+    // Offset entry/exit along the wale direction (through the parent loop
+    // opening). Entry is below the opening (-wale), exit is above (+wale).
     CrossoverData crossover;
     if (as_entry) {
-        // Parent→child: approach from parent side, exit to child side
-        crossover.entry = slot.position + child_fabric_normal * yarn_compressed_radius;
-        crossover.exit = slot.position - child_fabric_normal * yarn_compressed_radius;
+        // Parent→child: entry below opening, exit above
+        crossover.entry = slot.position - crossing_wale * yarn_compressed_radius;
+        crossover.exit = slot.position + crossing_wale * yarn_compressed_radius;
     } else {
-        // Child→parent: approach from child side, exit to parent side
-        crossover.entry = slot.position - child_fabric_normal * yarn_compressed_radius;
-        crossover.exit = slot.position + child_fabric_normal * yarn_compressed_radius;
+        // Child→parent: entry above opening, exit below
+        crossover.entry = slot.position + crossing_wale * yarn_compressed_radius;
+        crossover.exit = slot.position - crossing_wale * yarn_compressed_radius;
     }
     crossover.exit_direction = slot.tangent;
     return crossover;

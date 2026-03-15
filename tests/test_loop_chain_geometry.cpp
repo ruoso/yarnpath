@@ -137,14 +137,14 @@ static ChainBuildResult build_chain_for_segment(
             auto entry = claim_nearest_slot(
                 parent_it->second.crossover_slots, claimed_slots[parent_id],
                 data.frames[seg_id].position, state.yarn_compressed_radius, true,
-                data.frames[seg_id].fabric_normal, travel_dir);
+                data.frames[seg_id].wale_axis, travel_dir);
             entry_xovers.push_back(entry);
 
             if (segments[seg_id].forms_loop) {
                 auto exit = claim_nearest_slot(
                     parent_it->second.crossover_slots, claimed_slots[parent_id],
                     data.frames[seg_id].position, state.yarn_compressed_radius, false,
-                    data.frames[seg_id].fabric_normal, travel_dir);
+                    data.frames[seg_id].wale_axis, travel_dir);
                 exit_xovers.push_back(exit);
             }
         }
@@ -476,15 +476,15 @@ TEST(LoopChainGeometryTest, YarnCrossesThroughParentLoop) {
 }
 
 // ---------------------------------------------------------------------------
-// Test 7: Crossover entry/exit points are on consistent fabric sides
+// Test 7: Crossover entry/exit points are on consistent wale sides
 //
-// Physical invariant: the yarn enters the parent loop from one side of the
-// fabric and exits back to the same side. So crossover_entry_in (approach
-// side) and crossover_exit_out (departure side) must be on the same side
-// of the fabric (same fabric_normal projection), and crossover_entry_out
-// and crossover_exit_in must be on the other side together.
+// Physical invariant: the yarn enters the parent loop from below (−wale)
+// and exits above (+wale) at the entry crossover. At the exit crossover,
+// it enters from above (+wale) and exits below (−wale). So:
+//   entry_in and exit_out are both on the −wale side (below the opening)
+//   entry_out and exit_in are both on the +wale side (above the opening)
 // ---------------------------------------------------------------------------
-TEST(LoopChainGeometryTest, CrossoverPairsOnSameFabricSide) {
+TEST(LoopChainGeometryTest, CrossoverPairsOnSameWaleSide) {
     auto data = build_chain_data({"CCC", "KKK", "KKK"});
     const auto& segments = data.yarn_path.segments();
 
@@ -499,42 +499,42 @@ TEST(LoopChainGeometryTest, CrossoverPairsOnSameFabricSide) {
         auto result = build_chain_for_segment(data, seg_id);
         if (result.entry_crossovers.empty() || result.exit_crossovers.empty()) continue;
 
-        // Get the parent's fabric_normal as reference axis
-        SegmentId parent_id = segments[seg_id].through[0];
-        auto parent_it = data.loops.find(parent_id);
-        ASSERT_NE(parent_it, data.loops.end());
-        Vec3 fnormal = parent_it->second.fabric_normal;
-
-        // Use the parent's crossover slot center as the reference point
-        Vec3 ref = parent_it->second.crossover_slots[0].position;
+        // Use the child's wale_axis for wale projection
+        Vec3 wale = data.frames[seg_id].wale_axis;
 
         for (size_t j = 0; j < result.entry_crossovers.size() && j < result.exit_crossovers.size(); ++j) {
             const auto& entry_xover = result.entry_crossovers[j];
             const auto& exit_xover = result.exit_crossovers[j];
 
-            float entry_in_proj = (entry_xover.entry - ref).dot(fnormal);
-            float entry_out_proj = (entry_xover.exit - ref).dot(fnormal);
-            float exit_in_proj = (exit_xover.entry - ref).dot(fnormal);
-            float exit_out_proj = (exit_xover.exit - ref).dot(fnormal);
+            // Use each crossover's own center as the reference, since
+            // entry and exit use different slots at potentially different
+            // wale positions.
+            Vec3 entry_ref = (entry_xover.entry + entry_xover.exit) * 0.5f;
+            Vec3 exit_ref = (exit_xover.entry + exit_xover.exit) * 0.5f;
+
+            float entry_in_proj = (entry_xover.entry - entry_ref).dot(wale);
+            float entry_out_proj = (entry_xover.exit - entry_ref).dot(wale);
+            float exit_in_proj = (exit_xover.entry - exit_ref).dot(wale);
+            float exit_out_proj = (exit_xover.exit - exit_ref).dot(wale);
 
             std::cerr << "  Seg " << seg_id << " crossover " << j
                 << ": entry_in=" << entry_in_proj << " entry_out=" << entry_out_proj
                 << " exit_in=" << exit_in_proj << " exit_out=" << exit_out_proj << "\n";
 
-            // crossover_entry_in and crossover_exit_out on same side
+            // entry_in and exit_out on same side (below, −wale)
             EXPECT_GT(entry_in_proj * exit_out_proj, 0.0f)
                 << "Segment " << seg_id << " crossover " << j
-                << ": entry_in and exit_out must be on the same fabric side";
+                << ": entry_in and exit_out must be on the same wale side (below opening)";
 
-            // crossover_entry_out and crossover_exit_in on same side
+            // entry_out and exit_in on same side (above, +wale)
             EXPECT_GT(entry_out_proj * exit_in_proj, 0.0f)
                 << "Segment " << seg_id << " crossover " << j
-                << ": entry_out and exit_in must be on the same fabric side";
+                << ": entry_out and exit_in must be on the same wale side (above opening)";
 
             // The two pairs must be on opposite sides from each other
             EXPECT_LT(entry_in_proj * entry_out_proj, 0.0f)
                 << "Segment " << seg_id << " crossover " << j
-                << ": entry_in and entry_out must be on opposite fabric sides";
+                << ": entry_in and entry_out must be on opposite wale sides";
         }
 
         checked++;
@@ -652,7 +652,163 @@ TEST(LoopChainGeometryTest, WaypointsProgressAlongStitchAxis) {
 }
 
 // ---------------------------------------------------------------------------
-// Test 9: Leg waypoints are between crossover and wrap in stitch_axis distance
+// Test 9: Through-opening dip forms a U-shape below the crossover plane
+//
+// Physical invariant: where the yarn passes through the parent loop opening,
+// it dips below the base level in the wale direction. The dip waypoints
+// (loop_entry_dip, loop_exit_dip) must be below the wale-perpendicular plane
+// defined by the neighboring crossover/approach endpoints. This ensures the
+// through-opening is a clean U-shape, not a zigzag.
+// ---------------------------------------------------------------------------
+TEST(LoopChainGeometryTest, ThroughOpeningDipIsUShape) {
+    auto data = build_chain_data({"CCC", "KKK", "KKK"});
+    const auto& segments = data.yarn_path.segments();
+
+    int checked = 0;
+    for (size_t i = 0; i < segments.size(); ++i) {
+        if (!segments[i].forms_loop || segments[i].through.empty()) continue;
+        SegmentId seg_id = static_cast<SegmentId>(i);
+
+        auto loop_it = data.loops.find(seg_id);
+        if (loop_it == data.loops.end()) continue;
+        if (loop_it->second.crossover_slots.empty()) continue;
+
+        auto result = build_chain_for_segment(data, seg_id);
+        if (result.waypoints.size() < 3) continue;
+
+        Vec3 wale = data.frames[seg_id].wale_axis;
+        Vec3 base = data.frames[seg_id].position;
+
+        auto wale_proj = [&](const Vec3& pt) -> float {
+            return (pt - base).dot(wale);
+        };
+
+        // Find waypoints by name
+        auto find_wp = [&](const std::string& name) -> const Vec3* {
+            for (const auto& wp : result.waypoints) {
+                if (wp.name == name) return &wp.position;
+            }
+            return nullptr;
+        };
+
+        // Entry dip: when crossovers are present, crossover_entry_in IS the
+        // dip (offset in -wale). Check it's below loop_approach.
+        // When no crossovers, loop_entry_dip provides the dip.
+        const Vec3* approach = find_wp("loop_approach");
+        const Vec3* entry_in = find_wp("crossover_entry_in");
+        const Vec3* entry_dip = find_wp("loop_entry_dip");
+
+        if (approach && entry_in) {
+            // Crossover-based dip: crossover_entry_in is below approach
+            EXPECT_LT(wale_proj(*entry_in), wale_proj(*approach))
+                << "Segment " << seg_id
+                << ": crossover_entry_in (wale=" << wale_proj(*entry_in)
+                << ") should be below loop_approach (wale=" << wale_proj(*approach)
+                << ") to form a U-shape through-opening";
+        } else if (approach && entry_dip) {
+            // No-crossover dip: loop_entry_dip is below approach
+            EXPECT_LT(wale_proj(*entry_dip), wale_proj(*approach))
+                << "Segment " << seg_id
+                << ": loop_entry_dip (wale=" << wale_proj(*entry_dip)
+                << ") should be below loop_approach (wale=" << wale_proj(*approach)
+                << ") to form a U-shape through-opening";
+        }
+
+        // Exit dip: when crossovers are present, crossover_exit_out IS the
+        // dip. When no crossovers, loop_exit_dip provides the dip.
+        const Vec3* exit_out = find_wp("crossover_exit_out");
+        const Vec3* exit_dip = find_wp("loop_exit_dip");
+        const Vec3* exit_pt = find_wp("loop_exit");
+
+        if (exit_out) {
+            // Crossover-based exit dip — already checked by CrossoverWaleDirectionIsCorrect
+        } else if (exit_dip && exit_pt) {
+            const Vec3* exit_approach = find_wp("loop_exit_leg");
+            if (exit_approach) {
+                EXPECT_LT(wale_proj(*exit_dip), wale_proj(*exit_approach))
+                    << "Segment " << seg_id
+                    << ": loop_exit_dip (wale=" << wale_proj(*exit_dip)
+                    << ") should be below loop_exit_leg (wale=" << wale_proj(*exit_approach)
+                    << ") to form a U-shape through-opening";
+            }
+        }
+
+        checked++;
+    }
+    EXPECT_GT(checked, 0) << "Expected at least one loop-forming segment with crossovers";
+}
+
+// ---------------------------------------------------------------------------
+// Test 10: Crossover entry/exit have correct wale direction
+//
+// Physical invariant: at each crossover, the yarn passes through the parent
+// loop opening in a consistent wale direction. At the entry crossover, the
+// yarn goes upward (from below the parent loop into the loop body):
+//   wale_proj(crossover_entry_in) < wale_proj(crossover_entry_out)
+// At the exit crossover, the yarn goes downward (from the loop body back
+// below the parent loop):
+//   wale_proj(crossover_exit_in) > wale_proj(crossover_exit_out)
+// If these are reversed, the spline must loop around at the crossover,
+// creating an unphysical zigzag.
+// ---------------------------------------------------------------------------
+TEST(LoopChainGeometryTest, CrossoverWaleDirectionIsCorrect) {
+    auto data = build_chain_data({"CCC", "KKK", "KKK"});
+    const auto& segments = data.yarn_path.segments();
+
+    int checked = 0;
+    for (size_t i = 0; i < segments.size(); ++i) {
+        if (!segments[i].forms_loop || segments[i].through.empty()) continue;
+        SegmentId seg_id = static_cast<SegmentId>(i);
+
+        auto loop_it = data.loops.find(seg_id);
+        if (loop_it == data.loops.end()) continue;
+        if (loop_it->second.crossover_slots.empty()) continue;
+
+        auto result = build_chain_for_segment(data, seg_id);
+
+        Vec3 wale = data.frames[seg_id].wale_axis;
+        Vec3 base = data.frames[seg_id].position;
+
+        auto wale_proj = [&](const Vec3& pt) -> float {
+            return (pt - base).dot(wale);
+        };
+
+        auto find_wp = [&](const std::string& name) -> const Vec3* {
+            for (const auto& wp : result.waypoints) {
+                if (wp.name == name) return &wp.position;
+            }
+            return nullptr;
+        };
+
+        // Entry crossover: yarn goes upward through parent loop
+        const Vec3* entry_in = find_wp("crossover_entry_in");
+        const Vec3* entry_out = find_wp("crossover_entry_out");
+        if (entry_in && entry_out) {
+            EXPECT_LT(wale_proj(*entry_in), wale_proj(*entry_out))
+                << "Segment " << seg_id
+                << ": entry crossover should go upward in wale"
+                << " (entry_in wale=" << wale_proj(*entry_in)
+                << ", entry_out wale=" << wale_proj(*entry_out) << ")";
+        }
+
+        // Exit crossover: yarn goes downward through parent loop
+        const Vec3* exit_in = find_wp("crossover_exit_in");
+        const Vec3* exit_out = find_wp("crossover_exit_out");
+        if (exit_in && exit_out) {
+            EXPECT_GT(wale_proj(*exit_in), wale_proj(*exit_out))
+                << "Segment " << seg_id
+                << ": exit crossover should go downward in wale"
+                << " (exit_in wale=" << wale_proj(*exit_in)
+                << ", exit_out wale=" << wale_proj(*exit_out) << ")";
+        }
+
+        checked++;
+    }
+    EXPECT_GT(checked, 0) << "Expected at least one loop-forming segment with crossovers";
+}
+
+// ---------------------------------------------------------------------------
+// Test 11: Leg waypoints are between crossover and wrap in stitch_axis distance
 //
 // Physical invariant: the legs of the loop connect the crossover at the base
 // to the wrap at the top. The stitch_axis distance of each leg endpoint must

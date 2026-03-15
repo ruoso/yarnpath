@@ -153,10 +153,6 @@ std::map<SegmentId, PrecomputedLoopGeometry> precompute_loop_geometry(
         }
         if (child_ids.empty()) continue;
 
-        // Determine the z_sign from the first child's orientation
-        LoopShapeParams first_child_shape = get_loop_shape_params(segments[child_ids[0]], yarn, gauge);
-        float z_sign = (first_child_shape.z_bulge >= 0) ? 1.0f : -1.0f;
-
         // Use stitch_axis for slot distribution (guaranteed perpendicular to wale)
         Vec3 parent_travel = frames[i].stitch_axis;
 
@@ -378,11 +374,11 @@ void build_full_loop_chain(
     // Start: current running spline position
     waypoints.push_back(state.running_spline.segments().back().end());
 
-    // Entry: dip toward parent opening, then cross through
+    // Entry: approach, then cross through parent opening (or just dip)
     if (!entry_crossovers.empty()) {
-        // Approach and dip into parent opening
+        // With wale-based crossovers, crossover_entry_in is already below
+        // the opening — it IS the dip. No separate loop_entry_dip needed.
         push_waypoint(loop_geom.apex_entry, "loop_approach");
-        push_waypoint(loop_geom.entry_through, "loop_entry_dip");
         // Cross through parent loop opening
         for (const auto& xover : entry_crossovers) {
             push_waypoint(xover.entry, "crossover_entry_in");

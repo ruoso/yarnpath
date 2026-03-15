@@ -24,31 +24,31 @@ static std::vector<CrossoverSlot> make_slots(
 }
 
 // ---------------------------------------------------------------------------
-// Test 1: Entry and exit are on opposite sides of the normal
+// Test 1: Entry and exit are on opposite sides along wale direction
 // ---------------------------------------------------------------------------
-TEST(CrossoverClaimingTest, EntryExitOppositeNormals) {
-    Vec3 normal(0, 0, 1);
+TEST(CrossoverClaimingTest, EntryExitOppositeWaleDirections) {
+    Vec3 wale(0, 0, 1);   // crossing_wale direction
     Vec3 tangent(1, 0, 0);
-    auto slots = make_slots(1, Vec3(0, 5, 0), tangent, normal, 1.0f);
+    auto slots = make_slots(1, Vec3(0, 5, 0), tangent, wale, 1.0f);
     float radius = 0.75f;
     Vec3 travel(1, 0, 0);
 
-    // as_entry=true: entry on +normal, exit on -normal
+    // as_entry=true: entry below (-wale), exit above (+wale)
     {
         std::set<size_t> claimed;
-        auto xover = claim_nearest_slot(slots, claimed, Vec3(0, 5, 0), radius, true, normal, travel);
-        float entry_z = xover.entry.dot(normal);
-        float exit_z = xover.exit.dot(normal);
-        EXPECT_GT(entry_z, exit_z) << "Entry should be on +normal side, exit on -normal side";
+        auto xover = claim_nearest_slot(slots, claimed, Vec3(0, 5, 0), radius, true, wale, travel);
+        float entry_z = xover.entry.dot(wale);
+        float exit_z = xover.exit.dot(wale);
+        EXPECT_LT(entry_z, exit_z) << "Entry should be below (-wale), exit above (+wale)";
     }
 
-    // as_entry=false: entry on -normal, exit on +normal
+    // as_entry=false: entry above (+wale), exit below (-wale)
     {
         std::set<size_t> claimed;
-        auto xover = claim_nearest_slot(slots, claimed, Vec3(0, 5, 0), radius, false, normal, travel);
-        float entry_z = xover.entry.dot(normal);
-        float exit_z = xover.exit.dot(normal);
-        EXPECT_LT(entry_z, exit_z) << "Exit should be on +normal side, entry on -normal side";
+        auto xover = claim_nearest_slot(slots, claimed, Vec3(0, 5, 0), radius, false, wale, travel);
+        float entry_z = xover.entry.dot(wale);
+        float exit_z = xover.exit.dot(wale);
+        EXPECT_GT(entry_z, exit_z) << "Entry should be above (+wale), exit below (-wale)";
     }
 }
 

@@ -171,7 +171,7 @@ GeometryPath build_geometry_with_callback(
                     frames[seg_id].position,
                     state.yarn_compressed_radius,
                     /*as_entry=*/true,
-                    frames[seg_id].fabric_normal,
+                    frames[seg_id].wale_axis,
                     frames[seg_id].stitch_axis);
                 claimed_entry_crossovers[{parent_id, seg_id}] = entry_crossover;
 
@@ -183,7 +183,7 @@ GeometryPath build_geometry_with_callback(
                         frames[seg_id].position,
                         state.yarn_compressed_radius,
                         /*as_entry=*/false,
-                        frames[seg_id].fabric_normal,
+                        frames[seg_id].wale_axis,
                         frames[seg_id].stitch_axis);
                     claimed_exit_crossovers[{parent_id, seg_id}] = exit_crossover;
                 }

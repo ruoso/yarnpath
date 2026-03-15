@@ -26,10 +26,11 @@ struct CrossoverSlot {
 // Claim an unclaimed crossover slot for a child crossing, biased by travel
 // direction so that entry slots are on the approach side and exit slots are
 // on the departure side.
-// as_entry=true: parent→child direction (entry = parent side, exit = child side)
-// as_entry=false: child→parent direction (entry = child side, exit = parent side)
-// child_fabric_normal: the child's fabric normal, used for the crossing offset
-//   direction so that entry/exit points are perpendicular to the child's frame.
+// as_entry=true: parent→child direction (entry below opening, exit above)
+// as_entry=false: child→parent direction (entry above opening, exit below)
+// crossing_wale: the wale direction (parent→child), which is the direction
+//   the child yarn passes through the parent loop opening. Entry points are
+//   offset in -wale (below), exit points in +wale (above).
 // travel_direction: the direction the child yarn is traveling (oriented
 //   stitch_axis). Entry slots are selected on the approach side (opposite to
 //   travel), exit slots on the departure side (along travel).
@@ -39,7 +40,7 @@ CrossoverData claim_nearest_slot(
     const Vec3& child_position,
     float yarn_compressed_radius,
     bool as_entry,
-    const Vec3& child_fabric_normal,
+    const Vec3& crossing_wale,
     const Vec3& travel_direction);
 
 }  // namespace yarnpath

@@ -19,13 +19,12 @@ struct SegmentFrame {
     Vec3 position;        // Relaxed world-space position (may be adjusted for parentless segments)
     Vec3 stitch_axis;     // Course direction (along the row)
     Vec3 fabric_normal;   // Perpendicular to fabric surface (front-facing)
-    Vec3 wale_axis;       // Row-stacking direction = fabric_normal.cross(stitch_axis)
+    Vec3 wale_axis;       // Row-stacking direction (from surface topology, always parent→child)
     StitchShapeParams shape;  // z_bulge, loop_height, stitch_width, multipliers, etc.
 };
 
 // Resolve a complete SegmentFrame for each segment in the yarn path.
-// Reads position, stitch_axis, fabric_normal, and shape from the enriched SurfaceNode.
-// Derives wale_axis as fabric_normal.cross(stitch_axis).
+// Reads position, stitch_axis, fabric_normal, wale_axis, and shape from the enriched SurfaceNode.
 // Adjusts parentless segments to sit below their children by one yarn diameter.
 std::vector<SegmentFrame> resolve_segment_frames(
     const YarnPath& yarn_path,

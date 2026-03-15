@@ -6,10 +6,14 @@
 #include "stitch_node.hpp"
 #include "stitch_instruction.hpp"
 #include "row_instruction.hpp"
+#include "test_helpers.hpp"
 #include <cmath>
 #include <map>
+#include <set>
+#include <iostream>
 
 using namespace yarnpath;
+using namespace yarnpath::test;
 
 class SurfaceSolverTest : public ::testing::Test {
 protected:
@@ -387,4 +391,140 @@ TEST(SurfaceSolverFabricNormal, FabricNormalPerpendicularity) {
             << "Node " << i << " fabric_normal not perpendicular to stitch_axis"
             << " (|dot|=" << dot << ")";
     }
+}
+
+// ---------------------------------------------------------------------------
+// Helper: build full pipeline (pattern → solve) returning both surface and
+// yarn_path so tests can use PassThrough topology.
+// ---------------------------------------------------------------------------
+struct SolverTestData {
+    YarnPath yarn_path;
+    SurfaceGraph surface;
+};
+
+static SolverTestData build_and_solve(const std::vector<std::string>& rows) {
+    YarnProperties yarn = default_yarn();
+    Gauge gauge = default_gauge();
+
+    PatternInstructions pattern = create_pattern(rows);
+    StitchGraph sg = StitchGraph::from_instructions(pattern);
+    YarnPath yarn_path = YarnPath::from_stitch_graph(sg, yarn, gauge);
+
+    SurfaceBuildConfig build_config;
+    build_config.random_seed = 42;
+    SurfaceGraph surface = SurfaceBuilder::from_yarn_path(yarn_path, yarn, gauge, build_config);
+
+    SolveConfig solve_config;
+    solve_config.max_iterations = 1000;
+    solve_config.convergence_threshold = 1e-4f;
+    SurfaceSolver::solve(surface, yarn, gauge, solve_config);
+
+    return SolverTestData{std::move(yarn_path), std::move(surface)};
+}
+
+// ---------------------------------------------------------------------------
+// Physical invariant: stitch_axis should be perpendicular to the
+// parent→child (wale) direction derived from PassThrough topology.
+// Uses 3 rows so the middle row has both parents and children.
+// ---------------------------------------------------------------------------
+TEST(SurfaceSolverFabricNormal, StitchAxisPerpendicularToWaleAxis) {
+    auto data = build_and_solve({"CCCC", "KKKK", "KKKK"});
+    const auto& surface = data.surface;
+
+    // Every node's stitch_axis should be perpendicular to its stored wale_axis.
+    // The wale_axis is computed from PassThrough topology in the solver,
+    // and stitch_axis is orthogonalized against it.
+    int checked = 0;
+    for (size_t i = 0; i < surface.node_count(); ++i) {
+        const auto& node = surface.node(i);
+        float dot = std::abs(node.stitch_axis.dot(node.wale_axis));
+        EXPECT_LT(dot, 0.01f)
+            << "Node " << i << " stitch_axis not perpendicular to wale_axis"
+            << " (|dot|=" << dot << ")";
+        checked++;
+    }
+    EXPECT_GT(checked, 0);
+}
+
+// ---------------------------------------------------------------------------
+// Physical invariant: for flat stockinette, all fabric normals should be
+// closely aligned (not just in the same hemisphere — actually similar).
+// ---------------------------------------------------------------------------
+TEST(SurfaceSolverFabricNormal, FabricNormalsCloselyAlignedForFlatFabric) {
+    auto data = build_and_solve({"CCCC", "KKKK", "KKKK"});
+    const auto& surface = data.surface;
+
+    // Compute average normal
+    Vec3 avg_normal = Vec3::zero();
+    for (size_t i = 0; i < surface.node_count(); ++i) {
+        avg_normal += surface.node(i).fabric_normal;
+    }
+    avg_normal = avg_normal * (1.0f / surface.node_count());
+    float avg_len = avg_normal.length();
+    ASSERT_GT(avg_len, 0.1f) << "Average normal is near-zero (normals cancel out)";
+    avg_normal = avg_normal * (1.0f / avg_len);
+
+    // Debug: print all node frames for diagnosis
+    for (size_t i = 0; i < surface.node_count(); ++i) {
+        const auto& n = surface.node(i);
+        std::cerr << "  Node " << i << " seg=" << n.segment_id
+            << " pos=(" << n.position.x << "," << n.position.y << "," << n.position.z << ")"
+            << " fn=(" << n.fabric_normal.x << "," << n.fabric_normal.y << "," << n.fabric_normal.z << ")"
+            << " sa=(" << n.stitch_axis.x << "," << n.stitch_axis.y << "," << n.stitch_axis.z << ")"
+            << " wa=(" << n.wale_axis.x << "," << n.wale_axis.y << "," << n.wale_axis.z << ")"
+            << " fn·avg=" << n.fabric_normal.dot(avg_normal)
+            << "\n";
+    }
+    std::cerr << "  Edges: ";
+    for (size_t i = 0; i < surface.edge_count(); ++i) {
+        const auto& e = surface.edge(i);
+        std::cerr << e.node_a << (e.type == EdgeType::PassThrough ? "-PT->" : "-YC->") << e.node_b << " ";
+    }
+    std::cerr << "\n";
+
+    // Each node's normal should be close to the average
+    for (size_t i = 0; i < surface.node_count(); ++i) {
+        float dot = surface.node(i).fabric_normal.dot(avg_normal);
+        EXPECT_GT(dot, 0.8f)
+            << "Node " << i << " fabric_normal deviates too much from average"
+            << " (dot=" << dot << ")";
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Physical invariant: the stored wale_axis should point from parents toward
+// children (positive projection onto the parent→child vector from PassThrough
+// topology).
+// ---------------------------------------------------------------------------
+TEST(SurfaceSolverFabricNormal, WaleAxisPointsParentToChild) {
+    auto data = build_and_solve({"CCCC", "KKKK", "KKKK"});
+    const auto& surface = data.surface;
+
+    // Build parent→children map from PassThrough edges
+    std::map<NodeId, std::vector<NodeId>> node_children;
+    for (const auto& edge : surface.edges()) {
+        if (edge.type == EdgeType::PassThrough) {
+            node_children[edge.node_b].push_back(edge.node_a);
+        }
+    }
+
+    int checked = 0;
+    for (const auto& [parent_id, children] : node_children) {
+        Vec3 parent_pos = surface.node(parent_id).position;
+        Vec3 avg_child = Vec3::zero();
+        for (NodeId cid : children) avg_child += surface.node(cid).position;
+        avg_child = avg_child * (1.0f / children.size());
+
+        Vec3 parent_to_child = avg_child - parent_pos;
+        float len = parent_to_child.length();
+        if (len < 1e-4f) continue;
+
+        // The stored wale_axis should point toward children
+        float proj = surface.node(parent_id).wale_axis.dot(parent_to_child);
+        EXPECT_GT(proj, 0.0f)
+            << "Node " << parent_id << " wale_axis points away from children"
+            << " (proj=" << proj << ")";
+        checked++;
+    }
+    EXPECT_GT(checked, 0) << "No parent-child pairs found via PassThrough edges";
 }

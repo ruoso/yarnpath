@@ -4,6 +4,8 @@
 #include <cmath>
 #include <algorithm>
 #include <chrono>
+#include <queue>
+#include <set>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -325,23 +327,65 @@ void SurfaceSolver::compute_fabric_normals(SurfaceGraph& graph) {
     }
 
     auto& nodes = graph.nodes();
+    const auto& edges = graph.edges();
     const size_t num_nodes = nodes.size();
     if (num_nodes == 0) return;
 
-    // First pass: compute raw normals from stitch_axis and neighbor geometry.
-    // Uses the same approach as the collision force code:
-    //   wale = up - course * dot(course, up)   (Gram-Schmidt vs Y-up)
-    //   normal = course.cross(wale)
-    // For boundary nodes with poorly-defined stitch_axis, fall back to
-    // using the z_bulge sign from LoopShapeParams to pick a default direction.
+    // Pre-compute per-node passthrough topology (children and parents).
+    // PassThrough edges: node_a = child, node_b = parent.
+    std::vector<std::vector<NodeId>> node_children(num_nodes);
+    std::vector<std::vector<NodeId>> node_parents(num_nodes);
+    for (const auto& edge : edges) {
+        if (edge.type != EdgeType::PassThrough) continue;
+        node_children[edge.node_b].push_back(edge.node_a);
+        node_parents[edge.node_a].push_back(edge.node_b);
+    }
 
-    #pragma omp parallel for schedule(static) if(num_nodes > 50)
+    // Build a set of PassThrough parent-child pairs for detecting row transitions.
+    // If a continuity neighbor is also a parent or child (via PassThrough), the
+    // continuity edge crosses a row boundary and should not be used for stitch_axis.
+    std::set<std::pair<NodeId, NodeId>> passthrough_pairs;
+    for (const auto& edge : edges) {
+        if (edge.type != EdgeType::PassThrough) continue;
+        passthrough_pairs.insert({edge.node_a, edge.node_b});
+        passthrough_pairs.insert({edge.node_b, edge.node_a});
+    }
+
+    auto is_cross_row = [&](NodeId a, NodeId b) {
+        return passthrough_pairs.count({a, b}) > 0;
+    };
+
+    // First pass: compute stitch_axis from continuity neighbors,
+    // then correct it using passthrough topology.
     for (size_t i = 0; i < num_nodes; ++i) {
         auto& node = nodes[i];
 
-        // First, ensure stitch_axis is up-to-date from final positions
+        // Step 1: Raw stitch_axis from continuity neighbors.
+        // Skip continuity neighbors that cross row boundaries (detected by
+        // PassThrough edges between them) since they give a diagonal direction.
         auto [prev_id, next_id] = graph.get_continuity_neighbors(node.id);
-        if (prev_id != static_cast<NodeId>(-1) && next_id != static_cast<NodeId>(-1)) {
+        bool prev_valid = prev_id != static_cast<NodeId>(-1) &&
+                          !is_cross_row(node.id, prev_id);
+        bool next_valid = next_id != static_cast<NodeId>(-1) &&
+                          !is_cross_row(node.id, next_id);
+
+        if (prev_valid && next_valid) {
+            Vec3 dir = nodes[next_id].position - nodes[prev_id].position;
+            if (dir.length_squared() > 1e-12f) {
+                node.stitch_axis = dir.normalized();
+            }
+        } else if (next_valid) {
+            Vec3 dir = nodes[next_id].position - node.position;
+            if (dir.length_squared() > 1e-12f) {
+                node.stitch_axis = dir.normalized();
+            }
+        } else if (prev_valid) {
+            Vec3 dir = node.position - nodes[prev_id].position;
+            if (dir.length_squared() > 1e-12f) {
+                node.stitch_axis = dir.normalized();
+            }
+        } else if (prev_id != static_cast<NodeId>(-1) && next_id != static_cast<NodeId>(-1)) {
+            // Both neighbors cross rows — fall back to the old two-neighbor approach
             Vec3 dir = nodes[next_id].position - nodes[prev_id].position;
             if (dir.length_squared() > 1e-12f) {
                 node.stitch_axis = dir.normalized();
@@ -359,41 +403,102 @@ void SurfaceSolver::compute_fabric_normals(SurfaceGraph& graph) {
         }
         // else: keep default stitch_axis (unit_x)
 
-        // Compute wale axis: perpendicular to stitch_axis in the vertical plane
+        // Step 2: Derive physical wale direction from passthrough topology.
+        // If this node has children or parents, the position vectors between
+        // them define the true wale direction.  Project the wale component
+        // out of stitch_axis so it lies purely in the course plane.
+        Vec3 wale_dir = Vec3::zero();
+        int wale_count = 0;
+        for (NodeId child_id : node_children[i]) {
+            wale_dir += nodes[child_id].position - node.position;
+            wale_count++;
+        }
+        for (NodeId parent_id : node_parents[i]) {
+            wale_dir += node.position - nodes[parent_id].position;
+            wale_count++;
+        }
+        if (wale_count > 0) {
+            wale_dir = wale_dir * (1.0f / wale_count);
+            float wale_mag = wale_dir.length();
+            if (wale_mag > 1e-6f) {
+                wale_dir = wale_dir * (1.0f / wale_mag);
+
+                // Project out the wale component from stitch_axis
+                Vec3 course = node.stitch_axis;
+                course = course - wale_dir * course.dot(wale_dir);
+                float course_len = course.length();
+                if (course_len > 1e-6f) {
+                    node.stitch_axis = course * (1.0f / course_len);
+                }
+            }
+        }
+
+        // Step 3: Compute wale_axis and fabric_normal.
+        // wale_axis always points parent→child (the row-stacking direction).
+        // For nodes with topology, re-orthogonalize the topology-derived wale
+        // against the corrected stitch_axis.  Otherwise fall back to Y-up.
         Vec3 course = node.stitch_axis;
-        Vec3 up = Vec3::unit_y();
-        Vec3 wale = up - course * course.dot(up);
+        Vec3 wale;
+        if (wale_count > 0 && wale_dir.length() > 1e-6f) {
+            wale = wale_dir - course * course.dot(wale_dir);
+        } else {
+            Vec3 up = Vec3::unit_y();
+            wale = up - course * course.dot(up);
+        }
         float wale_len = wale.length();
         if (wale_len > 1e-6f) {
             wale = wale / wale_len;
         } else {
-            // Course is nearly vertical — use Z as fallback
-            wale = Vec3::unit_z();
+            wale = Vec3::unit_y();
         }
+        node.wale_axis = wale;
 
-        // Normal = course × wale (right-hand rule)
+        // fabric_normal = stitch_axis × wale (right-hand rule).
+        // The sign depends on stitch_axis direction which alternates between
+        // rows — the second pass below will fix consistency.
         Vec3 normal = course.cross(wale);
         float normal_len = normal.length();
         if (normal_len > 1e-6f) {
             normal = normal / normal_len;
         } else {
-            // Degenerate — use default +Z
             normal = Vec3::unit_z();
         }
-
         node.fabric_normal = normal;
     }
 
-    // Second pass: ensure consistent orientation across the fabric.
-    // Use node 0's normal as the reference direction. If any node's normal
-    // points in the opposite hemisphere (dot < 0), flip it.
-    // This handles cases where the cross product arbitrarily picks a sign.
+    // Second pass: ensure consistent fabric_normal orientation across the
+    // fabric using BFS through the edge graph.  The first pass produces
+    // normals whose sign depends on stitch_axis direction, which alternates
+    // between RS/WS rows.  BFS propagation flips only fabric_normal (not
+    // stitch_axis or wale_axis) to make all normals point the same way.
     if (num_nodes > 1) {
-        // Propagate along yarn continuity to ensure neighbors agree.
-        // Since yarn order is mostly sequential, a simple forward pass suffices.
-        for (size_t i = 1; i < num_nodes; ++i) {
-            if (nodes[i].fabric_normal.dot(nodes[i - 1].fabric_normal) < 0.0f) {
-                nodes[i].fabric_normal = nodes[i].fabric_normal * -1.0f;
+        // Build adjacency list from all edges
+        std::vector<std::vector<NodeId>> adj(num_nodes);
+        for (const auto& edge : edges) {
+            if (edge.node_a < num_nodes && edge.node_b < num_nodes) {
+                adj[edge.node_a].push_back(edge.node_b);
+                adj[edge.node_b].push_back(edge.node_a);
+            }
+        }
+
+        // BFS from node 0
+        std::vector<bool> visited(num_nodes, false);
+        std::queue<NodeId> queue;
+        queue.push(0);
+        visited[0] = true;
+
+        while (!queue.empty()) {
+            NodeId curr = queue.front();
+            queue.pop();
+
+            for (NodeId neighbor : adj[curr]) {
+                if (visited[neighbor]) continue;
+                visited[neighbor] = true;
+
+                if (nodes[neighbor].fabric_normal.dot(nodes[curr].fabric_normal) < 0.0f) {
+                    nodes[neighbor].fabric_normal = nodes[neighbor].fabric_normal * -1.0f;
+                }
+                queue.push(neighbor);
             }
         }
     }

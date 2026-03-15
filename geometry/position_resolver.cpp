@@ -27,23 +27,15 @@ std::vector<SegmentFrame> resolve_segment_frames(
             frame.position = node.position;
             frame.stitch_axis = node.stitch_axis;
             frame.fabric_normal = node.fabric_normal;
+            frame.wale_axis = node.wale_axis;
             frame.shape = node.shape;
         } else {
             log->warn("resolve_segment_frames: segment {} not in surface graph, using defaults", seg_id);
             frame.position = Vec3::zero();
             frame.stitch_axis = Vec3::unit_x();
             frame.fabric_normal = Vec3::unit_z();
-            frame.shape = StitchShapeParams{};
-        }
-
-        // Derive wale_axis from fabric_normal and stitch_axis
-        frame.wale_axis = frame.fabric_normal.cross(frame.stitch_axis);
-        float wale_len = frame.wale_axis.length();
-        if (wale_len > 1e-6f) {
-            frame.wale_axis = frame.wale_axis * (1.0f / wale_len);
-        } else {
-            // Degenerate: fabric_normal parallel to stitch_axis
             frame.wale_axis = Vec3::unit_y();
+            frame.shape = StitchShapeParams{};
         }
     }
 

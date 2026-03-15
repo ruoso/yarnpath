@@ -5,6 +5,7 @@
 #include "test_helpers.hpp"
 
 #include <cmath>
+#include <map>
 
 using namespace yarnpath;
 using namespace yarnpath::test;
@@ -137,22 +138,27 @@ TEST(SegmentFrameTest, WaleAxisIsOrthogonal) {
 }
 
 // ---------------------------------------------------------------------------
-// Test 5: Frame forms a right-handed coordinate system
-// wale_axis ≈ fabric_normal × stitch_axis
+// Test 5: The three frame axes are mutually orthogonal
+// wale_axis is topology-derived (always parent→child) and independent of
+// stitch_axis sign, so fabric_normal × stitch_axis may differ in sign from
+// wale_axis on WS rows.  We check that wale_axis lies in the plane
+// perpendicular to stitch_axis (which it shares with fabric_normal × stitch_axis,
+// up to a sign).
 // ---------------------------------------------------------------------------
-TEST(SegmentFrameTest, FrameIsRightHanded) {
+TEST(SegmentFrameTest, FrameAxesMutuallyOrthogonal) {
     auto data = build_frames({"CCCC", "KKKK", "KKKK", "BBBB"});
 
     for (size_t i = 0; i < data.frames.size(); ++i) {
         const auto& f = data.frames[i];
-        Vec3 expected_wale = f.fabric_normal.cross(f.stitch_axis);
-        float len = expected_wale.length();
-        if (len < 1e-6f) continue;  // degenerate, skip
-        expected_wale = expected_wale * (1.0f / len);
-
-        float dot = f.wale_axis.dot(expected_wale);
-        EXPECT_GT(dot, 0.9f)
-            << "Frame " << i << ": wale_axis not consistent with fabric_normal x stitch_axis (dot=" << dot << ")";
+        // wale ⊥ stitch
+        EXPECT_NEAR(std::abs(f.wale_axis.dot(f.stitch_axis)), 0.0f, 0.05f)
+            << "Frame " << i << ": wale_axis not perpendicular to stitch_axis";
+        // wale ⊥ normal
+        EXPECT_NEAR(std::abs(f.wale_axis.dot(f.fabric_normal)), 0.0f, 0.05f)
+            << "Frame " << i << ": wale_axis not perpendicular to fabric_normal";
+        // normal ⊥ stitch
+        EXPECT_NEAR(std::abs(f.fabric_normal.dot(f.stitch_axis)), 0.0f, 0.05f)
+            << "Frame " << i << ": fabric_normal not perpendicular to stitch_axis";
     }
 }
 
@@ -218,29 +224,191 @@ TEST(SegmentFrameTest, KnitVsPurl_DifferentZBulge) {
 
     const auto& segments = data.yarn_path.segments();
 
-    // Gather z_bulge values for knit-like and purl-like loop segments
+    // Categorize by actual stitch type (LoopOrientation), not by z_bulge sign
     std::vector<float> knit_zbulge;
     std::vector<float> purl_zbulge;
 
     for (size_t i = 0; i < segments.size(); ++i) {
         if (!segments[i].forms_loop) continue;
         float zb = data.frames[i].shape.z_bulge;
-        if (zb > 0) {
+        if (segments[i].orientation == LoopOrientation::Front) {
             knit_zbulge.push_back(zb);
-        } else if (zb < 0) {
+        } else if (segments[i].orientation == LoopOrientation::Back) {
             purl_zbulge.push_back(zb);
         }
     }
 
-    // We should have found both knit (positive z_bulge) and purl (negative z_bulge) stitches
-    EXPECT_FALSE(knit_zbulge.empty()) << "Expected some knit stitches with positive z_bulge";
-    EXPECT_FALSE(purl_zbulge.empty()) << "Expected some purl stitches with negative z_bulge";
+    EXPECT_FALSE(knit_zbulge.empty()) << "Expected Front-oriented (knit) loops";
+    EXPECT_FALSE(purl_zbulge.empty()) << "Expected Back-oriented (purl) loops";
 
-    // Verify the sign difference
+    // Knit (Front) should have positive z_bulge, purl (Back) negative
     for (float zb : knit_zbulge) {
-        EXPECT_GT(zb, 0.0f) << "Knit z_bulge should be positive";
+        EXPECT_GT(zb, 0.0f) << "Knit (Front) z_bulge should be positive";
     }
     for (float zb : purl_zbulge) {
-        EXPECT_LT(zb, 0.0f) << "Purl z_bulge should be negative";
+        EXPECT_LT(zb, 0.0f) << "Purl (Back) z_bulge should be negative";
     }
+}
+
+// ---------------------------------------------------------------------------
+// Test 9: All frame axes are unit length (orthonormal, not just orthogonal)
+// ---------------------------------------------------------------------------
+TEST(SegmentFrameTest, AxesAreUnitLength) {
+    auto data = build_frames({"CCCC", "KKKK"});
+
+    for (size_t i = 0; i < data.frames.size(); ++i) {
+        const auto& f = data.frames[i];
+        EXPECT_NEAR(f.stitch_axis.length(), 1.0f, 0.01f)
+            << "Frame " << i << ": stitch_axis not unit length";
+        EXPECT_NEAR(f.fabric_normal.length(), 1.0f, 0.01f)
+            << "Frame " << i << ": fabric_normal not unit length";
+        EXPECT_NEAR(f.wale_axis.length(), 1.0f, 0.01f)
+            << "Frame " << i << ": wale_axis not unit length";
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Test 10: Fabric normals are consistent across flat stockinette
+// For a single-layer flat fabric, all fabric normals should point in
+// roughly the same direction.
+// ---------------------------------------------------------------------------
+TEST(SegmentFrameTest, FabricNormalsConsistentForFlatFabric) {
+    auto data = build_frames({"CCCC", "KKKK", "KKKK"});
+
+    // Compute average fabric normal
+    Vec3 avg_normal = Vec3::zero();
+    int count = 0;
+    for (const auto& f : data.frames) {
+        avg_normal += f.fabric_normal;
+        count++;
+    }
+    ASSERT_GT(count, 0);
+    avg_normal = avg_normal * (1.0f / count);
+    float avg_len = avg_normal.length();
+    ASSERT_GT(avg_len, 0.1f) << "Average normal near zero — normals are not consistent";
+    avg_normal = avg_normal * (1.0f / avg_len);
+
+    // Each normal should be roughly aligned with the average
+    for (size_t i = 0; i < data.frames.size(); ++i) {
+        float dot = data.frames[i].fabric_normal.dot(avg_normal);
+        EXPECT_GT(dot, 0.8f)
+            << "Frame " << i << ": fabric_normal deviates significantly from average"
+            << " (dot=" << dot << ")";
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Test 11: Stitch axis is perpendicular to the parent→child direction
+// The stitch_axis (course direction) should be roughly perpendicular to
+// the wale direction. We derive the physical wale direction from the
+// parent→child position vector rather than trusting the frame's wale_axis.
+// ---------------------------------------------------------------------------
+TEST(SegmentFrameTest, StitchAxisPerpendicularToWaleDirection) {
+    auto data = build_frames({"CCCC", "KKKK"});
+    const auto& segments = data.yarn_path.segments();
+
+    // Build children map
+    std::map<SegmentId, std::vector<SegmentId>> children_map;
+    for (size_t i = 0; i < segments.size(); ++i) {
+        for (SegmentId pid : segments[i].through) {
+            children_map[pid].push_back(static_cast<SegmentId>(i));
+        }
+    }
+
+    int checked = 0;
+    for (const auto& [parent_id, children] : children_map) {
+        Vec3 parent_pos = data.frames[parent_id].position;
+        Vec3 avg_child = Vec3::zero();
+        for (SegmentId cid : children) avg_child += data.frames[cid].position;
+        avg_child = avg_child * (1.0f / children.size());
+
+        Vec3 wale_dir = avg_child - parent_pos;
+        float len = wale_dir.length();
+        if (len < 1e-4f) continue;
+        wale_dir = wale_dir * (1.0f / len);
+
+        // Parent's stitch_axis should be roughly perpendicular to wale
+        float dot = std::abs(data.frames[parent_id].stitch_axis.dot(wale_dir));
+        EXPECT_LT(dot, 0.4f)
+            << "Segment " << parent_id
+            << ": stitch_axis should be perpendicular to parent→child direction"
+            << " (|dot|=" << dot << ")";
+
+        // Children's stitch axes should also be roughly perpendicular
+        for (SegmentId cid : children) {
+            float cdot = std::abs(data.frames[cid].stitch_axis.dot(wale_dir));
+            EXPECT_LT(cdot, 0.4f)
+                << "Segment " << cid << " (child of " << parent_id
+                << "): stitch_axis should be perpendicular to wale direction"
+                << " (|dot|=" << cdot << ")";
+        }
+        checked++;
+    }
+    EXPECT_GT(checked, 0) << "Expected at least one parent with children";
+}
+
+// ---------------------------------------------------------------------------
+// Test 12: Wale axis aligns with the parent-to-child direction
+// The wale axis represents the row-stacking direction. For any loop that
+// has children, the vector from the parent's position to its children's
+// average position defines the physical wale direction. The frame's
+// wale_axis should have a positive projection onto this direction.
+// ---------------------------------------------------------------------------
+TEST(SegmentFrameTest, WaleAxisPointsParentToChild) {
+    auto data = build_frames({"CCCC", "KKKK"});
+    const auto& segments = data.yarn_path.segments();
+
+    // Build children map
+    std::map<SegmentId, std::vector<SegmentId>> children_map;
+    for (size_t i = 0; i < segments.size(); ++i) {
+        for (SegmentId pid : segments[i].through) {
+            children_map[pid].push_back(static_cast<SegmentId>(i));
+        }
+    }
+
+    int checked = 0;
+    for (const auto& [parent_id, children] : children_map) {
+        if (children.empty()) continue;
+
+        Vec3 parent_pos = data.frames[parent_id].position;
+        Vec3 avg_child = Vec3::zero();
+        for (SegmentId cid : children) avg_child += data.frames[cid].position;
+        avg_child = avg_child * (1.0f / children.size());
+
+        Vec3 parent_to_child = avg_child - parent_pos;
+        float len = parent_to_child.length();
+        if (len < 1e-4f) continue;
+
+        float proj = parent_to_child.dot(data.frames[parent_id].wale_axis);
+        EXPECT_GT(proj, 0.0f)
+            << "Segment " << parent_id << ": wale_axis should point toward children"
+            << " (proj=" << proj << ", |parent_to_child|=" << len << ")";
+        checked++;
+    }
+    EXPECT_GT(checked, 0) << "Expected at least one loop with children";
+}
+
+// ---------------------------------------------------------------------------
+// Test 13: Children are further along wale than their parents
+// For every parent→child relationship, the child's position should have a
+// larger wale projection than the parent's, using the parent's own wale_axis.
+// This is the per-edge version of "row progression."
+// ---------------------------------------------------------------------------
+TEST(SegmentFrameTest, ChildrenFurtherAlongWaleThanParents) {
+    auto data = build_frames({"CCCC", "KKKK", "KKKK"});
+    const auto& segments = data.yarn_path.segments();
+
+    int checked = 0;
+    for (size_t i = 0; i < segments.size(); ++i) {
+        for (SegmentId pid : segments[i].through) {
+            Vec3 wale = data.frames[pid].wale_axis;
+            float parent_proj = data.frames[pid].position.dot(wale);
+            float child_proj = data.frames[i].position.dot(wale);
+            EXPECT_GT(child_proj, parent_proj)
+                << "Child " << i << " should be further along wale than parent " << pid
+                << " (child_proj=" << child_proj << ", parent_proj=" << parent_proj << ")";
+            checked++;
+        }
+    }
+    EXPECT_GT(checked, 0) << "Expected at least one parent-child pair";
 }

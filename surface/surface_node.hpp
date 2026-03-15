@@ -37,6 +37,12 @@ struct SurfaceNode {
     // Points toward the "front" face of the fabric (positive Z in default layout).
     Vec3 fabric_normal = Vec3::unit_z();
 
+    // Local frame: wale (row-stacking) direction.
+    // Computed from PassThrough topology: always points from parents toward children.
+    // Unlike fabric_normal × stitch_axis, this does not flip when stitch_axis
+    // reverses between RS/WS rows.
+    Vec3 wale_axis = Vec3::unit_y();
+
     // Position when stitch_axis was last computed (for lazy frame updates)
     Vec3 last_frame_position;
 

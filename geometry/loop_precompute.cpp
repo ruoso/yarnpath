@@ -376,10 +376,12 @@ void build_full_loop_chain(
 
     // Entry: approach, then cross through parent opening (or just dip)
     if (!entry_crossovers.empty()) {
-        // With wale-based crossovers, crossover_entry_in is already below
-        // the opening — it IS the dip. No separate loop_entry_dip needed.
-        push_waypoint(loop_geom.apex_entry, "loop_approach");
-        // Cross through parent loop opening
+        // Approach at the crossover entry level, offset back along stitch_axis.
+        // This ensures the yarn doesn't bump above the crossover entry in wale,
+        // and approaches from the correct direction in stitch_axis.
+        Vec3 entry_in = entry_crossovers.front().entry;
+        Vec3 approach = entry_in - loop_geom.stitch_axis * state.yarn_compressed_radius;
+        push_waypoint(approach, "loop_approach");
         for (const auto& xover : entry_crossovers) {
             push_waypoint(xover.entry, "crossover_entry_in");
             push_waypoint(xover.exit, "crossover_entry_out");

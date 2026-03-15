@@ -114,18 +114,13 @@ static ChainBuildResult build_chain_for_segment(
         initialize_running_spline(state, start, target, init_spline, nullptr);
     }
 
-    // Build connectors up to this segment's position if needed
-    if (!state.running_spline.empty()) {
-        Vec3 current_end = state.running_spline.segments().back().end();
-        Vec3 target = data.frames[seg_id].position;
-        if ((target - current_end).length() > 1e-4f) {
-            BezierSpline temp;
-            Vec3 dir = state.running_spline.segments().back().tangent(1.0f);
-            Vec3 target_dir = safe_normalized(target - current_end, Vec3(1, 0, 0));
-            add_connector_with_curvature_check(
-                state, temp, current_end, dir, target, target_dir, "approach", nullptr);
-        }
-    }
+    // Do NOT add a connector to the child's position here. In the real
+    // pipeline (geometry_builder.cpp), build_full_loop_chain is called
+    // with the running spline ending at the previous segment's exit —
+    // not at the current child's position. Adding a connector to the
+    // child's position would cause loop_approach to be deduplicated
+    // (since apex_entry == child position), masking bugs where the
+    // approach rises above the crossover entry.
 
     // Claim crossover slots with directional bias along stitch_axis
     Vec3 travel_dir = data.frames[seg_id].stitch_axis;
@@ -652,17 +647,25 @@ TEST(LoopChainGeometryTest, WaypointsProgressAlongStitchAxis) {
 }
 
 // ---------------------------------------------------------------------------
-// Test 9: Through-opening dip forms a U-shape below the crossover plane
+// Test 9: No waypoint between crossover_exit_out and crossover_entry_in
+//         rises above crossover_entry_in in wale
 //
-// Physical invariant: where the yarn passes through the parent loop opening,
-// it dips below the base level in the wale direction. The dip waypoints
-// (loop_entry_dip, loop_exit_dip) must be below the wale-perpendicular plane
-// defined by the neighboring crossover/approach endpoints. This ensures the
-// through-opening is a clean U-shape, not a zigzag.
+// Physical invariant: between the exit of one crossover and the entry of the
+// next, the yarn travels at or below the crossover entry level. If any
+// intermediate waypoint (e.g. loop_approach) rises above crossover_entry_in
+// in wale, the yarn creates an unphysical bump — rising to the child's
+// position then dropping back down to enter the crossover.
+//
+// The previous version of this test only checked that crossover_entry_in was
+// below loop_approach, which trivially passes (the crossover is always offset
+// down by yarn_compressed_radius). The correct check is the opposite: no
+// waypoint in the transition region should exceed the crossover entry level.
 // ---------------------------------------------------------------------------
 TEST(LoopChainGeometryTest, ThroughOpeningDipIsUShape) {
     auto data = build_chain_data({"CCC", "KKK", "KKK"});
     const auto& segments = data.yarn_path.segments();
+
+    const float epsilon = 1e-4f;
 
     int checked = 0;
     for (size_t i = 0; i < segments.size(); ++i) {
@@ -683,53 +686,78 @@ TEST(LoopChainGeometryTest, ThroughOpeningDipIsUShape) {
             return (pt - base).dot(wale);
         };
 
-        // Find waypoints by name
-        auto find_wp = [&](const std::string& name) -> const Vec3* {
-            for (const auto& wp : result.waypoints) {
-                if (wp.name == name) return &wp.position;
-            }
-            return nullptr;
-        };
+        // Collect waypoint indices for crossover boundaries
+        // We check: all waypoints between crossover_exit_out and the next
+        // crossover_entry_in must have wale <= wale(crossover_entry_in).
+        // For the first crossover, we also check waypoints from the start
+        // up to crossover_entry_in.
 
-        // Entry dip: when crossovers are present, crossover_entry_in IS the
-        // dip (offset in -wale). Check it's below loop_approach.
-        // When no crossovers, loop_entry_dip provides the dip.
-        const Vec3* approach = find_wp("loop_approach");
-        const Vec3* entry_in = find_wp("crossover_entry_in");
-        const Vec3* entry_dip = find_wp("loop_entry_dip");
-
-        if (approach && entry_in) {
-            // Crossover-based dip: crossover_entry_in is below approach
-            EXPECT_LT(wale_proj(*entry_in), wale_proj(*approach))
-                << "Segment " << seg_id
-                << ": crossover_entry_in (wale=" << wale_proj(*entry_in)
-                << ") should be below loop_approach (wale=" << wale_proj(*approach)
-                << ") to form a U-shape through-opening";
-        } else if (approach && entry_dip) {
-            // No-crossover dip: loop_entry_dip is below approach
-            EXPECT_LT(wale_proj(*entry_dip), wale_proj(*approach))
-                << "Segment " << seg_id
-                << ": loop_entry_dip (wale=" << wale_proj(*entry_dip)
-                << ") should be below loop_approach (wale=" << wale_proj(*approach)
-                << ") to form a U-shape through-opening";
+        // Find all crossover_exit_out and crossover_entry_in indices
+        std::vector<size_t> exit_out_indices;
+        std::vector<size_t> entry_in_indices;
+        for (size_t j = 0; j < result.waypoints.size(); ++j) {
+            if (result.waypoints[j].name == "crossover_exit_out")
+                exit_out_indices.push_back(j);
+            if (result.waypoints[j].name == "crossover_entry_in")
+                entry_in_indices.push_back(j);
         }
 
-        // Exit dip: when crossovers are present, crossover_exit_out IS the
-        // dip. When no crossovers, loop_exit_dip provides the dip.
-        const Vec3* exit_out = find_wp("crossover_exit_out");
-        const Vec3* exit_dip = find_wp("loop_exit_dip");
-        const Vec3* exit_pt = find_wp("loop_exit");
+        if (entry_in_indices.empty()) continue;
 
-        if (exit_out) {
-            // Crossover-based exit dip — already checked by CrossoverWaleDirectionIsCorrect
-        } else if (exit_dip && exit_pt) {
-            const Vec3* exit_approach = find_wp("loop_exit_leg");
-            if (exit_approach) {
-                EXPECT_LT(wale_proj(*exit_dip), wale_proj(*exit_approach))
+        // For the first crossover_entry_in, check all waypoints from
+        // index 0 up to (but not including) the entry_in itself
+        {
+            size_t end_idx = entry_in_indices[0];
+            float w_entry_in = wale_proj(result.waypoints[end_idx].position);
+
+            for (size_t j = 0; j < end_idx; ++j) {
+                float w_wp = wale_proj(result.waypoints[j].position);
+                std::cerr << "  Seg " << seg_id
+                    << " [before first entry_in] wp[" << j << "] '"
+                    << result.waypoints[j].name
+                    << "' wale=" << w_wp
+                    << " crossover_entry_in wale=" << w_entry_in << "\n";
+
+                EXPECT_LE(w_wp, w_entry_in + epsilon)
                     << "Segment " << seg_id
-                    << ": loop_exit_dip (wale=" << wale_proj(*exit_dip)
-                    << ") should be below loop_exit_leg (wale=" << wale_proj(*exit_approach)
-                    << ") to form a U-shape through-opening";
+                    << ": waypoint '" << result.waypoints[j].name
+                    << "' (wale=" << w_wp
+                    << ") is above crossover_entry_in (wale=" << w_entry_in
+                    << ") — yarn bumps up before entering crossover";
+            }
+        }
+
+        // For each crossover_exit_out, check waypoints up to the next
+        // crossover_entry_in
+        for (size_t ex = 0; ex < exit_out_indices.size(); ++ex) {
+            size_t start_idx = exit_out_indices[ex];
+
+            // Find the next crossover_entry_in after this exit_out
+            size_t end_idx = result.waypoints.size(); // default: end of list
+            float w_ceiling = std::numeric_limits<float>::max();
+            for (size_t ei : entry_in_indices) {
+                if (ei > start_idx) {
+                    end_idx = ei;
+                    w_ceiling = wale_proj(result.waypoints[ei].position);
+                    break;
+                }
+            }
+            if (w_ceiling == std::numeric_limits<float>::max()) continue;
+
+            for (size_t j = start_idx + 1; j < end_idx; ++j) {
+                float w_wp = wale_proj(result.waypoints[j].position);
+                std::cerr << "  Seg " << seg_id
+                    << " [exit_out.." << "entry_in] wp[" << j << "] '"
+                    << result.waypoints[j].name
+                    << "' wale=" << w_wp
+                    << " crossover_entry_in wale=" << w_ceiling << "\n";
+
+                EXPECT_LE(w_wp, w_ceiling + epsilon)
+                    << "Segment " << seg_id
+                    << ": waypoint '" << result.waypoints[j].name
+                    << "' (wale=" << w_wp
+                    << ") is above next crossover_entry_in (wale=" << w_ceiling
+                    << ") — yarn bumps up between crossovers";
             }
         }
 
@@ -872,3 +900,4 @@ TEST(LoopChainGeometryTest, LegWidthBetweenCrossoverAndWrap) {
     }
     EXPECT_GT(checked, 0) << "Expected at least one segment with legs, wraps, and crossovers";
 }
+

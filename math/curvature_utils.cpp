@@ -133,78 +133,103 @@ std::vector<CubicBezier> build_curvature_safe_hermite_chain(
     int n = N - 1;                                 // number of segments
     if (n < 1) return {};
 
-    // ── Entry tangent (M_0) ──────────────────────────────────────────
-    // Use the caller-supplied tangent vector for C1 continuity with the
-    // preceding spline.  If it is degenerate, fall back to the first chord.
+    // ── Chord lengths ────────────────────────────────────────────────
+    std::vector<float> h(n);
+    for (int j = 0; j < n; ++j) {
+        h[j] = (waypoints[j + 1] - waypoints[j]).length();
+        if (h[j] < 1e-8f) h[j] = 1e-8f;  // guard against zero-length chords
+    }
+
+    // ── Entry tangent ────────────────────────────────────────────────
+    // The caller supplies M_0, the unit-interval tangent for the first
+    // segment.  Convert to chord-length derivative: m_0 = M_0 / h_0.
     Vec3 M0 = entry_tangent;
     if (M0.length() < 1e-8f) {
         Vec3 chord0 = waypoints[1] - waypoints[0];
         M0 = (chord0.length() > 1e-8f) ? chord0 : Vec3(1, 0, 0);
     }
+    Vec3 m0 = M0 * (1.0f / h[0]);
 
     // ── Single segment: analytic natural-end solution ────────────────
     if (n == 1) {
-        // H''(1)=0  →  M_1 = 1.5·D - 0.5·M_0
         Vec3 D = waypoints[1] - waypoints[0];
-        Vec3 M1 = D * 1.5f - M0 * 0.5f;
-        return { CubicBezier::from_hermite(waypoints[0], M0,
-                                           waypoints[1], M1) };
+        // Natural end: m_1 = (3*D/h_0² - m_0/h_0) * h_0 / 2
+        //            = (3*D/h_0 - m_0) / 2
+        Vec3 m1 = (D * (3.0f / h[0]) - m0) * 0.5f;
+        // Convert back to unit-interval tangents for from_hermite
+        return { CubicBezier::from_hermite(waypoints[0], m0 * h[0],
+                                           waypoints[1], m1 * h[0]) };
     }
 
-    // ── Multi-segment: clamped-start natural cubic spline ────────────
+    // ── Multi-segment: chord-length-parameterised clamped natural spline ─
     //
-    // For the [0,1]-parameterised Hermite form on each segment, C2
-    // continuity at interior waypoint k requires:
+    // C2 continuity at interior waypoint k with non-uniform spacing:
     //
-    //   M_{k-1} + 4·M_k + M_{k+1} = 3·(P_{k+1} − P_{k-1})
+    //   (1/h_{k-1})·m_{k-1} + 2·(1/h_{k-1} + 1/h_k)·m_k + (1/h_k)·m_{k+1}
+    //       = 3·(D_{k-1}/h_{k-1}² + D_k/h_k²)
     //
-    // with clamped start M_0 = entry_tangent and natural end
-    // (H''=0 at the last point):
+    // where h_k = |P_{k+1} - P_k|, D_k = P_{k+1} - P_k.
     //
-    //   M_{n-1} + 2·M_n = 3·(P_n − P_{n-1})
+    // Clamped start: m_0 = M_0/h_0 (given).
+    // Natural end (S''=0 at last point):
+    //   (1/h_{n-1})·m_{n-1} + (2/h_{n-1})·m_n = 3·D_{n-1}/h_{n-1}²
     //
-    // This is a tridiagonal system for unknowns U[i] = M_{i+1},
-    // i = 0 … n-1.
+    // Unknowns: U[i] = m_{i+1}, i = 0 … n-1.
+
+    // Precompute secants D_k / h_k²
+    std::vector<Vec3> Dh2(n);
+    for (int j = 0; j < n; ++j) {
+        Dh2[j] = (waypoints[j + 1] - waypoints[j]) * (1.0f / (h[j] * h[j]));
+    }
 
     std::vector<float> a(n), b(n), c(n);
     std::vector<Vec3>  rhs(n);
 
-    // First equation (interior k=1, moved M_0 to RHS)
+    // First equation (k=1, m_0 moved to RHS)
+    float inv_h0 = 1.0f / h[0];
+    float inv_h1 = 1.0f / h[1];
     a[0] = 0.0f;
-    b[0] = 4.0f;
-    c[0] = 1.0f;
-    rhs[0] = (waypoints[2] - waypoints[0]) * 3.0f - M0;
+    b[0] = 2.0f * (inv_h0 + inv_h1);
+    c[0] = inv_h1;
+    rhs[0] = (Dh2[0] + Dh2[1]) * 3.0f - m0 * inv_h0;
 
     // Interior equations (k = 2 … n-1)
     for (int i = 1; i < n - 1; ++i) {
-        a[i]   = 1.0f;
-        b[i]   = 4.0f;
-        c[i]   = 1.0f;
-        rhs[i] = (waypoints[i + 2] - waypoints[i]) * 3.0f;
+        int k = i + 1;  // interior waypoint index
+        float inv_hk1 = 1.0f / h[k - 1];
+        float inv_hk  = 1.0f / h[k];
+        a[i] = inv_hk1;
+        b[i] = 2.0f * (inv_hk1 + inv_hk);
+        c[i] = inv_hk;
+        rhs[i] = (Dh2[k - 1] + Dh2[k]) * 3.0f;
     }
 
     // Natural end equation
-    a[n - 1]   = 1.0f;
-    b[n - 1]   = 2.0f;
-    c[n - 1]   = 0.0f;
-    rhs[n - 1] = (waypoints[n] - waypoints[n - 1]) * 3.0f;
+    float inv_hn1 = 1.0f / h[n - 1];
+    a[n - 1] = inv_hn1;
+    b[n - 1] = 2.0f * inv_hn1;
+    c[n - 1] = 0.0f;
+    rhs[n - 1] = Dh2[n - 1] * 3.0f;
 
     auto U = solve_tridiagonal_vec3(a, b, c, rhs);
 
-    // Assemble full tangent-vector array M[0..N-1]
-    std::vector<Vec3> M(N);
-    M[0] = M0;
+    // Assemble full chord-length derivative array m[0..N-1]
+    std::vector<Vec3> m(N);
+    m[0] = m0;
     for (int i = 0; i < n; ++i) {
-        M[i + 1] = U[i];
+        m[i + 1] = U[i];
     }
 
     // ── Build Hermite curves ─────────────────────────────────────────
+    // Convert chord-length derivatives back to unit-interval tangents:
+    //   T_j(start of segment j) = h_j · m_j
+    //   T_j(end of segment j)   = h_j · m_{j+1}
     std::vector<CubicBezier> curves;
     curves.reserve(n);
     for (int j = 0; j < n; ++j) {
         curves.push_back(CubicBezier::from_hermite(
-            waypoints[j],     M[j],
-            waypoints[j + 1], M[j + 1]));
+            waypoints[j],     m[j]     * h[j],
+            waypoints[j + 1], m[j + 1] * h[j]));
     }
     return curves;
 }

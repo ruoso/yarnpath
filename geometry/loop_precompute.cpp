@@ -1,4 +1,5 @@
 #include "loop_precompute.hpp"
+#include <common/logging.hpp>
 #include <cmath>
 #include <algorithm>
 
@@ -412,26 +413,15 @@ void build_full_loop_chain(
     }
 
     if (has_children) {
-        // Neutralize the leg bulge before the wrap begins: a waypoint
-        // at the apex level (no bulge) just outside the wrap region.
-        Vec3 pre_wrap = loop_geom.apex - travel * wrap_clearance;
-        push_waypoint(pre_wrap, "loop_pre_wrap");
-
-        // Wrap waypoints sit one yarn radius from the bundle circle edge,
-        // i.e. wrap_clearance = bundle_radius + yarn_compressed_radius
-        // from the bundle center, in both travel and normal directions.
+        // 3 wrap waypoints: entry side, apex, exit side — all offset
+        // outward by wrap_clearance in fabric_normal direction.
         Vec3 bundle_entry = loop_geom.apex - travel * wrap_clearance;
         push_waypoint(bundle_entry + wrap_offset, "loop_wrap_entry");
 
-        // Apex: over the center of the bundle, offset outward
         push_waypoint(loop_geom.apex + wrap_offset, "loop_apex");
 
         Vec3 bundle_exit = loop_geom.apex + travel * wrap_clearance;
         push_waypoint(bundle_exit + wrap_offset, "loop_wrap_exit");
-
-        // Neutralize the wrap offset after exiting: back to apex level.
-        Vec3 post_wrap = loop_geom.apex + travel * wrap_clearance;
-        push_waypoint(post_wrap, "loop_post_wrap");
     } else {
         push_waypoint(loop_geom.apex, "loop_apex");
     }
@@ -450,6 +440,21 @@ void build_full_loop_chain(
 
     // Need at least 2 waypoints for a chain
     if (waypoints.size() < 2) return;
+
+    // Debug: dump waypoints and wale projections
+    {
+        auto log = logging::get_logger();
+        Vec3 wale = loop_geom.oriented_wale;
+        log->debug("build_full_loop_chain: {} waypoints, wale=({:.3f},{:.3f},{:.3f})",
+                   waypoints.size(), wale.x, wale.y, wale.z);
+        for (size_t i = 0; i < waypoints.size(); ++i) {
+            Vec3 p = waypoints[i];
+            float w_proj = (p - waypoints[0]).dot(wale);
+            std::string label = (i == 0) ? "start" : names[i-1];
+            log->debug("  [{}] {}: ({:.3f},{:.3f},{:.3f}) wale={:.3f}",
+                       i, label, p.x, p.y, p.z, w_proj);
+        }
+    }
 
     // Entry tangent: direction from running spline, magnitude = first chord
     Vec3 dir = safe_normalized(

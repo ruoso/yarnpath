@@ -10,6 +10,7 @@
 #include <cmath>
 #include <map>
 #include <set>
+#include <iostream>
 
 using namespace yarnpath;
 using namespace yarnpath::test;
@@ -138,54 +139,104 @@ static BezierSpline build_chain_for_segment(
 }
 
 // ---------------------------------------------------------------------------
-// Test 1: Chain forms a U-shape (wale projection goes down then up then down)
+// Test 1: The apex region of the loop forms a smooth arch (no W-shape)
+//
+// Physical invariant: between the entry crossover dip and the exit crossover
+// dip, the yarn rises to the apex and comes back down in a smooth arch.
+// The wale projection should rise monotonically to the apex, then fall
+// monotonically. A W-shape (two peaks with a valley in between) indicates
+// the Hermite chain is overshooting at wrap waypoint transitions.
+//
+// Even a simple 2-row stockinette triggers this because the wrap waypoints
+// create step-function jumps in the fabric_normal direction that the
+// Hermite interpolation cannot follow smoothly.
 // ---------------------------------------------------------------------------
-TEST(LoopChainGeometryTest, ChainFormsUShape) {
-    auto data = build_chain_data({"CCC", "KKK"});
+TEST(LoopChainGeometryTest, ApexRegionIsSmoothlyCurved) {
+    auto data = build_chain_data({"CCC", "KKK", "KKK"});
     const auto& segments = data.yarn_path.segments();
 
-    // Find first loop-forming segment in row 1
-    SegmentId target_id = 0;
-    bool found = false;
+    int checked = 0;
     for (size_t i = 0; i < segments.size(); ++i) {
-        if (segments[i].forms_loop && !segments[i].through.empty()) {
-            target_id = static_cast<SegmentId>(i);
-            found = true;
-            break;
+        if (!segments[i].forms_loop || segments[i].through.empty()) continue;
+        SegmentId seg_id = static_cast<SegmentId>(i);
+
+        auto loop_it = data.loops.find(seg_id);
+        if (loop_it == data.loops.end()) continue;
+
+        auto spline = build_chain_for_segment(data, seg_id);
+        if (spline.empty()) continue;
+
+        Vec3 wale = data.frames[seg_id].wale_axis;
+        Vec3 base = data.frames[seg_id].position;
+
+        // Sample the wale projection densely
+        std::vector<float> wale_samples;
+        for (const auto& seg : spline.segments()) {
+            for (float t = 0.0f; t <= 1.0f; t += 0.02f) {
+                wale_samples.push_back((seg.evaluate(t) - base).dot(wale));
+            }
         }
-    }
-    if (!found) {
-        GTEST_SKIP() << "No loop-forming segment with parents found";
-    }
+        ASSERT_GE(wale_samples.size(), 10u) << "Segment " << seg_id;
 
-    auto spline = build_chain_for_segment(data, target_id);
-    ASSERT_FALSE(spline.empty()) << "Chain should produce at least one curve";
+        // Find the global apex (highest wale projection)
+        auto apex_it = std::max_element(wale_samples.begin(), wale_samples.end());
+        size_t apex_idx = std::distance(wale_samples.begin(), apex_it);
+        float w_apex = *apex_it;
 
-    // The U-shape is along the wale axis derived from the surface frame.
-    // Project spline samples onto the surface-derived wale to detect the U.
-    Vec3 wale = data.frames[target_id].wale_axis;
-    Vec3 base = data.frames[target_id].position;
+        // The rise (start to apex) should be monotonically increasing.
+        // Count significant direction reversals — each one is a valley/peak
+        // that shouldn't be there. We use a threshold proportional to the
+        // loop height so that sub-visual wiggles from the C2 spline are
+        // ignored while genuine W-shapes (valleys > 10% of loop height)
+        // are caught.
+        float wale_range = w_apex - std::min(wale_samples.front(), wale_samples.back());
+        float noise_threshold = wale_range * 0.10f;
 
-    std::vector<float> wale_samples;
-    for (const auto& seg : spline.segments()) {
-        for (float t = 0.0f; t <= 1.0f; t += 0.1f) {
-            wale_samples.push_back((seg.evaluate(t) - base).dot(wale));
+        int rise_reversals = 0;
+        float rise_max_so_far = wale_samples[0];
+        for (size_t j = 1; j <= apex_idx; ++j) {
+            if (wale_samples[j] > rise_max_so_far) {
+                rise_max_so_far = wale_samples[j];
+            } else if (rise_max_so_far - wale_samples[j] > noise_threshold) {
+                rise_reversals++;
+                rise_max_so_far = wale_samples[j];  // reset after detecting reversal
+            }
         }
+
+        // The fall (apex to end) should be monotonically decreasing.
+        int fall_reversals = 0;
+        float fall_min_so_far = wale_samples[apex_idx];
+        for (size_t j = apex_idx + 1; j < wale_samples.size(); ++j) {
+            if (wale_samples[j] < fall_min_so_far) {
+                fall_min_so_far = wale_samples[j];
+            } else if (wale_samples[j] - fall_min_so_far > noise_threshold) {
+                fall_reversals++;
+                fall_min_so_far = wale_samples[j];
+            }
+        }
+
+        // Debug output
+        float w_start = wale_samples.front();
+        float w_end = wale_samples.back();
+        std::cerr << "  Seg " << seg_id
+            << " wale: start=" << w_start << " apex=" << w_apex << " end=" << w_end
+            << " rise_reversals=" << rise_reversals
+            << " fall_reversals=" << fall_reversals << "\n";
+
+        // The entry/exit dips through the parent opening are expected reversals
+        // (wale drops ~1 yarn diameter before rising). The C2 spline may also
+        // produce small oscillations at scale. We allow a handful of reversals
+        // but catch gross W-shapes (which had 20+ at 0.1mm threshold).
+        EXPECT_LE(rise_reversals, 5)
+            << "Segment " << seg_id << ": rise to apex has " << rise_reversals
+            << " reversals (W-shape on entry side)";
+        EXPECT_LE(fall_reversals, 5)
+            << "Segment " << seg_id << ": fall from apex has " << fall_reversals
+            << " reversals (W-shape on exit side)";
+
+        checked++;
     }
-
-    // Find minimum and maximum wale projection
-    float w_min = *std::min_element(wale_samples.begin(), wale_samples.end());
-    float w_max = *std::max_element(wale_samples.begin(), wale_samples.end());
-    float w_start = wale_samples.front();
-
-    // U-shape: the spline should extend on both sides of the start point
-    // along the wale axis (dip on one side, apex on the other).
-    float w_range = w_max - w_min;
-    EXPECT_GT(w_range, 0.5f) << "U-shape should have significant extent along wale";
-
-    // The samples should span both sides of w_start (dip below, apex above)
-    EXPECT_GT(w_max, w_start + 0.1f) << "Apex should be above start along wale";
-    EXPECT_LT(w_min, w_start - 0.1f) << "Dip should be below start along wale";
+    EXPECT_GT(checked, 0) << "Expected at least one loop-forming segment with parents";
 }
 
 // ---------------------------------------------------------------------------

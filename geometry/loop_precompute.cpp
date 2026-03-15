@@ -358,7 +358,8 @@ void build_full_loop_chain(
     const PrecomputedLoopGeometry& loop_geom,
     const std::vector<CrossoverData>& entry_crossovers,
     const std::vector<CrossoverData>& exit_crossovers,
-    const CurveAddedCallback& on_curve_added) {
+    const CurveAddedCallback& on_curve_added,
+    const WaypointAddedCallback& on_waypoint_added) {
 
     if (state.running_spline.empty()) return;
 
@@ -370,16 +371,27 @@ void build_full_loop_chain(
         if (!waypoints.empty() && (pt - waypoints.back()).length() < 1e-4f) return;
         if (!waypoints.empty()) names.push_back(name);  // name labels the *curve* from prev to this
         waypoints.push_back(pt);
+        if (on_waypoint_added) on_waypoint_added(name, pt);
     };
 
     // Start: current running spline position
     waypoints.push_back(state.running_spline.segments().back().end());
 
-    // Approach: guide toward loop entry (base level)
-    push_waypoint(loop_geom.apex_entry, "loop_approach");
-
-    // Entry dip: yarn dips below parent base through the opening (no z_bulge)
-    push_waypoint(loop_geom.entry_through, "loop_entry_dip");
+    // Entry: dip toward parent opening, then cross through
+    if (!entry_crossovers.empty()) {
+        // Approach and dip into parent opening
+        push_waypoint(loop_geom.apex_entry, "loop_approach");
+        push_waypoint(loop_geom.entry_through, "loop_entry_dip");
+        // Cross through parent loop opening
+        for (const auto& xover : entry_crossovers) {
+            push_waypoint(xover.entry, "crossover_entry_in");
+            push_waypoint(xover.exit, "crossover_entry_out");
+        }
+    } else {
+        // No parent to cross through — use approach and dip
+        push_waypoint(loop_geom.apex_entry, "loop_approach");
+        push_waypoint(loop_geom.entry_through, "loop_entry_dip");
+    }
 
     // z_bulge offset for leg waypoints
     Vec3 leg_bulge = loop_geom.fabric_normal * loop_geom.shape.z_bulge;
@@ -403,37 +415,67 @@ void build_full_loop_chain(
     float bulge_sign = (loop_geom.shape.z_bulge >= 0.0f) ? -1.0f : 1.0f;
     Vec3 wrap_offset = loop_geom.fabric_normal * (wrap_clearance * bulge_sign);
 
-    // RISING LEG: midpoint between dip and apex, with z_bulge
+    // The base of each leg is where the yarn emerges after crossing the
+    // parent (crossover_out), or the dip point if there's no parent.
+    Vec3 entry_leg_base = loop_geom.entry_through;
+    if (!entry_crossovers.empty()) {
+        entry_leg_base = entry_crossovers.back().exit;
+    }
+    Vec3 exit_leg_base = loop_geom.exit_through;
+    if (!exit_crossovers.empty()) {
+        exit_leg_base = exit_crossovers.front().entry;
+    }
+
+    // Compute wrap/apex targets first so legs can interpolate toward them
+    Vec3 entry_wrap_target, exit_wrap_target;
+    if (has_children) {
+        Vec3 bundle_entry = loop_geom.apex - travel * wrap_clearance;
+        Vec3 bundle_exit = loop_geom.apex + travel * wrap_clearance;
+        entry_wrap_target = bundle_entry + wrap_offset;
+        exit_wrap_target = bundle_exit + wrap_offset;
+    } else {
+        entry_wrap_target = loop_geom.apex;
+        exit_wrap_target = loop_geom.apex;
+    }
+
+    // Legs rise from the crossover base along wale toward the wrap.
+    // Position = base + half the wale distance to wrap + z_bulge.
+    // This preserves the lateral (stitch_axis) position of the crossover base.
+    Vec3 wale = loop_geom.oriented_wale;
+    float entry_wale_dist = (entry_wrap_target - entry_leg_base).dot(wale);
+    float exit_wale_dist = (exit_wrap_target - exit_leg_base).dot(wale);
+
+    // RISING LEG
     {
-        Vec3 leg_mid = (loop_geom.entry_through + loop_geom.apex) * 0.5f + leg_bulge;
+        Vec3 leg_mid = entry_leg_base + wale * (entry_wale_dist * 0.5f) + leg_bulge;
         push_waypoint(leg_mid, "loop_entry_leg");
     }
 
     if (has_children) {
-        // 3 wrap waypoints: entry side, apex, exit side — all offset
-        // outward by wrap_clearance in fabric_normal direction.
-        Vec3 bundle_entry = loop_geom.apex - travel * wrap_clearance;
-        push_waypoint(bundle_entry + wrap_offset, "loop_wrap_entry");
-
+        push_waypoint(entry_wrap_target, "loop_wrap_entry");
         push_waypoint(loop_geom.apex + wrap_offset, "loop_apex");
-
-        Vec3 bundle_exit = loop_geom.apex + travel * wrap_clearance;
-        push_waypoint(bundle_exit + wrap_offset, "loop_wrap_exit");
+        push_waypoint(exit_wrap_target, "loop_wrap_exit");
     } else {
         push_waypoint(loop_geom.apex, "loop_apex");
     }
 
-    // FALLING LEG: midpoint between apex and dip, with z_bulge
+    // FALLING LEG
     {
-        Vec3 leg_mid = (loop_geom.apex + loop_geom.exit_through) * 0.5f + leg_bulge;
+        Vec3 leg_mid = exit_leg_base + wale * (exit_wale_dist * 0.5f) + leg_bulge;
         push_waypoint(leg_mid, "loop_exit_leg");
     }
 
-    // Exit dip: yarn dips back below parent base (no z_bulge)
-    push_waypoint(loop_geom.exit_through, "loop_exit_dip");
-
-    // Exit: back to base level
-    push_waypoint(loop_geom.apex_exit, "loop_exit");
+    // Exit crossover: thread back through parent loop opening
+    if (!exit_crossovers.empty()) {
+        for (const auto& xover : exit_crossovers) {
+            push_waypoint(xover.entry, "crossover_exit_in");
+            push_waypoint(xover.exit, "crossover_exit_out");
+        }
+    } else {
+        // No parent to cross through — use the dip and exit waypoints
+        push_waypoint(loop_geom.exit_through, "loop_exit_dip");
+        push_waypoint(loop_geom.apex_exit, "loop_exit");
+    }
 
     // Need at least 2 waypoints for a chain
     if (waypoints.size() < 2) return;

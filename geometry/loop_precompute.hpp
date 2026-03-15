@@ -139,7 +139,8 @@ void build_full_loop_chain(
     const PrecomputedLoopGeometry& loop_geom,
     const std::vector<CrossoverData>& entry_crossovers,
     const std::vector<CrossoverData>& exit_crossovers,
-    const CurveAddedCallback& on_curve_added);
+    const CurveAddedCallback& on_curve_added,
+    const WaypointAddedCallback& on_waypoint_added = nullptr);
 
 // Initialize the running spline with a tail segment pointing toward first_target.
 void initialize_running_spline(

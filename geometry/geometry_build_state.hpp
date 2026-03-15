@@ -34,6 +34,10 @@ struct GeometryBuildState {
 // Parameters: description of the curve, the running spline after adding
 using CurveAddedCallback = std::function<void(const std::string& description)>;
 
+// Callback type for reporting each waypoint as it's added to a chain
+// Parameters: name of the waypoint, position
+using WaypointAddedCallback = std::function<void(const std::string& name, const Vec3& position)>;
+
 }  // namespace yarnpath
 
 #endif // YARNPATH_GEOMETRY_BUILD_STATE_HPP

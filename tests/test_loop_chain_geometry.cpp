@@ -84,8 +84,22 @@ static ChainTestData build_chain_data(const std::vector<std::string>& rows) {
     };
 }
 
+// A named waypoint captured from build_full_loop_chain
+struct NamedWaypoint {
+    std::string name;
+    Vec3 position;
+};
+
+// Result from building a chain for a segment, including crossover data
+struct ChainBuildResult {
+    BezierSpline spline;
+    std::vector<CrossoverData> entry_crossovers;
+    std::vector<CrossoverData> exit_crossovers;
+    std::vector<NamedWaypoint> waypoints;
+};
+
 // Helper: initialize state and build chain for a specific loop segment
-static BezierSpline build_chain_for_segment(
+static ChainBuildResult build_chain_for_segment(
     ChainTestData& data, SegmentId seg_id) {
 
     auto& state = *data.state_ptr;
@@ -134,8 +148,12 @@ static BezierSpline build_chain_for_segment(
     }
 
     BezierSpline segment_spline;
-    build_full_loop_chain(state, segment_spline, geom, entry_xovers, exit_xovers, nullptr);
-    return segment_spline;
+    std::vector<NamedWaypoint> named_waypoints;
+    WaypointAddedCallback wp_cb = [&](const std::string& name, const Vec3& pos) {
+        named_waypoints.push_back({name, pos});
+    };
+    build_full_loop_chain(state, segment_spline, geom, entry_xovers, exit_xovers, nullptr, wp_cb);
+    return ChainBuildResult{std::move(segment_spline), std::move(entry_xovers), std::move(exit_xovers), std::move(named_waypoints)};
 }
 
 // ---------------------------------------------------------------------------
@@ -163,8 +181,9 @@ TEST(LoopChainGeometryTest, ApexRegionIsSmoothlyCurved) {
         auto loop_it = data.loops.find(seg_id);
         if (loop_it == data.loops.end()) continue;
 
-        auto spline = build_chain_for_segment(data, seg_id);
-        if (spline.empty()) continue;
+        auto result = build_chain_for_segment(data, seg_id);
+        if (result.spline.empty()) continue;
+        const auto& spline = result.spline;
 
         Vec3 wale = data.frames[seg_id].wale_axis;
         Vec3 base = data.frames[seg_id].position;
@@ -308,8 +327,9 @@ TEST(LoopChainGeometryTest, WrapOppositeToChildBulge) {
         if (geom.crossover_slots.empty() || geom.shape.z_bulge == 0.0f) continue;
         if (!segments[i].forms_loop || segments[i].through.empty()) continue;
 
-        auto spline = build_chain_for_segment(data, seg_id);
-        if (spline.empty()) continue;
+        auto result = build_chain_for_segment(data, seg_id);
+        if (result.spline.empty()) continue;
+        const auto& spline = result.spline;
 
         Vec3 base = data.frames[seg_id].position;
         Vec3 wale = data.frames[seg_id].wale_axis;
@@ -368,7 +388,8 @@ TEST(LoopChainGeometryTest, OutputIsContinuous) {
         GTEST_SKIP() << "No loop-forming segment with parents found";
     }
 
-    auto spline = build_chain_for_segment(data, target_id);
+    auto result = build_chain_for_segment(data, target_id);
+    const auto& spline = result.spline;
     if (spline.segments().size() < 2) {
         GTEST_SKIP() << "Need at least 2 curve segments to check continuity";
     }
@@ -381,4 +402,205 @@ TEST(LoopChainGeometryTest, OutputIsContinuous) {
         EXPECT_LT(gap, 1e-4f)
             << "Gap between segment " << (i-1) << " end and segment " << i << " start: " << gap;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Test 6: Yarn crosses through parent loop opening
+//
+// Physical invariant: a child stitch's yarn must enter the parent loop from
+// one side of the fabric, form its own loop, and exit back through the parent
+// loop on the other side. This means the fabric_normal projection of the
+// spline relative to the crossover slot center must change sign at least
+// twice (once for entry crossing, once for exit crossing).
+// ---------------------------------------------------------------------------
+TEST(LoopChainGeometryTest, YarnCrossesThroughParentLoop) {
+    auto data = build_chain_data({"CCC", "KKK", "KKK"});
+    const auto& segments = data.yarn_path.segments();
+
+    int checked = 0;
+    for (size_t i = 0; i < segments.size(); ++i) {
+        if (!segments[i].forms_loop || segments[i].through.empty()) continue;
+        SegmentId seg_id = static_cast<SegmentId>(i);
+
+        auto loop_it = data.loops.find(seg_id);
+        if (loop_it == data.loops.end()) continue;
+
+        auto result = build_chain_for_segment(data, seg_id);
+        if (result.spline.empty()) continue;
+        if (result.entry_crossovers.empty() && result.exit_crossovers.empty()) continue;
+
+        // Use the first entry crossover as the reference point
+        Vec3 xover_center = result.entry_crossovers[0].entry;
+        if (!result.entry_crossovers.empty()) {
+            // Midpoint between entry and exit of the crossover
+            xover_center = (result.entry_crossovers[0].entry + result.entry_crossovers[0].exit) * 0.5f;
+        }
+
+        // Get the parent's fabric_normal
+        SegmentId parent_id = segments[seg_id].through[0];
+        auto parent_it = data.loops.find(parent_id);
+        ASSERT_NE(parent_it, data.loops.end()) << "Parent loop geometry not found";
+        Vec3 fnormal = parent_it->second.fabric_normal;
+
+        // Sample the spline and compute fabric_normal projection relative to crossover center
+        std::vector<float> fn_projections;
+        for (const auto& seg : result.spline.segments()) {
+            for (float t = 0.0f; t <= 1.0f; t += 0.02f) {
+                Vec3 pt = seg.evaluate(t);
+                fn_projections.push_back((pt - xover_center).dot(fnormal));
+            }
+        }
+
+        // Count sign changes in the fabric_normal projection
+        int sign_changes = 0;
+        for (size_t j = 1; j < fn_projections.size(); ++j) {
+            if (fn_projections[j-1] * fn_projections[j] < 0.0f) {
+                sign_changes++;
+            }
+        }
+
+        std::cerr << "  Seg " << seg_id << " fabric_normal sign changes: " << sign_changes << "\n";
+
+        // The yarn must cross through the parent opening at least twice
+        // (once entering, once exiting)
+        EXPECT_GE(sign_changes, 2)
+            << "Segment " << seg_id << ": yarn must thread through parent loop opening "
+            << "(expected >= 2 fabric_normal sign changes, got " << sign_changes << ")";
+
+        checked++;
+    }
+    EXPECT_GT(checked, 0) << "Expected at least one loop-forming segment with parents and crossovers";
+}
+
+// ---------------------------------------------------------------------------
+// Test 7: Crossover entry/exit points are on consistent fabric sides
+//
+// Physical invariant: the yarn enters the parent loop from one side of the
+// fabric and exits back to the same side. So crossover_entry_in (approach
+// side) and crossover_exit_out (departure side) must be on the same side
+// of the fabric (same fabric_normal projection), and crossover_entry_out
+// and crossover_exit_in must be on the other side together.
+// ---------------------------------------------------------------------------
+TEST(LoopChainGeometryTest, CrossoverPairsOnSameFabricSide) {
+    auto data = build_chain_data({"CCC", "KKK", "KKK"});
+    const auto& segments = data.yarn_path.segments();
+
+    int checked = 0;
+    for (size_t i = 0; i < segments.size(); ++i) {
+        if (!segments[i].forms_loop || segments[i].through.empty()) continue;
+        SegmentId seg_id = static_cast<SegmentId>(i);
+
+        auto loop_it = data.loops.find(seg_id);
+        if (loop_it == data.loops.end()) continue;
+
+        auto result = build_chain_for_segment(data, seg_id);
+        if (result.entry_crossovers.empty() || result.exit_crossovers.empty()) continue;
+
+        // Get the parent's fabric_normal as reference axis
+        SegmentId parent_id = segments[seg_id].through[0];
+        auto parent_it = data.loops.find(parent_id);
+        ASSERT_NE(parent_it, data.loops.end());
+        Vec3 fnormal = parent_it->second.fabric_normal;
+
+        // Use the parent's crossover slot center as the reference point
+        Vec3 ref = parent_it->second.crossover_slots[0].position;
+
+        for (size_t j = 0; j < result.entry_crossovers.size() && j < result.exit_crossovers.size(); ++j) {
+            const auto& entry_xover = result.entry_crossovers[j];
+            const auto& exit_xover = result.exit_crossovers[j];
+
+            float entry_in_proj = (entry_xover.entry - ref).dot(fnormal);
+            float entry_out_proj = (entry_xover.exit - ref).dot(fnormal);
+            float exit_in_proj = (exit_xover.entry - ref).dot(fnormal);
+            float exit_out_proj = (exit_xover.exit - ref).dot(fnormal);
+
+            std::cerr << "  Seg " << seg_id << " crossover " << j
+                << ": entry_in=" << entry_in_proj << " entry_out=" << entry_out_proj
+                << " exit_in=" << exit_in_proj << " exit_out=" << exit_out_proj << "\n";
+
+            // crossover_entry_in and crossover_exit_out on same side
+            EXPECT_GT(entry_in_proj * exit_out_proj, 0.0f)
+                << "Segment " << seg_id << " crossover " << j
+                << ": entry_in and exit_out must be on the same fabric side";
+
+            // crossover_entry_out and crossover_exit_in on same side
+            EXPECT_GT(entry_out_proj * exit_in_proj, 0.0f)
+                << "Segment " << seg_id << " crossover " << j
+                << ": entry_out and exit_in must be on the same fabric side";
+
+            // The two pairs must be on opposite sides from each other
+            EXPECT_LT(entry_in_proj * entry_out_proj, 0.0f)
+                << "Segment " << seg_id << " crossover " << j
+                << ": entry_in and entry_out must be on opposite fabric sides";
+        }
+
+        checked++;
+    }
+    EXPECT_GT(checked, 0) << "Expected at least one segment with both entry and exit crossovers";
+}
+
+// ---------------------------------------------------------------------------
+// Test 8: Leg waypoints are between crossover and wrap in stitch_axis distance
+//
+// Physical invariant: the legs of the loop connect the crossover at the base
+// to the wrap at the top. The stitch_axis distance of each leg endpoint must
+// be between the crossover spread and the wrap spread. That is:
+//   dist(crossover_entry_out, crossover_exit_in)
+//     <= dist(loop_entry_leg, loop_exit_leg)
+//     <= dist(loop_wrap_entry, loop_wrap_exit)
+// ---------------------------------------------------------------------------
+TEST(LoopChainGeometryTest, LegWidthBetweenCrossoverAndWrap) {
+    auto data = build_chain_data({"CCC", "KKK", "KKK"});
+    const auto& segments = data.yarn_path.segments();
+
+    int checked = 0;
+    for (size_t i = 0; i < segments.size(); ++i) {
+        if (!segments[i].forms_loop || segments[i].through.empty()) continue;
+        SegmentId seg_id = static_cast<SegmentId>(i);
+
+        auto loop_it = data.loops.find(seg_id);
+        if (loop_it == data.loops.end()) continue;
+        if (loop_it->second.crossover_slots.empty()) continue;
+
+        auto result = build_chain_for_segment(data, seg_id);
+        if (result.waypoints.empty()) continue;
+        if (result.entry_crossovers.empty() || result.exit_crossovers.empty()) continue;
+
+        // Find waypoints by name
+        auto find_wp = [&](const std::string& name) -> const Vec3* {
+            for (const auto& wp : result.waypoints) {
+                if (wp.name == name) return &wp.position;
+            }
+            return nullptr;
+        };
+
+        const Vec3* entry_leg = find_wp("loop_entry_leg");
+        const Vec3* exit_leg = find_wp("loop_exit_leg");
+        const Vec3* wrap_entry = find_wp("loop_wrap_entry");
+        const Vec3* wrap_exit = find_wp("loop_wrap_exit");
+        const Vec3* xover_entry_out = find_wp("crossover_entry_out");
+        const Vec3* xover_exit_in = find_wp("crossover_exit_in");
+
+        if (!entry_leg || !exit_leg || !wrap_entry || !wrap_exit ||
+            !xover_entry_out || !xover_exit_in) continue;
+
+        float leg_dist = (*entry_leg - *exit_leg).length();
+        float wrap_dist = (*wrap_entry - *wrap_exit).length();
+        float xover_dist = (*xover_entry_out - *xover_exit_in).length();
+
+        std::cerr << "  Seg " << seg_id
+            << " xover_dist=" << xover_dist
+            << " leg_dist=" << leg_dist
+            << " wrap_dist=" << wrap_dist << "\n";
+
+        EXPECT_GE(leg_dist, xover_dist)
+            << "Segment " << seg_id
+            << ": leg width must be >= crossover width";
+        EXPECT_LE(leg_dist, wrap_dist)
+            << "Segment " << seg_id
+            << ": leg width must be <= wrap width";
+
+        checked++;
+    }
+    EXPECT_GT(checked, 0) << "Expected at least one segment with legs, wraps, and crossovers";
 }

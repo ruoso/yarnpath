@@ -127,7 +127,8 @@ static ChainBuildResult build_chain_for_segment(
         }
     }
 
-    // Claim crossover slots
+    // Claim crossover slots with directional bias along stitch_axis
+    Vec3 travel_dir = data.frames[seg_id].stitch_axis;
     std::map<SegmentId, std::set<size_t>> claimed_slots;
     std::vector<CrossoverData> entry_xovers, exit_xovers;
     for (SegmentId parent_id : segments[seg_id].through) {
@@ -135,13 +136,15 @@ static ChainBuildResult build_chain_for_segment(
         if (parent_it != data.loops.end() && !parent_it->second.crossover_slots.empty()) {
             auto entry = claim_nearest_slot(
                 parent_it->second.crossover_slots, claimed_slots[parent_id],
-                data.frames[seg_id].position, state.yarn_compressed_radius, true);
+                data.frames[seg_id].position, state.yarn_compressed_radius, true,
+                data.frames[seg_id].fabric_normal, travel_dir);
             entry_xovers.push_back(entry);
 
             if (segments[seg_id].forms_loop) {
                 auto exit = claim_nearest_slot(
                     parent_it->second.crossover_slots, claimed_slots[parent_id],
-                    data.frames[seg_id].position, state.yarn_compressed_radius, false);
+                    data.frames[seg_id].position, state.yarn_compressed_radius, false,
+                    data.frames[seg_id].fabric_normal, travel_dir);
                 exit_xovers.push_back(exit);
             }
         }
@@ -540,7 +543,116 @@ TEST(LoopChainGeometryTest, CrossoverPairsOnSameFabricSide) {
 }
 
 // ---------------------------------------------------------------------------
-// Test 8: Leg waypoints are between crossover and wrap in stitch_axis distance
+// Test 8: Waypoints progress along stitch_axis except in loop interior
+//
+// Physical invariant: the yarn travels along the stitch_axis (course
+// direction). All consecutive waypoint pairs must have non-decreasing
+// stitch_axis projection, EXCEPT when the yarn curves into and out of
+// the loop body (the entry/exit legs and the crossover exit-in point).
+// ---------------------------------------------------------------------------
+TEST(LoopChainGeometryTest, WaypointsProgressAlongStitchAxis) {
+    auto data = build_chain_data({"CCC", "KKK", "KKK"});
+    const auto& segments = data.yarn_path.segments();
+
+    // Waypoint names where backward motion (decreasing stitch_axis projection)
+    // is expected — these are the loop interior transitions where the yarn
+    // curves back through the parent opening.
+    const std::set<std::string> backward_allowed = {
+        "loop_entry_leg",
+        "loop_wrap_entry",
+        "loop_exit_leg",
+        "crossover_exit_in"
+    };
+
+    int checked = 0;
+    for (size_t i = 0; i < segments.size(); ++i) {
+        if (!segments[i].forms_loop || segments[i].through.empty()) continue;
+        SegmentId seg_id = static_cast<SegmentId>(i);
+
+        auto loop_it = data.loops.find(seg_id);
+        if (loop_it == data.loops.end()) continue;
+        if (loop_it->second.crossover_slots.empty()) continue;
+
+        // Only test segments that have children (wrap waypoints)
+        auto children_it = data.children_map.find(seg_id);
+        if (children_it == data.children_map.end() || children_it->second.empty()) {
+            // This segment has no children — check if it has wrap waypoints
+            // by building the chain and checking
+        }
+
+        auto result = build_chain_for_segment(data, seg_id);
+        if (result.waypoints.size() < 2) continue;
+
+        Vec3 stitch_axis = data.frames[seg_id].stitch_axis;
+        Vec3 start = result.waypoints[0].position;
+
+        // Debug: print frame alignment between child and parent
+        for (SegmentId parent_id : segments[i].through) {
+            Vec3 parent_fn = data.frames[parent_id].fabric_normal;
+            Vec3 parent_sa = data.frames[parent_id].stitch_axis;
+            float dot_fn_sa = parent_fn.dot(stitch_axis);
+            std::cerr << "  Seg " << seg_id << " parent=" << parent_id
+                << " child_sa=(" << stitch_axis.x << "," << stitch_axis.y << "," << stitch_axis.z << ")"
+                << " parent_fn=(" << parent_fn.x << "," << parent_fn.y << "," << parent_fn.z << ")"
+                << " parent_sa=(" << parent_sa.x << "," << parent_sa.y << "," << parent_sa.z << ")"
+                << " parent_fn.dot(child_sa)=" << dot_fn_sa << "\n";
+        }
+
+        auto stitch_proj = [&](const Vec3& pt) -> float {
+            return (pt - start).dot(stitch_axis);
+        };
+
+        // Tolerance for floating-point precision: fabric_normal is computed
+        // via cross product which guarantees perpendicularity mathematically,
+        // but normalization introduces sub-micron rounding errors.
+        const float epsilon = 1e-4f;
+
+        for (size_t j = 0; j + 1 < result.waypoints.size(); ++j) {
+            const auto& wp_curr = result.waypoints[j];
+            const auto& wp_next = result.waypoints[j + 1];
+
+            // If the next waypoint is in the backward-allowed set, skip
+            if (backward_allowed.count(wp_next.name)) continue;
+
+            float proj_curr = stitch_proj(wp_curr.position);
+            float proj_next = stitch_proj(wp_next.position);
+
+            EXPECT_GE(proj_next, proj_curr - epsilon)
+                << "Segment " << seg_id
+                << ": waypoint '" << wp_next.name << "' (index " << (j + 1)
+                << ") has stitch_proj " << proj_next
+                << " < previous waypoint '" << wp_curr.name
+                << "' stitch_proj " << proj_curr
+                << " (backward motion not allowed here)";
+        }
+
+        // Additional check: the exit crossover must be ahead of the entry
+        // crossover along stitch_axis. The consecutive-pair check above
+        // cannot catch this because all intermediate loop-interior waypoints
+        // are backward-allowed, masking the overall regression.
+        auto find_wp = [&](const std::string& name) -> const Vec3* {
+            for (const auto& wp : result.waypoints) {
+                if (wp.name == name) return &wp.position;
+            }
+            return nullptr;
+        };
+        const Vec3* entry_in = find_wp("crossover_entry_in");
+        const Vec3* exit_out = find_wp("crossover_exit_out");
+        if (entry_in && exit_out) {
+            EXPECT_GE(stitch_proj(*exit_out), stitch_proj(*entry_in) - epsilon)
+                << "Segment " << seg_id
+                << ": crossover_exit_out (stitch_proj=" << stitch_proj(*exit_out)
+                << ") is behind crossover_entry_in (stitch_proj=" << stitch_proj(*entry_in)
+                << ") — exit crossover must be ahead of entry along stitch_axis";
+        }
+
+        checked++;
+    }
+    EXPECT_GT(checked, 0) << "Expected at least one loop-forming segment with crossovers";
+}
+
+// ---------------------------------------------------------------------------
+// Test 9: Leg waypoints are between crossover and wrap in stitch_axis distance
 //
 // Physical invariant: the legs of the loop connect the crossover at the base
 // to the wrap at the top. The stitch_axis distance of each leg endpoint must

@@ -84,6 +84,7 @@ std::map<SegmentId, PrecomputedLoopGeometry> precompute_loop_geometry(
         Vec3 wale = frames[i].wale_axis;
 
         geom.oriented_wale = wale;
+        geom.stitch_axis = frames[i].stitch_axis;
 
         geom.apex = calculate_apex_position(curr_pos, child_positions,
                                             effective_loop_height, yarn_compressed_diameter,
@@ -402,8 +403,11 @@ void build_full_loop_chain(
     // as a single equivalent circle whose area equals N child circles:
     //   bundle_radius = yarn_compressed_radius * sqrt(N)
     // The parent loop wraps around this bundle.
-    Vec3 travel = safe_normalized(
-        loop_geom.apex_exit - loop_geom.apex_entry, Vec3(1, 0, 0));
+    //
+    // Use the precomputed stitch_axis (course direction) for wrap waypoint
+    // distribution, NOT the direction from apex_entry to apex_exit — the
+    // latter can point to the next row for end-of-row stitches.
+    Vec3 travel = loop_geom.stitch_axis;
     bool has_children = !loop_geom.crossover_slots.empty();
     int num_slots = static_cast<int>(loop_geom.crossover_slots.size());
     float bundle_radius = state.yarn_compressed_radius * std::sqrt(static_cast<float>(std::max(num_slots, 1)));
@@ -438,16 +442,14 @@ void build_full_loop_chain(
         exit_wrap_target = loop_geom.apex;
     }
 
-    // Legs rise from the crossover base along wale toward the wrap.
-    // Position = base + half the wale distance to wrap + z_bulge.
-    // This preserves the lateral (stitch_axis) position of the crossover base.
-    Vec3 wale = loop_geom.oriented_wale;
-    float entry_wale_dist = (entry_wrap_target - entry_leg_base).dot(wale);
-    float exit_wale_dist = (exit_wrap_target - exit_leg_base).dot(wale);
+    // Legs rise from the crossover base toward the wrap target.
+    // Position = 3D midpoint between crossover base and wrap target + z_bulge.
+    // This makes legs fan out laterally (along stitch_axis) from the narrow
+    // crossover toward the wider wrap, matching the physical loop shape.
 
     // RISING LEG
     {
-        Vec3 leg_mid = entry_leg_base + wale * (entry_wale_dist * 0.5f) + leg_bulge;
+        Vec3 leg_mid = (entry_leg_base + entry_wrap_target) * 0.5f + leg_bulge;
         push_waypoint(leg_mid, "loop_entry_leg");
     }
 
@@ -461,7 +463,7 @@ void build_full_loop_chain(
 
     // FALLING LEG
     {
-        Vec3 leg_mid = exit_leg_base + wale * (exit_wale_dist * 0.5f) + leg_bulge;
+        Vec3 leg_mid = (exit_leg_base + exit_wrap_target) * 0.5f + leg_bulge;
         push_waypoint(leg_mid, "loop_exit_leg");
     }
 

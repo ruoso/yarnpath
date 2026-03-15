@@ -157,6 +157,9 @@ GeometryPath build_geometry_with_callback(
 
         // Claim all crossover slots upfront (both entry and exit) so that
         // loop_entry/loop_exit can be set correctly before building the loop.
+        // stitch_axis already points in the yarn's travel direction (computed
+        // from yarn path continuity neighbors), so entry slots are claimed on
+        // the approach side and exit slots on the departure side.
         for (SegmentId parent_id : seg.through) {
             auto parent_geom_it = precomputed_loops.find(parent_id);
             if (parent_geom_it != precomputed_loops.end() &&
@@ -167,7 +170,9 @@ GeometryPath build_geometry_with_callback(
                     claimed_slots[parent_id],
                     frames[seg_id].position,
                     state.yarn_compressed_radius,
-                    /*as_entry=*/true);
+                    /*as_entry=*/true,
+                    frames[seg_id].fabric_normal,
+                    frames[seg_id].stitch_axis);
                 claimed_entry_crossovers[{parent_id, seg_id}] = entry_crossover;
 
                 // Claim exit slot (only if this segment forms a loop)
@@ -177,7 +182,9 @@ GeometryPath build_geometry_with_callback(
                         claimed_slots[parent_id],
                         frames[seg_id].position,
                         state.yarn_compressed_radius,
-                        /*as_entry=*/false);
+                        /*as_entry=*/false,
+                        frames[seg_id].fabric_normal,
+                        frames[seg_id].stitch_axis);
                     claimed_exit_crossovers[{parent_id, seg_id}] = exit_crossover;
                 }
             }

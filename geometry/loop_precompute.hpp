@@ -41,6 +41,9 @@ struct PrecomputedLoopGeometry {
     // which follows the right-hand rule and may flip on WS rows.
     Vec3 oriented_wale;
 
+    // Course direction (along the row) — used for wrap waypoint distribution.
+    Vec3 stitch_axis;
+
     // Needle wrap radius: curvature at apex ≤ 1/wrap_radius
     float wrap_radius = 0.0f;
 

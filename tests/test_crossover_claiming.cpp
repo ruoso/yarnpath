@@ -31,11 +31,12 @@ TEST(CrossoverClaimingTest, EntryExitOppositeNormals) {
     Vec3 tangent(1, 0, 0);
     auto slots = make_slots(1, Vec3(0, 5, 0), tangent, normal, 1.0f);
     float radius = 0.75f;
+    Vec3 travel(1, 0, 0);
 
     // as_entry=true: entry on +normal, exit on -normal
     {
         std::set<size_t> claimed;
-        auto xover = claim_nearest_slot(slots, claimed, Vec3(0, 5, 0), radius, true);
+        auto xover = claim_nearest_slot(slots, claimed, Vec3(0, 5, 0), radius, true, normal, travel);
         float entry_z = xover.entry.dot(normal);
         float exit_z = xover.exit.dot(normal);
         EXPECT_GT(entry_z, exit_z) << "Entry should be on +normal side, exit on -normal side";
@@ -44,7 +45,7 @@ TEST(CrossoverClaimingTest, EntryExitOppositeNormals) {
     // as_entry=false: entry on -normal, exit on +normal
     {
         std::set<size_t> claimed;
-        auto xover = claim_nearest_slot(slots, claimed, Vec3(0, 5, 0), radius, false);
+        auto xover = claim_nearest_slot(slots, claimed, Vec3(0, 5, 0), radius, false, normal, travel);
         float entry_z = xover.entry.dot(normal);
         float exit_z = xover.exit.dot(normal);
         EXPECT_LT(entry_z, exit_z) << "Exit should be on +normal side, entry on -normal side";
@@ -60,9 +61,10 @@ TEST(CrossoverClaimingTest, OffsetMagnitudeIsYarnRadius) {
     Vec3 center(0, 5, 0);
     auto slots = make_slots(1, center, tangent, normal, 1.0f);
     float radius = 0.75f;
+    Vec3 travel(1, 0, 0);
 
     std::set<size_t> claimed;
-    auto xover = claim_nearest_slot(slots, claimed, center, radius, true);
+    auto xover = claim_nearest_slot(slots, claimed, center, radius, true, normal, travel);
 
     // Entry and exit should be exactly radius away from slot center
     float entry_dist = (xover.entry - center).length();
@@ -78,9 +80,10 @@ TEST(CrossoverClaimingTest, ExitDirectionInheritsTangent) {
     Vec3 tangent(0.707f, 0.707f, 0);  // 45-degree tangent
     Vec3 normal(0, 0, 1);
     auto slots = make_slots(1, Vec3(0, 5, 0), tangent, normal, 1.0f);
+    Vec3 travel(1, 0, 0);
 
     std::set<size_t> claimed;
-    auto xover = claim_nearest_slot(slots, claimed, Vec3(0, 5, 0), 0.75f, true);
+    auto xover = claim_nearest_slot(slots, claimed, Vec3(0, 5, 0), 0.75f, true, normal, travel);
 
     EXPECT_NEAR(xover.exit_direction.x, tangent.x, 1e-5f);
     EXPECT_NEAR(xover.exit_direction.y, tangent.y, 1e-5f);
@@ -88,22 +91,24 @@ TEST(CrossoverClaimingTest, ExitDirectionInheritsTangent) {
 }
 
 // ---------------------------------------------------------------------------
-// Test 4: Nearest slot is claimed
+// Test 4: Entry claims slot on approach side, exit on departure side
 // ---------------------------------------------------------------------------
-TEST(CrossoverClaimingTest, NearestSlotIsClaimed) {
+TEST(CrossoverClaimingTest, EntryOnApproachSideExitOnDepartureSide) {
     Vec3 tangent(1, 0, 0);
     Vec3 normal(0, 0, 1);
-    // 4 slots spread along X
-    auto slots = make_slots(4, Vec3(0, 5, 0), tangent, normal, 2.0f);
-
-    // Child near the 3rd slot (index 2)
-    Vec3 child_pos = slots[2].position + Vec3(0.1f, 0, 0);
+    // 2 slots spread along X at X=-1 and X=+1
+    auto slots = make_slots(2, Vec3(0, 5, 0), tangent, normal, 2.0f);
+    Vec3 child_pos(0, 5, 0);
+    Vec3 travel(1, 0, 0);  // traveling in +X
 
     std::set<size_t> claimed;
-    claim_nearest_slot(slots, claimed, child_pos, 0.75f, true);
+    // Entry should be on approach side (behind, -X) → slot at X=-1
+    auto entry = claim_nearest_slot(slots, claimed, child_pos, 0.75f, true, normal, travel);
+    // Exit should be on departure side (ahead, +X) → slot at X=+1
+    auto exit = claim_nearest_slot(slots, claimed, child_pos, 0.75f, false, normal, travel);
 
-    EXPECT_EQ(claimed.size(), 1u);
-    EXPECT_TRUE(claimed.count(2)) << "Nearest slot (index 2) should be claimed";
+    EXPECT_LT(entry.entry.x, exit.exit.x)
+        << "Entry crossover should be behind exit crossover along travel direction";
 }
 
 // ---------------------------------------------------------------------------
@@ -113,18 +118,17 @@ TEST(CrossoverClaimingTest, ClaimedSlotsNotReusable) {
     Vec3 tangent(1, 0, 0);
     Vec3 normal(0, 0, 1);
     auto slots = make_slots(3, Vec3(0, 5, 0), tangent, normal, 2.0f);
+    Vec3 travel(1, 0, 0);
 
     // Child near center slot (index 1)
     Vec3 child_pos = slots[1].position;
 
     std::set<size_t> claimed;
-    claim_nearest_slot(slots, claimed, child_pos, 0.75f, true);
-    EXPECT_TRUE(claimed.count(1));
+    // Entry claims the most-behind slot (index 0, at X=-2)
+    claim_nearest_slot(slots, claimed, child_pos, 0.75f, true, normal, travel);
+    EXPECT_EQ(claimed.size(), 1u);
 
-    // Second claim with same position should get a different slot
-    claim_nearest_slot(slots, claimed, child_pos, 0.75f, true);
+    // Second entry claim should get a different slot
+    claim_nearest_slot(slots, claimed, child_pos, 0.75f, true, normal, travel);
     EXPECT_EQ(claimed.size(), 2u);
-    // Slot 1 was taken, so the second nearest (0 or 2) should be claimed
-    EXPECT_TRUE(claimed.count(0) || claimed.count(2))
-        << "Second claim should pick a different slot";
 }

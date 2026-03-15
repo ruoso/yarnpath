@@ -554,7 +554,7 @@ TEST(LoopChainGeometryTest, WaypointsProgressAlongStitchAxis) {
     // curves back through the parent opening.
     const std::set<std::string> backward_allowed = {
         "loop_entry_leg",
-        "loop_wrap_entry",
+        "loop_wrap_approach",
         "loop_exit_leg",
         "crossover_exit_in"
     };
@@ -836,14 +836,94 @@ TEST(LoopChainGeometryTest, CrossoverWaleDirectionIsCorrect) {
 }
 
 // ---------------------------------------------------------------------------
-// Test 11: Leg waypoints are between crossover and wrap in stitch_axis distance
+// Test 11: loop_approach and loop_depart clear the parent yarn body
+//
+// Physical invariant: the child yarn body must not overlap the parent yarn
+// body at the approach and departure points. The crossover entry/exit points
+// are at the parent yarn's bottom edge (one radius below slot center). The
+// approach/depart must be at least one additional radius below that so the
+// child yarn's top edge clears the parent yarn's bottom edge.
+// ---------------------------------------------------------------------------
+TEST(LoopChainGeometryTest, ApproachAndDepartClearParentYarn) {
+    auto data = build_chain_data({"CCC", "KKK", "KKK"});
+    const auto& segments = data.yarn_path.segments();
+
+    const float epsilon = 1e-4f;
+
+    int checked = 0;
+    for (size_t i = 0; i < segments.size(); ++i) {
+        if (!segments[i].forms_loop || segments[i].through.empty()) continue;
+        SegmentId seg_id = static_cast<SegmentId>(i);
+
+        auto loop_it = data.loops.find(seg_id);
+        if (loop_it == data.loops.end()) continue;
+        if (loop_it->second.crossover_slots.empty()) continue;
+
+        auto result = build_chain_for_segment(data, seg_id);
+        if (result.waypoints.empty()) continue;
+
+        auto find_wp = [&](const std::string& name) -> const Vec3* {
+            for (const auto& wp : result.waypoints) {
+                if (wp.name == name) return &wp.position;
+            }
+            return nullptr;
+        };
+
+        // --- Entry side ---
+        const Vec3* entry_in = find_wp("crossover_entry_in");
+        const Vec3* entry_out = find_wp("crossover_entry_out");
+        const Vec3* approach = find_wp("loop_approach");
+        if (entry_in && entry_out && approach) {
+            Vec3 wale_dir = safe_normalized(*entry_out - *entry_in);
+            float radius = (*entry_out - *entry_in).length() / 2.0f;
+
+            // Project approach relative to entry_in onto the crossing wale direction
+            float approach_proj = (*approach - *entry_in).dot(wale_dir);
+
+            std::cerr << "  Seg " << seg_id
+                << " entry: approach_proj=" << approach_proj
+                << " -radius=" << -radius << "\n";
+
+            EXPECT_LE(approach_proj, -radius + epsilon)
+                << "Segment " << seg_id
+                << ": loop_approach (proj=" << approach_proj
+                << ") must be at least one radius (" << radius
+                << ") below crossover_entry_in to clear parent yarn body";
+        }
+
+        // --- Exit side ---
+        const Vec3* exit_in = find_wp("crossover_exit_in");
+        const Vec3* exit_out = find_wp("crossover_exit_out");
+        const Vec3* depart = find_wp("loop_depart");
+        if (exit_in && exit_out && depart) {
+            Vec3 exit_wale_dir = safe_normalized(*exit_in - *exit_out);
+            float radius = (*exit_in - *exit_out).length() / 2.0f;
+
+            // Project depart relative to exit_out onto the exit wale direction
+            float depart_proj = (*depart - *exit_out).dot(exit_wale_dir);
+
+            std::cerr << "  Seg " << seg_id
+                << " exit: depart_proj=" << depart_proj
+                << " -radius=" << -radius << "\n";
+
+            EXPECT_LE(depart_proj, -radius + epsilon)
+                << "Segment " << seg_id
+                << ": loop_depart (proj=" << depart_proj
+                << ") must be at least one radius (" << radius
+                << ") below crossover_exit_out to clear parent yarn body";
+        }
+
+        checked++;
+    }
+    EXPECT_GT(checked, 0) << "Expected at least one loop-forming segment with crossovers";
+}
+
+// ---------------------------------------------------------------------------
+// Test 12: Leg waypoints are between crossover and wrap in stitch_axis distance
 //
 // Physical invariant: the legs of the loop connect the crossover at the base
 // to the wrap at the top. The stitch_axis distance of each leg endpoint must
-// be between the crossover spread and the wrap spread. That is:
-//   dist(crossover_entry_out, crossover_exit_in)
-//     <= dist(loop_entry_leg, loop_exit_leg)
-//     <= dist(loop_wrap_entry, loop_wrap_exit)
+// be between the crossover spread and the wrap spread.
 // ---------------------------------------------------------------------------
 TEST(LoopChainGeometryTest, LegWidthBetweenCrossoverAndWrap) {
     auto data = build_chain_data({"CCC", "KKK", "KKK"});

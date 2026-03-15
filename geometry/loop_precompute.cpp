@@ -376,11 +376,14 @@ void build_full_loop_chain(
 
     // Entry: approach, then cross through parent opening (or just dip)
     if (!entry_crossovers.empty()) {
-        // Approach at the crossover entry level, offset back along stitch_axis.
-        // This ensures the yarn doesn't bump above the crossover entry in wale,
-        // and approaches from the correct direction in stitch_axis.
         Vec3 entry_in = entry_crossovers.front().entry;
-        Vec3 approach = entry_in - loop_geom.stitch_axis * state.yarn_compressed_radius;
+        Vec3 entry_out = entry_crossovers.front().exit;
+        Vec3 crossing_dir = safe_normalized(entry_out - entry_in, loop_geom.oriented_wale);
+        // Offset back along stitch_axis AND down along crossing direction
+        // so the child yarn body clears the parent yarn body
+        Vec3 approach = entry_in
+            - loop_geom.stitch_axis * state.yarn_compressed_radius
+            - crossing_dir * state.yarn_compressed_radius;
         push_waypoint(approach, "loop_approach");
         for (const auto& xover : entry_crossovers) {
             push_waypoint(xover.entry, "crossover_entry_in");
@@ -452,9 +455,18 @@ void build_full_loop_chain(
     }
 
     if (has_children) {
+        // Wrap approach/depart: on the bulge side of the fabric at the same
+        // wale/stitch_axis position as wrap entry/exit.  The wrap itself is on
+        // the anti-bulge side (wrap_offset).  Mirroring to -wrap_offset puts
+        // the approach on the bulge side, so the yarn crosses through the
+        // fabric plane in a controlled location rather than curving freely.
+        Vec3 wrap_approach = entry_wrap_target - 2.0f * wrap_offset;
+        push_waypoint(wrap_approach, "loop_wrap_approach");
         push_waypoint(entry_wrap_target, "loop_wrap_entry");
         push_waypoint(loop_geom.apex + wrap_offset, "loop_apex");
         push_waypoint(exit_wrap_target, "loop_wrap_exit");
+        Vec3 wrap_depart = exit_wrap_target - 2.0f * wrap_offset;
+        push_waypoint(wrap_depart, "loop_wrap_depart");
     } else {
         push_waypoint(loop_geom.apex, "loop_apex");
     }
@@ -471,6 +483,14 @@ void build_full_loop_chain(
             push_waypoint(xover.entry, "crossover_exit_in");
             push_waypoint(xover.exit, "crossover_exit_out");
         }
+        Vec3 exit_in = exit_crossovers.back().entry;
+        Vec3 exit_out = exit_crossovers.back().exit;
+        Vec3 crossing_dir = safe_normalized(exit_in - exit_out, loop_geom.oriented_wale);
+        // Offset forward along stitch_axis AND down along crossing direction
+        Vec3 depart = exit_out
+            + loop_geom.stitch_axis * state.yarn_compressed_radius
+            - crossing_dir * state.yarn_compressed_radius;
+        push_waypoint(depart, "loop_depart");
     } else {
         // No parent to cross through — use the dip and exit waypoints
         push_waypoint(loop_geom.exit_through, "loop_exit_dip");

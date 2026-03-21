@@ -1,32 +1,32 @@
 Cast on 21 sts.
-Row 1 (ws): P, K19, P.
-Row 1 (rs): P, K19, P.
-Row 1 (ws): P, K19, P.
-Row 3 (RS): P, K3, P, K3, Ssk, Yo, P, Yo, K2tog, K3, P, K3, P.
-Row 2 (WS): P, K3, P, K2, Ssk, Yo, K, P, K, Yo, K2tog, K2, P, K3, P.
-Row 2 (RS): P, K3, P, K, Ssk, Yo, K2, P, K2, Yo, K2tog, K, P, K3, P.
-Row 1 (WS): P, K3, P, Ssk, Yo, K3, P, K3, Yo, K2tog, P, K3, P.
-Row 2 (RS): P, K3, P, K, Ssk, Yo, K2, P, K2, Yo, K2tog, K, P, K3, P.
-Row 2 (WS): P, K3, P, K2, Ssk, Yo, K, P, K, Yo, K2tog, K2, P, K3, P.
-Row 3 (RS): P, K3, P, K3, Ssk, Yo, P, Yo, K2tog, K3, P, K3, P.
-Row 2 (WS): P, K3, P, K2, Ssk, Yo, K, P, K, Yo, K2tog, K2, P, K3, P.
-Row 2 (RS): P, K3, P, K, Ssk, Yo, K2, P, K2, Yo, K2tog, K, P, K3, P.
-Row 1 (WS): P, K3, P, Ssk, Yo, K3, P, K3, Yo, K2tog, P, K3, P.
-Row 2 (RS): P, K3, P, K, Ssk, Yo, K2, P, K2, Yo, K2tog, K, P, K3, P.
-Row 2 (WS): P, K3, P, K2, Ssk, Yo, K, P, K, Yo, K2tog, K2, P, K3, P.
-Row 3 (RS): P, K3, P, K3, Ssk, Yo, P, Yo, K2tog, K3, P, K3, P.
-Row 2 (WS): P, K3, P, K2, Ssk, Yo, K, P, K, Yo, K2tog, K2, P, K3, P.
-Row 2 (RS): P, K3, P, K, Ssk, Yo, K2, P, K2, Yo, K2tog, K, P, K3, P.
-Row 1 (WS): P, K3, P, Ssk, Yo, K3, P, K3, Yo, K2tog, P, K3, P.
-Row 2 (RS): P, K3, P, K, Ssk, Yo, K2, P, K2, Yo, K2tog, K, P, K3, P.
-Row 2 (WS): P, K3, P, K2, Ssk, Yo, K, P, K, Yo, K2tog, K2, P, K3, P.
-Row 3 (RS): P, K3, P, K3, Ssk, Yo, P, Yo, K2tog, K3, P, K3, P.
-Row 2 (WS): P, K3, P, K2, Ssk, Yo, K, P, K, Yo, K2tog, K2, P, K3, P.
-Row 2 (RS): P, K3, P, K, Ssk, Yo, K2, P, K2, Yo, K2tog, K, P, K3, P.
-Row 1 (WS): P, K3, P, Ssk, Yo, K3, P, K3, Yo, K2tog, P, K3, P.
-Row 2 (RS): P, K3, P, K, Ssk, Yo, K2, P, K2, Yo, K2tog, K, P, K3, P.
-Row 2 (WS): P, K3, P, K2, Ssk, Yo, K, P, K, Yo, K2tog, K2, P, K3, P.
-Row 3 (RS): P, K3, P, K3, Ssk, Yo, P, Yo, K2tog, K3, P, K3, P.
-Row 1 (ws): P, K19, P.
-Row 1 (rs): P, K19, P.
-Row 1 (ws): P, K19, P.
+Row 1 (ws): K, P19, K.
+Row 2 (rs): P, K19, P.
+Row 3 (ws): K, P19, K.
+Row 4 (RS): P, K3, P, K3, Ssk, Yo, P, Yo, K2tog, K3, P, K3, P.
+Row 5 (WS): K, P3, K, P2, Ssk, Yo, P, K, P, Yo, K2tog, P2, K, P3, K.
+Row 6 (RS): P, K3, P, K, Ssk, Yo, K2, P, K2, Yo, K2tog, K, P, K3, P.
+Row 7 (WS): K, P3, K, Ssk, Yo, P3, K, P3, Yo, K2tog, K, P3, K.
+Row 8 (RS): P, K3, P, K, Ssk, Yo, K2, P, K2, Yo, K2tog, K, P, K3, P.
+Row 9 (WS): K, P3, K, P2, Ssk, Yo, P, K, P, Yo, K2tog, P2, K, P3, K.
+Row 10 (RS): P, K3, P, K3, Ssk, Yo, P, Yo, K2tog, K3, P, K3, P.
+Row 11 (WS): K, P3, K, P2, Ssk, Yo, P, K, P, Yo, K2tog, P2, K, P3, K.
+Row 12 (RS): P, K3, P, K, Ssk, Yo, K2, P, K2, Yo, K2tog, K, P, K3, P.
+Row 13 (WS): K, P3, K, Ssk, Yo, P3, K, P3, Yo, K2tog, K, P3, K.
+Row 14 (RS): P, K3, P, K, Ssk, Yo, K2, P, K2, Yo, K2tog, K, P, K3, P.
+Row 15 (WS): K, P3, K, P2, Ssk, Yo, P, K, P, Yo, K2tog, P2, K, P3, K.
+Row 16 (RS): P, K3, P, K3, Ssk, Yo, P, Yo, K2tog, K3, P, K3, P.
+Row 17 (WS): K, P3, K, P2, Ssk, Yo, P, K, P, Yo, K2tog, P2, K, P3, K.
+Row 18 (RS): P, K3, P, K, Ssk, Yo, K2, P, K2, Yo, K2tog, K, P, K3, P.
+Row 19 (WS): K, P3, K, Ssk, Yo, P3, K, P3, Yo, K2tog, K, P3, K.
+Row 20 (RS): P, K3, P, K, Ssk, Yo, K2, P, K2, Yo, K2tog, K, P, K3, P.
+Row 21 (WS): K, P3, K, P2, Ssk, Yo, P, K, P, Yo, K2tog, P2, K, P3, K.
+Row 22 (RS): P, K3, P, K3, Ssk, Yo, P, Yo, K2tog, K3, P, K3, P.
+Row 23 (WS): K, P3, K, P2, Ssk, Yo, P, K, P, Yo, K2tog, P2, K, P3, K.
+Row 24 (RS): P, K3, P, K, Ssk, Yo, K2, P, K2, Yo, K2tog, K, P, K3, P.
+Row 25 (WS): K, P3, K, Ssk, Yo, P3, K, P3, Yo, K2tog, K, P3, K.
+Row 26 (RS): P, K3, P, K, Ssk, Yo, K2, P, K2, Yo, K2tog, K, P, K3, P.
+Row 27 (WS): K, P3, K, P2, Ssk, Yo, P, K, P, Yo, K2tog, P2, K, P3, K.
+Row 28 (RS): P, K3, P, K3, Ssk, Yo, P, Yo, K2tog, K3, P, K3, P.
+Row 29 (ws): K, P19, K.
+Row 30 (rs): P, K19, P.
+Row 31 (ws): K, P19, K.

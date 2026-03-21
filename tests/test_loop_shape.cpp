@@ -103,37 +103,6 @@ TEST(LoopShapeTest, BasicGeometryGeneration) {
     EXPECT_FALSE(geometry.segments().empty());
 }
 
-TEST(LoopShapeTest, CurvatureWithinLimits) {
-    GTEST_SKIP();
-    PatternInstructions pattern = create_pattern({
-        "CC",
-        "KK"
-    });
-    StitchGraph graph = StitchGraph::from_instructions(pattern);
-    YarnPath yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
-
-    YarnProperties yarn = YarnProperties::worsted();
-    Gauge gauge = Gauge::worsted();
-    SurfaceGraph surface = build_test_surface(yarn_path, yarn, gauge);
-
-    GeometryPath geometry = GeometryPath::from_yarn_path(
-        yarn_path, surface, yarn, gauge
-    );
-
-    // Check that max curvature is reasonable
-    // With physics-based surface positions, curvature depends on the simulated
-    // node positions rather than idealized needle-cylinder geometry.
-    // We use a more lenient limit: curvature should be finite and not extreme.
-    // Max curvature of 10 corresponds to a minimum bend compressed_radius of 0.1mm,
-    // which is much tighter than any realistic yarn would allow but ensures
-    // there are no degenerate curves.
-    float max_reasonable_curvature = 10.0f;
-    for (const auto& seg : geometry.segments()) {
-        EXPECT_LT(seg.max_curvature, max_reasonable_curvature)
-            << "Segment " << seg.segment_id << " has curvature " << seg.max_curvature
-            << " which exceeds " << max_reasonable_curvature;
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Step 4 Tests: U-shaped loop curves

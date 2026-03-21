@@ -273,7 +273,7 @@ GeometryPath build_geometry_with_callback(
     log->info("build_geometry: built {} segment geometries", result.segments_.size());
 
     // Phase E: Center geometry in X after building all segments
-    center_geometry_x(result.segments_);
+    result.x_center_offset_ = center_geometry_x(result.segments_);
 
     // Validation: report geometry quality issues per segment
     validate_geometry(result.segments_, state.max_curvature);

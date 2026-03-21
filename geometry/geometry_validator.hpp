@@ -9,7 +9,8 @@ namespace yarnpath {
 
 // Center all geometry segments so the bounding box is centered at X=0.
 // Modifies control points in-place.
-void center_geometry_x(std::vector<SegmentGeometry>& segments);
+// Returns the X offset that was subtracted from all control points.
+float center_geometry_x(std::vector<SegmentGeometry>& segments);
 
 // Validate geometry quality and log warnings for:
 //   - Curvature violations (exceeding max_curvature)

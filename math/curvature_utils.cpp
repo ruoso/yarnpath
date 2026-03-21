@@ -1,4 +1,5 @@
 #include "curvature_utils.hpp"
+#include <common/logging.hpp>
 #include <cmath>
 #include <algorithm>
 
@@ -127,7 +128,7 @@ static std::vector<Vec3> solve_tridiagonal_vec3(
 std::vector<CubicBezier> build_curvature_safe_hermite_chain(
     const std::vector<Vec3>& waypoints,
     const Vec3& entry_tangent,
-    float /*max_k*/) {
+    float max_k) {
 
     int N = static_cast<int>(waypoints.size());   // number of points
     int n = N - 1;                                 // number of segments
@@ -231,6 +232,25 @@ std::vector<CubicBezier> build_curvature_safe_hermite_chain(
             waypoints[j],     m[j]     * h[j],
             waypoints[j + 1], m[j + 1] * h[j]));
     }
+
+    // ── Check per-segment curvature against max_k ────────────────────
+    // The C2 natural spline optimises smoothness but doesn't bound curvature.
+    // Warn about segments where waypoint placement forces curvature violations.
+    if (max_k > 0.0f) {
+        auto log = logging::get_logger();
+        for (int j = 0; j < n; ++j) {
+            float seg_k = curves[j].max_curvature(CURVATURE_SAMPLES);
+            if (seg_k > max_k) {
+                Vec3 p0 = waypoints[j];
+                Vec3 p1 = waypoints[j + 1];
+                log->warn("hermite_chain: segment {}/{} curvature {:.3f} > max_k {:.3f} "
+                          "(chord={:.3f}, waypoints ({:.2f},{:.2f},{:.2f})->({:.2f},{:.2f},{:.2f}))",
+                          j, n, seg_k, max_k, h[j],
+                          p0.x, p0.y, p0.z, p1.x, p1.y, p1.z);
+            }
+        }
+    }
+
     return curves;
 }
 

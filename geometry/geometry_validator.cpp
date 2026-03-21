@@ -5,7 +5,7 @@
 
 namespace yarnpath {
 
-void center_geometry_x(std::vector<SegmentGeometry>& segments) {
+float center_geometry_x(std::vector<SegmentGeometry>& segments) {
     // Compute bounding box in X
     float x_min = std::numeric_limits<float>::max();
     float x_max = std::numeric_limits<float>::lowest();
@@ -26,7 +26,9 @@ void center_geometry_x(std::vector<SegmentGeometry>& segments) {
                 }
             }
         }
+        return x_center;
     }
+    return 0.0f;
 }
 
 void validate_geometry(const std::vector<SegmentGeometry>& segments,

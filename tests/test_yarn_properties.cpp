@@ -8,10 +8,9 @@ using namespace yarnpath;
 // ============================================
 
 TEST(YarnPropertiesTest, Defaults) {
-    GTEST_SKIP();
     YarnProperties yarn;
-    EXPECT_FLOAT_EQ(yarn.compressed_radius, 1.0f);
-    EXPECT_FLOAT_EQ(yarn.min_bend_radius, 3.0f);
+    EXPECT_FLOAT_EQ(yarn.compressed_radius, 0.75f);
+    EXPECT_FLOAT_EQ(yarn.min_bend_radius, 2.25f);
 }
 
 TEST(YarnPropertiesTest, DerivedProperties) {
@@ -24,7 +23,6 @@ TEST(YarnPropertiesTest, DerivedProperties) {
 }
 
 TEST(YarnPropertiesTest, Presets) {
-    GTEST_SKIP();
     auto fingering = YarnProperties::fingering();
     EXPECT_LT(fingering.compressed_radius, 1.0f);
 

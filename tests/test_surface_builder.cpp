@@ -171,30 +171,6 @@ TEST_F(SurfaceBuilderTest, GridBasedInitialPositions) {
     EXPECT_LT(y_spread, gauge.loop_height(yarn.compressed_radius));  // Should be less than one row height
 }
 
-TEST_F(SurfaceBuilderTest, DifferentSeedsDifferentPositions) {
-    GTEST_SKIP() << "Noise removed from initial positions - seeds no longer affect initial placement";
-    YarnPath path = create_cast_on_only();
-
-    SurfaceBuildConfig config1;
-    config1.random_seed = 42;
-
-    SurfaceBuildConfig config2;
-    config2.random_seed = 123;
-
-    SurfaceGraph graph1 = SurfaceBuilder::from_yarn_path(path, yarn, gauge, config1);
-    SurfaceGraph graph2 = SurfaceBuilder::from_yarn_path(path, yarn, gauge, config2);
-
-    // At least one position should differ (due to noise)
-    bool positions_differ = false;
-    for (size_t i = 0; i < graph1.node_count(); ++i) {
-        if (graph1.node(i).position != graph2.node(i).position) {
-            positions_differ = true;
-            break;
-        }
-    }
-
-    EXPECT_TRUE(positions_differ);
-}
 
 TEST_F(SurfaceBuilderTest, SameSeedSamePositions) {
     YarnPath path = create_cast_on_only();
@@ -228,33 +204,6 @@ TEST_F(SurfaceBuilderTest, FormsLoopFlagCopied) {
     }
 }
 
-TEST_F(SurfaceBuilderTest, RestLengthsBasedOnYarnProperties) {
-    GTEST_SKIP();
-    YarnPath path = create_simple_yarn_path();
-
-    SurfaceGraph graph = SurfaceBuilder::from_yarn_path(path, yarn, gauge);
-
-    // Passthrough edges have rest length = loop_height + min_clearance
-    float loop_height = gauge.loop_height(yarn.compressed_radius);
-    float expected_passthrough = loop_height + yarn.min_clearance();
-
-    for (const auto& edge : graph.edges()) {
-        if (edge.type == EdgeType::PassThrough) {
-            // Rest length should be approximately loop_height + min_clearance
-            EXPECT_NEAR(edge.rest_length, expected_passthrough, expected_passthrough * 0.1f);
-        }
-    }
-
-    // Continuity edges have rest length based on yarn compressed_radius
-    float expected_continuity = yarn.compressed_radius * 2.0f * (1.0f + (1.0f - yarn.tension) * 0.25f);
-
-    for (const auto& edge : graph.edges()) {
-        if (edge.type == EdgeType::YarnContinuity) {
-            // Rest length should be approximately 2*compressed_radius with tension adjustment
-            EXPECT_NEAR(edge.rest_length, expected_continuity, expected_continuity * 0.1f);
-        }
-    }
-}
 
 TEST_F(SurfaceBuilderTest, OrientationZOffsetApplied) {
     // Create a pattern with both knit (front) and purl (back) stitches

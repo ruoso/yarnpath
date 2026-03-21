@@ -69,15 +69,6 @@ static std::vector<SegmentId> find_loop_segments(const YarnPath& yarn_path) {
     return result;
 }
 
-// Helper: get the fabric_normal direction Z component for a segment from the surface
-static float get_z_bulge_sign(const SurfaceGraph& surface, SegmentId seg_id) {
-    if (surface.has_segment(seg_id)) {
-        NodeId node_id = surface.node_for_segment(seg_id);
-        return surface.node(node_id).shape.z_bulge;
-    }
-    return 0.0f;
-}
-
 // Loop shape tests verify that geometry is generated correctly
 // for different stitch patterns.
 
@@ -126,6 +117,39 @@ TEST(LoopShapeTest, KnitLoop_ApexInFrontOfBase) {
 
         Vec3 fabric_normal = node.fabric_normal;
         Vec3 base_pos = node.position;
+        base_pos.x -= data.geometry.x_center_offset();
+
+        // Print through relationships for this segment
+        const auto& yseg = data.yarn_path.segments()[seg_id];
+        std::cout << "Segment " << seg_id
+                  << " z_bulge=" << node.shape.z_bulge
+                  << " base_pos=(" << base_pos.x << "," << base_pos.y << "," << base_pos.z << ")"
+                  << " fabric_normal=(" << fabric_normal.x << "," << fabric_normal.y << "," << fabric_normal.z << ")"
+                  << " |fn|=" << fabric_normal.length()
+                  << " through=[";
+        for (size_t ti = 0; ti < yseg.through.size(); ++ti) {
+            if (ti > 0) std::cout << ",";
+            std::cout << yseg.through[ti];
+        }
+        std::cout << "]" << std::endl;
+        // Print which segments have this segment in their through list (children)
+        std::cout << "  children_passing_through=[";
+        bool first_child = true;
+        for (size_t ci = 0; ci < data.yarn_path.segments().size(); ++ci) {
+            for (SegmentId pid : data.yarn_path.segments()[ci].through) {
+                if (pid == seg_id) {
+                    if (!first_child) std::cout << ",";
+                    std::cout << ci;
+                    if (data.surface.has_segment(static_cast<SegmentId>(ci))) {
+                        NodeId cn = data.surface.node_for_segment(static_cast<SegmentId>(ci));
+                        Vec3 cp = data.surface.node(cn).position;
+                        std::cout << "(pos=" << cp.x << "," << cp.y << "," << cp.z << ")";
+                    }
+                    first_child = false;
+                }
+            }
+        }
+        std::cout << "]" << std::endl;
 
         const auto* seg_geom = data.geometry.get_segment(seg_id);
         ASSERT_NE(seg_geom, nullptr) << "Missing geometry for segment " << seg_id;
@@ -135,9 +159,32 @@ TEST(LoopShapeTest, KnitLoop_ApexInFrontOfBase) {
 
         // Find max depth offset from base along fabric_normal
         float max_depth = -std::numeric_limits<float>::max();
+        float min_depth = std::numeric_limits<float>::max();
         for (const auto& p : points) {
             float depth = (p - base_pos).dot(fabric_normal);
             max_depth = std::max(max_depth, depth);
+            min_depth = std::min(min_depth, depth);
+        }
+
+        // Print bounding box and depth info
+        Vec3 lo(1e9f, 1e9f, 1e9f), hi(-1e9f, -1e9f, -1e9f);
+        for (const auto& p : points) {
+            lo.x = std::min(lo.x, p.x); lo.y = std::min(lo.y, p.y); lo.z = std::min(lo.z, p.z);
+            hi.x = std::max(hi.x, p.x); hi.y = std::max(hi.y, p.y); hi.z = std::max(hi.z, p.z);
+        }
+        std::cout << "  bbox X[" << lo.x << "," << hi.x
+                  << "] Y[" << lo.y << "," << hi.y
+                  << "] Z[" << lo.z << "," << hi.z << "]"
+                  << " depth range: [" << min_depth << ", " << max_depth << "]"
+                  << " curves=" << seg_geom->curve.segments().size()
+                  << std::endl;
+        // Print per-curve start/end for all segments
+        for (size_t ci = 0; ci < seg_geom->curve.segments().size(); ++ci) {
+            const auto& c = seg_geom->curve.segments()[ci];
+            std::cout << "    curve " << ci << ": start=(" << c.start().x << ","
+                      << c.start().y << "," << c.start().z << ") end=("
+                      << c.end().x << "," << c.end().y << "," << c.end().z << ")"
+                      << std::endl;
         }
 
         // The loop should extend FORWARD (positive fabric_normal direction)
@@ -168,6 +215,7 @@ TEST(LoopShapeTest, PurlLoop_ApexBehindBase) {
 
         Vec3 fabric_normal = node.fabric_normal;
         Vec3 base_pos = node.position;
+        base_pos.x -= data.geometry.x_center_offset();
 
         const auto* seg_geom = data.geometry.get_segment(seg_id);
         ASSERT_NE(seg_geom, nullptr) << "Missing geometry for segment " << seg_id;
@@ -204,37 +252,44 @@ TEST(LoopShapeTest, KnitPurl_DepthMirror) {
     ASSERT_FALSE(knit_loops.empty());
     ASSERT_FALSE(purl_loops.empty());
 
-    // Measure max depth offset along fabric_normal for each pattern
-    auto measure_max_depth = [](const GeomTestData& data, const std::vector<SegmentId>& loops) -> float {
+    // Measure bulge-direction depth offset along fabric_normal for each pattern.
+    // For knit (z_bulge > 0): max depth (furthest point in front of base).
+    // For purl (z_bulge < 0): min depth (furthest point behind base).
+    auto measure_bulge_depth = [](const GeomTestData& data, const std::vector<SegmentId>& loops) -> float {
         float sum_depth = 0.0f;
         int count = 0;
         for (SegmentId seg_id : loops) {
             if (!data.surface.has_segment(seg_id)) continue;
             NodeId node_id = data.surface.node_for_segment(seg_id);
-            Vec3 fabric_normal = data.surface.node(node_id).fabric_normal;
-            Vec3 base_pos = data.surface.node(node_id).position;
+            const auto& node = data.surface.node(node_id);
+            Vec3 fabric_normal = node.fabric_normal;
+            Vec3 base_pos = node.position;
+            base_pos.x -= data.geometry.x_center_offset();
+            float z_bulge = node.shape.z_bulge;
 
             const auto* seg_geom = data.geometry.get_segment(seg_id);
             if (!seg_geom) continue;
             auto points = sample_segment_spline(*seg_geom);
             if (points.empty()) continue;
 
-            // Find max absolute depth offset
-            float max_signed_depth = 0.0f;
+            // Find depth in the bulge direction
+            float bulge_depth = 0.0f;
             for (const auto& p : points) {
                 float depth = (p - base_pos).dot(fabric_normal);
-                if (std::abs(depth) > std::abs(max_signed_depth)) {
-                    max_signed_depth = depth;
+                if (z_bulge >= 0) {
+                    bulge_depth = std::max(bulge_depth, depth);
+                } else {
+                    bulge_depth = std::min(bulge_depth, depth);
                 }
             }
-            sum_depth += max_signed_depth;
+            sum_depth += bulge_depth;
             count++;
         }
         return count > 0 ? sum_depth / count : 0.0f;
     };
 
-    float knit_depth = measure_max_depth(knit_data, knit_loops);
-    float purl_depth = measure_max_depth(purl_data, purl_loops);
+    float knit_depth = measure_bulge_depth(knit_data, knit_loops);
+    float purl_depth = measure_bulge_depth(purl_data, purl_loops);
 
     // Knit should bulge forward (positive depth), purl backward (negative depth)
     EXPECT_GT(knit_depth, purl_depth)

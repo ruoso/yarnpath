@@ -76,6 +76,9 @@ public:
     // Bounding box
     std::pair<Vec3, Vec3> bounding_box() const;
 
+    // X-centering offset applied during build (geometry_x = surface_x - x_center_offset)
+    float x_center_offset() const { return x_center_offset_; }
+
     // Export to OBJ format (returns string content)
     std::string to_obj(int samples_per_segment = 10) const;
 
@@ -93,6 +96,7 @@ private:
         const std::function<void(SegmentId, const std::string&, const BezierSpline&)>& callback);
 
     std::vector<SegmentGeometry> segments_;
+    float x_center_offset_ = 0.0f;
 };
 
 }  // namespace yarnpath

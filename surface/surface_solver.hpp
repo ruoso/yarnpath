@@ -67,8 +67,8 @@ public:
                      const std::vector<std::vector<NodeId>>& collision_skip_list = {});
 
 private:
-    // Verlet integration step
-    static void integrate_verlet(SurfaceGraph& graph, float dt);
+    // Gradient descent step (no velocity accumulation)
+    static void integrate_gradient_step(SurfaceGraph& graph, float dt);
 
     // Project all constraints
     static void project_constraints(SurfaceGraph& graph, int iterations);

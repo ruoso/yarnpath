@@ -140,8 +140,8 @@ void SurfaceSolver::step(SurfaceGraph& graph,
     compute_forces(graph, yarn, gauge, config.force_config, collision_skip_list);
     auto t1 = Clock::now();
 
-    // 2. Integrate using Verlet
-    integrate_verlet(graph, config.dt);
+    // 2. Gradient descent step (move in force direction, no momentum)
+    integrate_gradient_step(graph, config.dt);
     auto t2 = Clock::now();
 
     // 3. Apply floor constraint if enabled
@@ -166,11 +166,11 @@ void SurfaceSolver::step(SurfaceGraph& graph,
     ++step_count;
 }
 
-void SurfaceSolver::integrate_verlet(SurfaceGraph& graph, float dt) {
-    // Velocity Verlet integration with proper mass handling
+void SurfaceSolver::integrate_gradient_step(SurfaceGraph& graph, float dt) {
+    // Gradient descent step: move each node in the direction of the net force
     // a = F / m
-    // v(t + dt) = v(t) + a * dt
-    // x(t + dt) = x(t) + v(t + dt) * dt
+    // v = a * dt          (no accumulation — reset each step)
+    // x = x + v * dt
 
     auto& nodes = graph.nodes();
 
@@ -188,8 +188,8 @@ void SurfaceSolver::integrate_verlet(SurfaceGraph& graph, float dt) {
         float inv_mass = (node.mass > 1e-6f) ? (1.0f / node.mass) : 1.0f;
         Vec3 acceleration = node.force * inv_mass;
 
-        // Update velocity: v = v + a * dt
-        node.velocity += acceleration * dt;
+        // Gradient descent: velocity = force direction only, no accumulation
+        node.velocity = acceleration * dt;
 
         // Update position: x = x + v * dt
         node.position += node.velocity * dt;

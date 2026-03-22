@@ -57,8 +57,8 @@ void compute_forces(SurfaceGraph& graph,
         compute_gravity_force(graph, config.gravity_strength, config.gravity_direction);
     }
 
-    // Apply velocity damping
-    apply_damping(graph, config.damping);
+    // Damping is not applied: with gradient descent (no velocity accumulation),
+    // velocity is zero at the start of each step, so damping would be a no-op.
     auto t6 = Clock::now();
 
     if (should_time) {

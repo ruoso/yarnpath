@@ -47,7 +47,7 @@ TEST_F(SurfaceSolverTest, ConvergesForSimpleSpring) {
 
     SolveConfig config;
     config.dt = 0.01f;
-    config.max_iterations = 1000;
+    config.max_iterations = 5000;  // Gradient descent converges slower than Verlet
     config.convergence_threshold = 1e-4f;
     config.force_config.damping = 0.8f;
 

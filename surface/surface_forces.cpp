@@ -98,11 +98,14 @@ void compute_spring_forces(SurfaceGraph& graph) {
         for (size_t i = 0; i < edges.size(); ++i) {
             const auto& edge = edges[i];
 
-            // Read positions (const access, thread-safe)
-            const Vec3& pos_a = nodes[edge.node_a].position;
-            const Vec3& pos_b = nodes[edge.node_b].position;
+            // Use shape-aware positions: offset by z_bulge so forces
+            // naturally include Z components from stitch topology
+            const auto& node_a = nodes[edge.node_a];
+            const auto& node_b = nodes[edge.node_b];
+            Vec3 effective_a = node_a.position + Vec3(0, 0, node_a.shape.z_bulge);
+            Vec3 effective_b = node_b.position + Vec3(0, 0, node_b.shape.z_bulge);
 
-            Vec3 delta = pos_b - pos_a;
+            Vec3 delta = effective_b - effective_a;
             float length = delta.length();
 
             // Avoid division by zero
@@ -408,10 +411,14 @@ void compute_barrier_forces(SurfaceGraph& graph, const YarnProperties& yarn,
         #pragma omp for schedule(static)
         for (size_t i = 0; i < edges.size(); ++i) {
             const auto& edge = edges[i];
-            const Vec3& pos_a = nodes[edge.node_a].position;
-            const Vec3& pos_b = nodes[edge.node_b].position;
+            // Use shape-aware positions: offset by z_bulge so barrier forces
+            // naturally include Z components from stitch topology
+            const auto& node_a = nodes[edge.node_a];
+            const auto& node_b = nodes[edge.node_b];
+            Vec3 effective_a = node_a.position + Vec3(0, 0, node_a.shape.z_bulge);
+            Vec3 effective_b = node_b.position + Vec3(0, 0, node_b.shape.z_bulge);
 
-            Vec3 delta = pos_b - pos_a;
+            Vec3 delta = effective_b - effective_a;
             float dist = delta.length();
             if (dist < 1e-6f) continue;
             Vec3 dir = delta / dist;

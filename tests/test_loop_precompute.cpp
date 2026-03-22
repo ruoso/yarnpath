@@ -128,6 +128,11 @@ TEST(LoopPrecomputeTest, ApexAtChildWaleHeight) {
         auto child_it = data.children_map.find(seg_id);
         if (child_it == data.children_map.end() || child_it->second.empty()) continue;
 
+        // Skip parentless segments — their apex is intentionally flat
+        // (foundation, YO, M1L/M1R loops stay near the base).
+        const auto& seg = data.yarn_path.segments()[seg_id];
+        if (seg.through.empty()) continue;
+
         // Apex wale projection should match the average child wale projection.
         // The child stitch sits at the top of the parent loop — the apex
         // should be AT the child position. 3D wrapping around the child

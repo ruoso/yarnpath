@@ -606,3 +606,71 @@ TEST(LoopShapeTest, Decrease_OpposingLean) {
             << ") should be in opposite directions";
     }
 }
+
+// ---------------------------------------------------------------------------
+// Test 11: Cast-on foundation row — flat wale and crossed loop
+// ---------------------------------------------------------------------------
+TEST(LoopShapeTest, CastOnFoundation_FlatAndCrossed) {
+    YarnProperties yarn = default_yarn();
+    Gauge gauge = default_gauge();
+    auto data = build_geometry_for({"CCC", "KKK"}, yarn, gauge);
+
+    auto loop_ids = find_loop_segments(data.yarn_path);
+    ASSERT_FALSE(loop_ids.empty());
+
+    int tested = 0;
+    for (SegmentId seg_id : loop_ids) {
+        const auto& seg = data.yarn_path.segments()[seg_id];
+        // Foundation segments: Created with no parents
+        if (!seg.through.empty() || seg.work_type != WorkType::Created) continue;
+        if (!data.surface.has_segment(seg_id)) continue;
+
+        NodeId node_id = data.surface.node_for_segment(seg_id);
+        const auto& node = data.surface.node(node_id);
+        Vec3 base_pos = node.position;
+        base_pos.x -= data.geometry.x_center_offset();
+        Vec3 wale = node.wale_axis;
+        Vec3 stitch_axis = node.stitch_axis;
+
+        const auto* seg_geom = data.geometry.get_segment(seg_id);
+        ASSERT_NE(seg_geom, nullptr) << "Missing geometry for foundation segment " << seg_id;
+
+        auto points = sample_segment_spline(*seg_geom);
+        ASSERT_FALSE(points.empty());
+
+        // 1. Wale-axis bound: all points within ±4× compressed_radius
+        float max_wale = 0.0f;
+        for (const auto& p : points) {
+            float wale_proj = std::abs((p - base_pos).dot(wale));
+            max_wale = std::max(max_wale, wale_proj);
+        }
+        float wale_limit = 4.0f * yarn.compressed_radius;
+        EXPECT_LE(max_wale, wale_limit)
+            << "Foundation segment " << seg_id
+            << " wale displacement " << max_wale
+            << " exceeds limit " << wale_limit;
+
+        // 2. Crossed loop: the loop body should have points on both sides
+        // of the stitch axis, with the entry dip on the far side (+stitch_axis)
+        // and the exit dip on the near side (-stitch_axis).
+        // Check using max/min stitch projections of points near the base
+        // (within the wale limit, i.e. the dip/leg region of the loop).
+        float max_stitch = -std::numeric_limits<float>::max();
+        float min_stitch = std::numeric_limits<float>::max();
+        for (const auto& p : points) {
+            float stitch_proj = (p - base_pos).dot(stitch_axis);
+            max_stitch = std::max(max_stitch, stitch_proj);
+            min_stitch = std::min(min_stitch, stitch_proj);
+        }
+        // The loop should extend to both sides of the stitch axis (crossed)
+        EXPECT_GT(max_stitch, yarn.compressed_radius)
+            << "Foundation segment " << seg_id
+            << " should have points on far side (+stitch_axis)";
+        EXPECT_LT(min_stitch, -yarn.compressed_radius)
+            << "Foundation segment " << seg_id
+            << " should have points on near side (-stitch_axis)";
+
+        tested++;
+    }
+    EXPECT_GT(tested, 0) << "Should have tested at least one foundation segment";
+}

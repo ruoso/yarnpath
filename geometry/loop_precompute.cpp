@@ -86,41 +86,68 @@ std::map<SegmentId, PrecomputedLoopGeometry> precompute_loop_geometry(
         geom.oriented_wale = wale;
         geom.stitch_axis = frames[i].stitch_axis;
 
-        geom.apex = calculate_apex_position(curr_pos, child_positions,
-                                            effective_loop_height, yarn_compressed_diameter,
-                                            wale);
+        bool is_parentless = seg.through.empty();
 
-        // Apply shape modifiers to apex along wale axis (only when no
-        // children exist — solver-derived child positions are authoritative)
-        if (child_positions.empty()) {
-            Vec3 apex_offset = geom.apex - curr_pos;
-            float wale_height = apex_offset.dot(wale);
-            Vec3 lateral = apex_offset - wale * wale_height;
-            float scaled_height = wale_height * geom.shape.apex_height_factor * geom.shape.height_multiplier;
-            geom.apex = curr_pos + wale * scaled_height + lateral;
+        if (is_parentless) {
+            // Parentless segments (cast-on foundation, YO, M1L/M1R):
+            // flat crossed loop — minimal wale displacement, with the
+            // dip points offset along stitch_axis to create a crossing.
+            float flat_height = yarn_compressed_radius;
+            geom.apex = curr_pos + wale * flat_height;
+
+            // Entry/exit at base positions, same as regular loops.
+            // Project next_pos onto the same wale plane as curr_pos so
+            // the loop stays flat even when next_pos is in a different row.
+            geom.apex_entry = curr_pos;
+            Vec3 to_next = next_pos - curr_pos;
+            float wale_comp = to_next.dot(wale);
+            geom.apex_exit = next_pos - wale * wale_comp;
+
+            // Dip below base (opposite to apex)
+            float dip_depth = yarn_compressed_diameter;
+            Vec3 dip_dir = wale * -1.0f;
+            Vec3 stitch = frames[i].stitch_axis;
+            float cross_offset = yarn_compressed_radius * 2.0f;
+
+            // Crossed dip: entry dip on far side (+stitch_axis),
+            // exit dip on near side (-stitch_axis)
+            geom.entry_through = geom.apex_entry + stitch * cross_offset + dip_dir * dip_depth;
+            geom.exit_through = geom.apex_exit - stitch * cross_offset + dip_dir * dip_depth;
+        } else {
+            geom.apex = calculate_apex_position(curr_pos, child_positions,
+                                                effective_loop_height, yarn_compressed_diameter,
+                                                wale);
+
+            // Apply shape modifiers to apex along wale axis (only when no
+            // children exist — solver-derived child positions are authoritative)
+            if (child_positions.empty()) {
+                Vec3 apex_offset = geom.apex - curr_pos;
+                float wale_height = apex_offset.dot(wale);
+                Vec3 lateral = apex_offset - wale * wale_height;
+                float scaled_height = wale_height * geom.shape.apex_height_factor * geom.shape.height_multiplier;
+                geom.apex = curr_pos + wale * scaled_height + lateral;
+            }
+
+            // Apply lean along stitch_axis (not world X) for decreases
+            geom.apex = geom.apex + frames[i].stitch_axis * geom.shape.apex_lean_x;
+
+            // 4. Entry/exit at base positions
+            geom.apex_entry = curr_pos;
+            geom.apex_exit = next_pos;
+
+            // 5. U-shape through-opening waypoints: yarn dips below base.
+            // No z_bulge here — the dip is at base Z.  The z_bulge appears
+            // on the loop legs (between dip and apex), added at build time.
+            // The dip direction is opposite to the apex direction (toward parents).
+            float dip_depth = yarn_compressed_diameter;
+            float apex_wale_sign = (geom.apex - curr_pos).dot(wale);
+            Vec3 dip_dir = (apex_wale_sign >= 0.0f) ? wale * -1.0f : wale;
+
+            geom.entry_through = curr_pos + dip_dir * dip_depth;
+            geom.exit_through = next_pos + dip_dir * dip_depth;
         }
 
-        // Apply lean along stitch_axis (not world X) for decreases
-        geom.apex = geom.apex + frames[i].stitch_axis * geom.shape.apex_lean_x;
-
-        // Apex wraps the needle and returns to the real Z position.
-        // z_bulge is applied to the legs (entry_through/exit_through), not here.
-
-        // 4. Entry/exit at base positions
-        geom.apex_entry = curr_pos;
-        geom.apex_exit = next_pos;
-
-        // 5. U-shape through-opening waypoints: yarn dips below base.
-        // No z_bulge here — the dip is at base Z.  The z_bulge appears
-        // on the loop legs (between dip and apex), added at build time.
-        // The dip direction is opposite to the apex direction (toward parents).
-        float dip_depth = yarn_compressed_diameter;
         Vec3 fnormal = frames[i].fabric_normal;
-        float apex_wale_sign = (geom.apex - curr_pos).dot(wale);
-        Vec3 dip_dir = (apex_wale_sign >= 0.0f) ? wale * -1.0f : wale;
-
-        geom.entry_through = curr_pos + dip_dir * dip_depth;
-        geom.exit_through = next_pos + dip_dir * dip_depth;
         geom.fabric_normal = fnormal;
 
         // Wrap radius: curvature at apex bounded by needle wrap

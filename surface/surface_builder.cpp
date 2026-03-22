@@ -20,14 +20,12 @@ SurfaceGraph SurfaceBuilder::from_yarn_path(
     builder.widen_loops_for_crossovers();
     builder.create_continuity_edges();
     builder.create_passthrough_edges();
-    builder.create_constraints();
     builder.initialize_positions();
 
     auto log = yarnpath::logging::get_logger();
-    log->info("SurfaceBuilder: created graph with {} nodes, {} edges, {} constraints",
+    log->info("SurfaceBuilder: created graph with {} nodes, {} edges",
               builder.graph_.node_count(),
-              builder.graph_.edge_count(),
-              builder.graph_.constraint_count());
+              builder.graph_.edge_count());
 
     return std::move(builder.graph_);
 }
@@ -220,46 +218,6 @@ void SurfaceBuilder::create_passthrough_edges() {
 
     log->debug("SurfaceBuilder: created {} passthrough edges (density-based stiffness)",
                passthrough_count);
-}
-
-void SurfaceBuilder::create_constraints() {
-    auto log = yarnpath::logging::get_logger();
-
-    // MaxStretch constraints on continuity edges
-    // Yarn can stretch by elasticity factor
-    float max_stretch = 1.0f + yarn_.elasticity;
-
-    for (const auto& edge : graph_.edges()) {
-        if (edge.type == EdgeType::YarnContinuity) {
-            SurfaceConstraint constraint;
-            constraint.type = ConstraintType::MaxStretch;
-            constraint.node_a = edge.node_a;
-            constraint.node_b = edge.node_b;
-            constraint.limit = edge.rest_length * max_stretch;
-
-            graph_.add_constraint(constraint);
-        }
-    }
-
-    // MinDistance constraints for passthrough edges
-    // The child loop can't be closer than the yarn clearance from parent
-    float min_clearance = yarn_.min_clearance();
-
-    for (const auto& edge : graph_.edges()) {
-        if (edge.type == EdgeType::PassThrough) {
-            SurfaceConstraint constraint;
-            constraint.type = ConstraintType::MinDistance;
-            constraint.node_a = edge.node_a;
-            constraint.node_b = edge.node_b;
-            // Minimum physical clearance - just prevent yarn interpenetration
-            // The rest_length (above) handles the geometric spacing for loop structure
-            constraint.limit = min_clearance;
-
-            graph_.add_constraint(constraint);
-        }
-    }
-
-    log->debug("SurfaceBuilder: created {} constraints", graph_.constraint_count());
 }
 
 void SurfaceBuilder::initialize_positions() {

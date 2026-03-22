@@ -5,7 +5,6 @@
 #include <surface/surface_graph.hpp>
 #include <surface/surface_node.hpp>
 #include <surface/surface_edge.hpp>
-#include <surface/surface_constraint.hpp>
 #include <stitch_shape/stitch_shape.hpp>
 #include "config_json.hpp"
 
@@ -15,12 +14,6 @@ namespace yarnpath {
 NLOHMANN_JSON_SERIALIZE_ENUM(EdgeType, {
     {EdgeType::YarnContinuity, "YarnContinuity"},
     {EdgeType::PassThrough, "PassThrough"},
-})
-
-// ConstraintType enum serialization
-NLOHMANN_JSON_SERIALIZE_ENUM(ConstraintType, {
-    {ConstraintType::MaxStretch, "MaxStretch"},
-    {ConstraintType::MinDistance, "MinDistance"},
 })
 
 // StitchShapeParams serialization
@@ -98,23 +91,6 @@ inline void from_json(const nlohmann::json& j, SurfaceEdge& edge) {
     edge.stiffness = j["stiffness"].get<float>();
 }
 
-// SurfaceConstraint serialization
-inline void to_json(nlohmann::json& j, const SurfaceConstraint& constraint) {
-    j["id"] = constraint.id;
-    j["type"] = constraint.type;
-    j["node_a"] = constraint.node_a;
-    j["node_b"] = constraint.node_b;
-    j["limit"] = constraint.limit;
-}
-
-inline void from_json(const nlohmann::json& j, SurfaceConstraint& constraint) {
-    constraint.id = j["id"].get<ConstraintId>();
-    constraint.type = j["type"].get<ConstraintType>();
-    constraint.node_a = j["node_a"].get<NodeId>();
-    constraint.node_b = j["node_b"].get<NodeId>();
-    constraint.limit = j["limit"].get<float>();
-}
-
 // SurfaceGraph serialization
 inline nlohmann::json surface_graph_to_json(const SurfaceGraph& graph) {
     nlohmann::json j;
@@ -122,8 +98,6 @@ inline nlohmann::json surface_graph_to_json(const SurfaceGraph& graph) {
     // Serialize core data
     j["nodes"] = graph.nodes();
     j["edges"] = graph.edges();
-    j["constraints"] = graph.constraints();
-
     // Serialize segment_to_node mapping
     nlohmann::json segment_map = nlohmann::json::object();
     for (const auto& node : graph.nodes()) {
@@ -149,17 +123,8 @@ inline SurfaceGraph surface_graph_from_json(const nlohmann::json& j) {
         graph.add_edge(edge_j.get<SurfaceEdge>());
     }
 
-    // Deserialize constraints
-    for (const auto& constraint_j : j["constraints"]) {
-        graph.add_constraint(constraint_j.get<SurfaceConstraint>());
-    }
-
     // Note: segment_to_node_ is rebuilt from nodes automatically via add_node
-    // Note: adjacency index and constraint colors are NOT serialized
-    // They must be rebuilt by calling:
-    //   - graph.build_adjacency_index()
-    //   - graph.build_constraint_colors()
-    // This is typically done by the solver
+    // Note: adjacency index is NOT serialized — rebuilt by calling graph.build_adjacency_index()
 
     return graph;
 }

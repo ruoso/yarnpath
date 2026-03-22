@@ -39,10 +39,16 @@ void compute_forces(SurfaceGraph& graph,
     compute_loop_curvature_forces(graph, yarn, gauge, config.loop_curvature_strength);
     auto t3 = Clock::now();
 
+    // Add sigmoid barrier forces on edges (max stretch + min distance)
+    if (config.barrier_strength > 0) {
+        compute_barrier_forces(graph, yarn, config.barrier_strength, config.barrier_ramp);
+    }
+    auto t3b = Clock::now();
+
     // Add collision repulsion forces
-    if (config.enable_collision && config.collision_strength > 0) {
-        compute_collision_forces(graph, yarn.min_clearance(), config.collision_strength,
-                                 collision_skip_list);
+    if (config.enable_collision && config.barrier_strength > 0) {
+        compute_collision_forces(graph, yarn.min_clearance(), config.barrier_strength,
+                                 config.barrier_ramp, collision_skip_list);
     }
     auto t4 = Clock::now();
 
@@ -65,12 +71,14 @@ void compute_forces(SurfaceGraph& graph,
         float spring_ms = std::chrono::duration<float, std::milli>(t1 - t0).count();
         float passthrough_ms = std::chrono::duration<float, std::milli>(t2 - t1).count();
         float curvature_ms = std::chrono::duration<float, std::milli>(t3 - t2).count();
-        float collision_ms = std::chrono::duration<float, std::milli>(t4 - t3).count();
+        float barrier_ms = std::chrono::duration<float, std::milli>(t3b - t3).count();
+        float collision_ms = std::chrono::duration<float, std::milli>(t4 - t3b).count();
         float bending_ms = std::chrono::duration<float, std::milli>(t5 - t4).count();
         float rest_ms = std::chrono::duration<float, std::milli>(t6 - t5).count();
         log->debug("    forces: spring={:.1f}ms passthrough={:.1f}ms curvature={:.1f}ms "
-                   "collision={:.1f}ms bending={:.1f}ms rest={:.1f}ms",
-                   spring_ms, passthrough_ms, curvature_ms, collision_ms, bending_ms, rest_ms);
+                   "barrier={:.1f}ms collision={:.1f}ms bending={:.1f}ms rest={:.1f}ms",
+                   spring_ms, passthrough_ms, curvature_ms, barrier_ms,
+                   collision_ms, bending_ms, rest_ms);
     }
     ++force_call_count;
 }
@@ -383,6 +391,79 @@ void compute_bending_forces(SurfaceGraph& graph,
     }
 }
 
+void compute_barrier_forces(SurfaceGraph& graph, const YarnProperties& yarn,
+                            float strength, float ramp_fraction) {
+    auto& nodes = graph.nodes();
+    const auto& edges = graph.edges();
+    const size_t num_nodes = nodes.size();
+
+    float max_stretch_factor = 1.0f + yarn.elasticity;
+    float min_dist = yarn.min_clearance();
+
+    // Thread-local force accumulation
+    #pragma omp parallel if(edges.size() > 50)
+    {
+        std::vector<Vec3> thread_forces(num_nodes, Vec3::zero());
+
+        #pragma omp for schedule(static)
+        for (size_t i = 0; i < edges.size(); ++i) {
+            const auto& edge = edges[i];
+            const Vec3& pos_a = nodes[edge.node_a].position;
+            const Vec3& pos_b = nodes[edge.node_b].position;
+
+            Vec3 delta = pos_b - pos_a;
+            float dist = delta.length();
+            if (dist < 1e-6f) continue;
+            Vec3 dir = delta / dist;
+
+            // Max distance barrier: pull together when approaching max
+            float max_dist = edge.rest_length * max_stretch_factor;
+            float max_margin = max_dist * ramp_fraction;
+            float dist_past_ramp_start = dist - (max_dist - max_margin);
+
+            if (dist_past_ramp_start > 0) {
+                float force_mag;
+                if (dist_past_ramp_start >= max_margin) {
+                    force_mag = -strength;  // at or past limit: full force
+                } else {
+                    float progress = dist_past_ramp_start / max_margin;
+                    float t = progress * 4.0f;
+                    force_mag = -strength * t / std::sqrt(1.0f + t * t);
+                }
+                Vec3 force = dir * force_mag;
+                thread_forces[edge.node_a] -= force;  // pull A toward B
+                thread_forces[edge.node_b] += force;  // pull B toward A
+            }
+
+            // Min distance barrier: push apart when approaching min
+            float min_margin = min_dist * ramp_fraction;
+            float dist_into_ramp = (min_dist + min_margin) - dist;
+
+            if (dist_into_ramp > 0) {
+                float force_mag;
+                if (dist_into_ramp >= min_margin) {
+                    force_mag = strength;  // at or past limit: full force
+                } else {
+                    float progress = dist_into_ramp / min_margin;
+                    float t = progress * 4.0f;
+                    force_mag = strength * t / std::sqrt(1.0f + t * t);
+                }
+                Vec3 force = dir * force_mag;
+                thread_forces[edge.node_a] -= force;  // push A away from B
+                thread_forces[edge.node_b] += force;  // push B away from A
+            }
+        }
+
+        // Merge thread-local forces
+        #pragma omp critical
+        {
+            for (size_t i = 0; i < num_nodes; ++i) {
+                nodes[i].force += thread_forces[i];
+            }
+        }
+    }
+}
+
 void compute_gravity_force(SurfaceGraph& graph,
                            float strength,
                            const Vec3& direction) {
@@ -453,7 +534,8 @@ void apply_floor_constraint(SurfaceGraph& graph, float floor_dist, const Vec3& d
     }
 }
 
-void compute_collision_forces(SurfaceGraph& graph, float min_distance, float strength,
+void compute_collision_forces(SurfaceGraph& graph, float min_distance,
+                              float strength, float ramp_fraction,
                               const std::vector<std::vector<NodeId>>& skip_list) {
     auto& nodes = graph.nodes();
     const size_t num_nodes = nodes.size();
@@ -656,9 +738,10 @@ void compute_collision_forces(SurfaceGraph& graph, float min_distance, float str
                     float max_pen = std::abs(half_a.dot(sep_dir)) + std::abs(half_b.dot(sep_dir));
                     if (max_pen < 1e-6f) max_pen = 1e-6f;
 
-                    // Force proportional to overlap ratio squared
+                    // Sigmoid force based on overlap ratio (same model as barrier forces)
                     float overlap_ratio = std::min(pen_depth / max_pen, 1.0f);
-                    float force_magnitude = strength * overlap_ratio * overlap_ratio;
+                    float t = overlap_ratio * 4.0f;
+                    float force_magnitude = strength * t / std::sqrt(1.0f + t * t);
 
                     Vec3 force = sep_dir * force_magnitude;
 

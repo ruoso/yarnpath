@@ -136,7 +136,8 @@ TEST_F(SurfaceSolverTest, EnergyDecreases) {
     EXPECT_LT(result.final_energy, initial_energy);
 }
 
-TEST_F(SurfaceSolverTest, MaxStretchConstraintEnforced) {
+TEST_F(SurfaceSolverTest, MaxStretchBarrierEnforced) {
+    // Test that sigmoid barrier forces keep distance within max stretch limit
     SurfaceNode node1, node2;
     node1.segment_id = 0;
     node1.position = Vec3(0.0f, 0.0f, 0.0f);
@@ -152,29 +153,21 @@ TEST_F(SurfaceSolverTest, MaxStretchConstraintEnforced) {
     edge.node_b = 1;
     edge.type = EdgeType::YarnContinuity;
     edge.rest_length = 2.0f;
-    edge.stiffness = 1.0f;  // Low stiffness - constraint should dominate
+    edge.stiffness = 1.0f;
 
     graph.add_edge(edge);
 
-    SurfaceConstraint constraint;
-    constraint.type = ConstraintType::MaxStretch;
-    constraint.node_a = 0;
-    constraint.node_b = 1;
-    constraint.limit = 3.0f;  // Max stretch to 3.0
-
-    graph.add_constraint(constraint);
-
     SolveConfig config;
-    config.max_iterations = 100;
-    config.constraint_iterations = 5;
-    config.force_config.damping = 0.9f;
+    config.max_iterations = 5000;
 
     Gauge gauge = Gauge::worsted();
     SurfaceSolver::solve(graph, yarn, gauge, config);
 
-    // Distance should be at most the constraint limit
+    // Distance should converge near rest_length (spring + barrier)
+    // Max allowed = rest_length * (1 + elasticity) = 2.0 * 1.3 = 2.6
     float final_dist = graph.node(0).position.distance_to(graph.node(1).position);
-    EXPECT_LE(final_dist, 3.1f);  // Small tolerance for numerical precision
+    float max_stretch = edge.rest_length * (1.0f + yarn.elasticity);
+    EXPECT_LE(final_dist, max_stretch + 0.5f);  // Tolerance for soft barrier
 }
 
 TEST_F(SurfaceSolverTest, SingleStepDoesNotCrash) {

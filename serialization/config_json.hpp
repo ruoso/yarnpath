@@ -92,8 +92,9 @@ inline void to_json(nlohmann::json& j, const ForceConfig& config) {
         {"enable_gravity", config.enable_gravity},
         {"floor_position", config.floor_position},
         {"enable_floor", config.enable_floor},
+        {"barrier_strength", config.barrier_strength},
+        {"barrier_ramp", config.barrier_ramp},
         {"enable_collision", config.enable_collision},
-        {"collision_strength", config.collision_strength},
         {"enable_bending_resistance", config.enable_bending_resistance},
         {"bending_stiffness", config.bending_stiffness},
         {"min_bend_angle", config.min_bend_angle}
@@ -111,8 +112,9 @@ inline void from_json(const nlohmann::json& j, ForceConfig& config) {
     config.enable_gravity = j.value("enable_gravity", true);
     config.floor_position = j.value("floor_position", 0.0f);
     config.enable_floor = j.value("enable_floor", false);
+    config.barrier_strength = j.value("barrier_strength", 100.0f);
+    config.barrier_ramp = j.value("barrier_ramp", 0.1f);
     config.enable_collision = j.value("enable_collision", true);
-    config.collision_strength = j.value("collision_strength", 100.0f);
     config.enable_bending_resistance = j.value("enable_bending_resistance", true);
     config.bending_stiffness = j.value("bending_stiffness", 50.0f);
     config.min_bend_angle = j.value("min_bend_angle", 0.5f);
@@ -124,8 +126,7 @@ inline void to_json(nlohmann::json& j, const SolveConfig& config) {
         {"dt", config.dt},
         {"max_iterations", config.max_iterations},
         {"convergence_threshold", config.convergence_threshold},
-        {"constraint_iterations", config.constraint_iterations},
-        {"pre_solve_iterations", config.pre_solve_iterations},
+        {"max_displacement_per_step", config.max_displacement_per_step},
         {"force_config", config.force_config},
         {"num_threads", config.num_threads}
     };
@@ -135,8 +136,7 @@ inline void from_json(const nlohmann::json& j, SolveConfig& config) {
     config.dt = j.value("dt", 0.01f);
     config.max_iterations = j.value("max_iterations", 1000);
     config.convergence_threshold = j.value("convergence_threshold", 1e-4f);
-    config.constraint_iterations = j.value("constraint_iterations", 30);
-    config.pre_solve_iterations = j.value("pre_solve_iterations", 1000);
+    config.max_displacement_per_step = j.value("max_displacement_per_step", 0.5f);
     if (j.contains("force_config")) {
         config.force_config = j["force_config"].get<ForceConfig>();
     }

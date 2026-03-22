@@ -140,8 +140,8 @@ void SurfaceSolver::step(SurfaceGraph& graph,
     compute_forces(graph, yarn, gauge, config.force_config, collision_skip_list);
     auto t1 = Clock::now();
 
-    // 2. Gradient descent step (move in force direction, no momentum)
-    integrate_gradient_step(graph, config.dt);
+    // 2. Gradient descent step with global displacement normalization
+    integrate_gradient_step(graph, config.dt, config.max_displacement_per_step);
     auto t2 = Clock::now();
 
     // 3. Apply floor constraint if enabled
@@ -151,173 +151,57 @@ void SurfaceSolver::step(SurfaceGraph& graph,
     }
     auto t3 = Clock::now();
 
-    // 4. Project constraints
-    project_constraints(graph, config.constraint_iterations);
-    auto t4 = Clock::now();
-
     if (should_time) {
         float forces_ms = std::chrono::duration<float, std::milli>(t1 - t0).count();
-        float verlet_ms = std::chrono::duration<float, std::milli>(t2 - t1).count();
+        float integrate_ms = std::chrono::duration<float, std::milli>(t2 - t1).count();
         float floor_ms = std::chrono::duration<float, std::milli>(t3 - t2).count();
-        float constraints_ms = std::chrono::duration<float, std::milli>(t4 - t3).count();
-        log->debug("  step {}: forces={:.1f}ms verlet={:.1f}ms floor={:.1f}ms constraints={:.1f}ms",
-                   step_count, forces_ms, verlet_ms, floor_ms, constraints_ms);
+        log->debug("  step {}: forces={:.1f}ms integrate={:.1f}ms floor={:.1f}ms",
+                   step_count, forces_ms, integrate_ms, floor_ms);
     }
     ++step_count;
 }
 
-void SurfaceSolver::integrate_gradient_step(SurfaceGraph& graph, float dt) {
-    // Gradient descent step: move each node in the direction of the net force
-    // a = F / m
-    // v = a * dt          (no accumulation — reset each step)
-    // x = x + v * dt
+void SurfaceSolver::integrate_gradient_step(SurfaceGraph& graph, float dt,
+                                             float max_displacement) {
+    // Gradient descent with global displacement normalization:
+    // 1. Compute raw displacement for each node: d = (F/m) * dt  (single dt, not dt²)
+    // 2. Find max displacement across all nodes
+    // 3. If max exceeds clamp, scale ALL equally (preserves force ratios)
+    // 4. Apply scaled displacements
 
     auto& nodes = graph.nodes();
+    const size_t n = nodes.size();
 
-    // Parallelize over nodes - each node update is independent
-    #pragma omp parallel for schedule(static) if(nodes.size() > 50)
-    for (size_t i = 0; i < nodes.size(); ++i) {
+    // Pass 1: compute raw displacements and find global max
+    std::vector<Vec3> displacements(n, Vec3::zero());
+    float max_disp = 0.0f;
+
+    #pragma omp parallel for schedule(static) reduction(max:max_disp) if(n > 50)
+    for (size_t i = 0; i < n; ++i) {
+        if (nodes[i].is_pinned) continue;
+        float inv_mass = (nodes[i].mass > 1e-6f) ? (1.0f / nodes[i].mass) : 1.0f;
+        displacements[i] = nodes[i].force * inv_mass * dt;  // single dt
+        float disp_len = displacements[i].length();
+        max_disp = std::max(max_disp, disp_len);
+    }
+
+    // Global normalization: if any node exceeds max, scale ALL equally
+    float scale = (max_disp > max_displacement && max_disp > 1e-6f)
+                  ? max_displacement / max_disp
+                  : 1.0f;
+
+    // Pass 2: apply scaled displacements
+    #pragma omp parallel for schedule(static) if(n > 50)
+    for (size_t i = 0; i < n; ++i) {
         auto& node = nodes[i];
         if (node.is_pinned) {
-            // Pinned nodes don't move
             node.velocity = Vec3::zero();
             continue;
         }
-
-        // Compute acceleration: a = F / m
-        float inv_mass = (node.mass > 1e-6f) ? (1.0f / node.mass) : 1.0f;
-        Vec3 acceleration = node.force * inv_mass;
-
-        // Gradient descent: velocity = force direction only, no accumulation
-        node.velocity = acceleration * dt;
-
-        // Update position: x = x + v * dt
-        node.position += node.velocity * dt;
+        Vec3 disp = displacements[i] * scale;
+        node.velocity = disp * (1.0f / dt);  // store for floor constraint compat
+        node.position += disp;
     }
-}
-
-void SurfaceSolver::project_constraints(SurfaceGraph& graph, int iterations) {
-    // Build constraint colors once for parallel projection
-    // This partitions constraints into independent sets
-    if (!graph.has_constraint_colors() && graph.constraint_count() > 0) {
-        graph.build_constraint_colors();
-    }
-
-    const auto& colors = graph.constraint_colors();
-
-    // If no colors (no constraints), nothing to do
-    if (colors.empty()) {
-        return;
-    }
-
-    for (int iter = 0; iter < iterations; ++iter) {
-        // Process each color level sequentially
-        // Constraints within the same color are independent and can be parallelized
-        for (const auto& color_set : colors) {
-            // Parallelize within each color - constraints don't conflict
-            #pragma omp parallel for schedule(static) if(color_set.size() > 20)
-            for (size_t i = 0; i < color_set.size(); ++i) {
-                const auto& constraint = graph.constraint(color_set[i]);
-                project_constraint(graph, constraint);
-            }
-        }
-    }
-}
-
-void SurfaceSolver::project_constraint(SurfaceGraph& graph,
-                                        const SurfaceConstraint& constraint) {
-    auto& node_a = graph.node(constraint.node_a);
-    auto& node_b = graph.node(constraint.node_b);
-
-    // Skip if both are pinned
-    if (node_a.is_pinned && node_b.is_pinned) {
-        return;
-    }
-
-    Vec3 delta = node_b.position - node_a.position;
-    float current_dist = delta.length();
-
-    if (current_dist < 1e-6f) {
-        return;  // Avoid division by zero
-    }
-
-    switch (constraint.type) {
-        case ConstraintType::MaxStretch: {
-            // If distance exceeds limit, pull nodes together
-            if (current_dist > constraint.limit) {
-                float correction = (current_dist - constraint.limit) / current_dist;
-                Vec3 correction_vec = delta * correction;
-
-                if (node_a.is_pinned) {
-                    // Only move node_b
-                    node_b.position -= correction_vec;
-                } else if (node_b.is_pinned) {
-                    // Only move node_a
-                    node_a.position += correction_vec;
-                } else {
-                    // Move both equally
-                    correction_vec *= 0.5f;
-                    node_a.position += correction_vec;
-                    node_b.position -= correction_vec;
-                }
-            }
-            break;
-        }
-
-        case ConstraintType::MinDistance: {
-            // If distance is less than limit, push nodes apart
-            if (current_dist < constraint.limit) {
-                float correction = (constraint.limit - current_dist) / current_dist;
-                Vec3 correction_vec = delta * correction;
-
-                if (node_a.is_pinned) {
-                    // Only move node_b
-                    node_b.position += correction_vec;
-                } else if (node_b.is_pinned) {
-                    // Only move node_a
-                    node_a.position -= correction_vec;
-                } else {
-                    // Move both equally
-                    correction_vec *= 0.5f;
-                    node_a.position -= correction_vec;
-                    node_b.position += correction_vec;
-                }
-            }
-            break;
-        }
-    }
-}
-
-bool SurfaceSolver::constraints_satisfied(const SurfaceGraph& graph, float tolerance) {
-    for (const auto& constraint : graph.constraints()) {
-        const auto& node_a = graph.node(constraint.node_a);
-        const auto& node_b = graph.node(constraint.node_b);
-
-        Vec3 delta = node_b.position - node_a.position;
-        // Use squared distance to avoid sqrt() - much faster
-        float dist_sq = delta.length_squared();
-
-        switch (constraint.type) {
-            case ConstraintType::MaxStretch: {
-                // Check if distance exceeds limit (with tolerance)
-                float max_dist = constraint.limit + tolerance;
-                if (dist_sq > max_dist * max_dist) {
-                    return false;
-                }
-                break;
-            }
-
-            case ConstraintType::MinDistance: {
-                // Check if distance is less than limit (with tolerance)
-                float min_dist = constraint.limit - tolerance;
-                if (dist_sq < min_dist * min_dist) {
-                    return false;
-                }
-                break;
-            }
-        }
-    }
-    return true;
 }
 
 void SurfaceSolver::compute_fabric_normals(SurfaceGraph& graph) {

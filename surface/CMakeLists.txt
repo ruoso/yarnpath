@@ -5,7 +5,6 @@ add_library(surface
     surface_graph.cpp
     surface_node.hpp
     surface_edge.hpp
-    surface_constraint.hpp
     surface_builder.hpp
     surface_builder.cpp
     surface_forces.hpp

@@ -231,7 +231,7 @@ TEST_F(SurfaceForcesTest, CollisionForceRepelsCloseNodes) {
     skip_list[1].push_back(2);
 
     float min_clearance = yarn.min_clearance();
-    compute_collision_forces(graph, min_clearance, 100.0f, skip_list);
+    compute_collision_forces(graph, min_clearance, 100.0f, 0.1f, skip_list);
 
     // Nodes 0 and 2 are overlapping — they should be pushed apart.
     // Node 0 should get force in negative X direction (away from node 2)
@@ -285,7 +285,7 @@ TEST_F(SurfaceForcesTest, CollisionForceZeroWhenFarApart) {
     skip_list[0].push_back(1);
     skip_list[1].push_back(2);
 
-    compute_collision_forces(graph, yarn.min_clearance(), 100.0f, skip_list);
+    compute_collision_forces(graph, yarn.min_clearance(), 100.0f, 0.1f, skip_list);
 
     // No collision force between nodes 0 and 2 (far apart).
     // Note: spring forces are NOT computed here, only collision.

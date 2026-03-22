@@ -7,7 +7,6 @@
 #include "surface_graph.hpp"
 #include "surface_node.hpp"
 #include "surface_edge.hpp"
-#include "surface_constraint.hpp"
 #include "surface_builder.hpp"
 #include "surface_forces.hpp"
 #include "surface_solver.hpp"

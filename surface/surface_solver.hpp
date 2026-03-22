@@ -27,12 +27,9 @@ struct SolveConfig {
     // Convergence threshold (energy change per iteration)
     float convergence_threshold = 1e-4f;
 
-    // Number of constraint projection iterations per step
-    int constraint_iterations = 30;  // Increased for better constraint satisfaction
-
-    // Number of constraint-only pre-solve iterations (before force relaxation)
-    // This helps satisfy constraints before springs start pulling
-    int pre_solve_iterations = 1000;
+    // Maximum displacement any node can move per step (mm)
+    // Used for global normalization: if any node exceeds this, ALL scale down equally
+    float max_displacement_per_step = 0.5f;
 
     // Force configuration
     ForceConfig force_config;
@@ -67,18 +64,9 @@ public:
                      const std::vector<std::vector<NodeId>>& collision_skip_list = {});
 
 private:
-    // Gradient descent step (no velocity accumulation)
-    static void integrate_gradient_step(SurfaceGraph& graph, float dt);
-
-    // Project all constraints
-    static void project_constraints(SurfaceGraph& graph, int iterations);
-
-    // Project a single constraint
-    static void project_constraint(SurfaceGraph& graph,
-                                   const SurfaceConstraint& constraint);
-
-    // Check if all constraints are satisfied
-    static bool constraints_satisfied(const SurfaceGraph& graph, float tolerance = 1e-4f);
+    // Gradient descent step with global displacement normalization
+    static void integrate_gradient_step(SurfaceGraph& graph, float dt,
+                                         float max_displacement);
 
     // Compute fabric normals for all nodes after solve completes.
     // Uses stitch_axis and continuity neighbors to determine the fabric surface normal.

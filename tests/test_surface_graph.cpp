@@ -68,32 +68,6 @@ TEST(SurfaceGraph, AddAndRetrieveEdge) {
     EXPECT_FLOAT_EQ(retrieved.stiffness, 10.0f);
 }
 
-TEST(SurfaceGraph, AddAndRetrieveConstraint) {
-    SurfaceGraph graph;
-
-    SurfaceNode node1, node2;
-    node1.segment_id = 0;
-    node2.segment_id = 1;
-    graph.add_node(node1);
-    graph.add_node(node2);
-
-    SurfaceConstraint constraint;
-    constraint.type = ConstraintType::MaxStretch;
-    constraint.node_a = 0;
-    constraint.node_b = 1;
-    constraint.limit = 7.5f;
-
-    ConstraintId id = graph.add_constraint(constraint);
-    EXPECT_EQ(id, 0);
-    EXPECT_EQ(graph.constraint_count(), 1);
-
-    const auto& retrieved = graph.constraint(id);
-    EXPECT_EQ(retrieved.type, ConstraintType::MaxStretch);
-    EXPECT_EQ(retrieved.node_a, 0);
-    EXPECT_EQ(retrieved.node_b, 1);
-    EXPECT_FLOAT_EQ(retrieved.limit, 7.5f);
-}
-
 TEST(SurfaceGraph, NodeForSegment) {
     SurfaceGraph graph;
 

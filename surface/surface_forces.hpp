@@ -29,9 +29,12 @@ struct ForceConfig {
     float floor_position = 0.0f;        // Floor Y position (nodes can't go below this)
     bool enable_floor = false;          // Whether to enforce floor constraint
 
+    // Barrier configuration (unified for collision, max stretch, and min distance)
+    float barrier_strength = 100.0f;    // Shared sigmoid barrier strength for ALL barriers
+    float barrier_ramp = 0.1f;         // Ramp zone as fraction of limit (10%)
+
     // Collision configuration
     bool enable_collision = true;       // Whether to apply collision repulsion (spatial hash accelerated)
-    float collision_strength = 100.0f;  // Repulsion force strength
 
     // Bending resistance (prevents sharp folds along yarn path)
     bool enable_bending_resistance = true;  // Whether to apply bending forces
@@ -76,11 +79,18 @@ void compute_gravity_force(SurfaceGraph& graph,
 // Apply floor constraint (prevent nodes from going past floor along gravity direction)
 void apply_floor_constraint(SurfaceGraph& graph, float floor_dist, const Vec3& direction);
 
+// Sigmoid barrier forces on edges: prevents exceeding max stretch and min distance.
+// Both barriers apply to every edge (continuity and passthrough).
+// Max distance = rest_length * (1 + elasticity); min distance = min_clearance.
+void compute_barrier_forces(SurfaceGraph& graph, const YarnProperties& yarn,
+                            float strength, float ramp_fraction);
+
 // Collision repulsion force: pushes non-adjacent nodes apart when AABBs overlap
 // Uses spatial hash grid for O(N*k) performance with anisotropic stitch bounding volumes.
 // skip_list: per-node list of neighbor IDs to skip (connected pairs).
 // If empty, no pairs are skipped.
-void compute_collision_forces(SurfaceGraph& graph, float min_distance, float strength,
+void compute_collision_forces(SurfaceGraph& graph, float min_distance,
+                              float strength, float ramp_fraction,
                               const std::vector<std::vector<NodeId>>& skip_list = {});
 
 // Bending resistance: prevents sharp bends/folds along continuity edges

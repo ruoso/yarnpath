@@ -166,7 +166,6 @@ int command_surface(int argc, char** argv) {
         data.stats = {
             {"node_count", surface_graph.node_count()},
             {"edge_count", surface_graph.edge_count()},
-            {"constraint_count", surface_graph.constraint_count()},
             {"converged", result.converged},
             {"iterations", result.iterations},
             {"final_energy", result.final_energy}

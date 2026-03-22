@@ -115,29 +115,6 @@ TEST_F(SurfaceBuilderTest, CreatesPassthroughEdges) {
     EXPECT_GT(passthrough_count, 0);
 }
 
-TEST_F(SurfaceBuilderTest, CreatesConstraints) {
-    YarnPath path = create_simple_yarn_path();
-
-    SurfaceGraph graph = SurfaceBuilder::from_yarn_path(path, yarn, gauge);
-
-    // Should have constraints for both continuity (MaxStretch) and passthrough (MinDistance)
-    EXPECT_GT(graph.constraint_count(), 0);
-
-    // Check we have both types
-    size_t max_stretch_count = 0;
-    size_t min_distance_count = 0;
-    for (const auto& constraint : graph.constraints()) {
-        if (constraint.type == ConstraintType::MaxStretch) {
-            max_stretch_count++;
-        } else if (constraint.type == ConstraintType::MinDistance) {
-            min_distance_count++;
-        }
-    }
-
-    EXPECT_GT(max_stretch_count, 0);
-    EXPECT_GT(min_distance_count, 0);
-}
-
 TEST_F(SurfaceBuilderTest, GridBasedInitialPositions) {
     YarnPath path = create_cast_on_only();
 

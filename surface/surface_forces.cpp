@@ -102,8 +102,8 @@ void compute_spring_forces(SurfaceGraph& graph) {
             // naturally include Z components from stitch topology
             const auto& node_a = nodes[edge.node_a];
             const auto& node_b = nodes[edge.node_b];
-            Vec3 effective_a = node_a.position + Vec3(0, 0, node_a.shape.z_bulge);
-            Vec3 effective_b = node_b.position + Vec3(0, 0, node_b.shape.z_bulge);
+            Vec3 effective_a = node_a.position - Vec3(0, 0, node_a.shape.z_bulge);
+            Vec3 effective_b = node_b.position - Vec3(0, 0, node_b.shape.z_bulge);
 
             Vec3 delta = effective_b - effective_a;
             float length = delta.length();
@@ -415,8 +415,8 @@ void compute_barrier_forces(SurfaceGraph& graph, const YarnProperties& yarn,
             // naturally include Z components from stitch topology
             const auto& node_a = nodes[edge.node_a];
             const auto& node_b = nodes[edge.node_b];
-            Vec3 effective_a = node_a.position + Vec3(0, 0, node_a.shape.z_bulge);
-            Vec3 effective_b = node_b.position + Vec3(0, 0, node_b.shape.z_bulge);
+            Vec3 effective_a = node_a.position - Vec3(0, 0, node_a.shape.z_bulge);
+            Vec3 effective_b = node_b.position - Vec3(0, 0, node_b.shape.z_bulge);
 
             Vec3 delta = effective_b - effective_a;
             float dist = delta.length();

@@ -321,6 +321,7 @@ void SurfaceBuilder::initialize_positions() {
     float row_offset = gauge_.loop_height(yarn_.relaxed_radius);
 
     // Position node 0 at origin with orientation-based Z-offset from stitch shape
+    // z_bulge = direction the legs go (positive = toward viewer for knit)
     if (graph_.node_count() > 0) {
         float z_offset = graph_.node(0).shape.z_bulge;
         graph_.node(0).position = Vec3(0.0f, 0.0f, z_offset);
@@ -354,6 +355,7 @@ void SurfaceBuilder::initialize_positions() {
         }
 
         // Calculate Z-offset from stitch shape (for fabric curl)
+        // z_bulge = direction the legs go (positive = toward viewer for knit)
         float z_offset = node.shape.z_bulge;
 
         // Place node at current position with orientation-based Z

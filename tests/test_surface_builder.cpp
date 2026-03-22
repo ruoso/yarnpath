@@ -166,9 +166,9 @@ TEST_F(SurfaceBuilderTest, GridBasedInitialPositions) {
         max_y = std::max(max_y, node.position.y);
     }
 
-    // Y spread should be small (just noise) for a single row
+    // Y spread: two-pass cast-on has foundation + return rows, so up to 2 row heights
     float y_spread = max_y - min_y;
-    EXPECT_LT(y_spread, gauge.loop_height(yarn.compressed_radius));  // Should be less than one row height
+    EXPECT_LT(y_spread, 2.0f * gauge.loop_height(yarn.compressed_radius));
 }
 
 
@@ -356,19 +356,19 @@ TEST_F(SurfaceBuilderTest, DecreaseWidening) {
 }
 
 TEST_F(SurfaceBuilderTest, NoWideningNeeded) {
-    // Cast on only — no children, no widening needed.
+    // Cast on 5 — two-pass produces 5 foundation + 5 return segments.
+    // Return segments (nodes 5-9) have no children, so should not be widened.
     YarnPath path = create_cast_on_only();
 
-    // Compute shape before building (to compare)
-    auto base_shape = compute_stitch_shape(yarn, gauge,
-        LoopOrientation::Neutral, WrapDirection::None, WorkType::Created);
+    auto worked_shape = compute_stitch_shape(yarn, gauge,
+        LoopOrientation::Neutral, WrapDirection::None, WorkType::Worked);
 
     SurfaceGraph graph = SurfaceBuilder::from_yarn_path(path, yarn, gauge);
 
-    // All nodes should have original loop_width (no widening)
-    for (size_t i = 0; i < graph.node_count(); ++i) {
-        EXPECT_FLOAT_EQ(graph.node(i).shape.loop_width, base_shape.loop_width)
-            << "Node " << i << " was unexpectedly widened";
+    // Return segments (no children) should have original loop_width
+    for (size_t i = 5; i < graph.node_count(); ++i) {
+        EXPECT_FLOAT_EQ(graph.node(i).shape.loop_width, worked_shape.loop_width)
+            << "Return node " << i << " was unexpectedly widened";
     }
 }
 

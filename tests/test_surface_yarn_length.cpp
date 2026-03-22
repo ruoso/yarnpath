@@ -34,12 +34,13 @@ TEST(YarnPath, YarnLengthCalculatedForKnit) {
 
     const auto& segments = yarn_path.segments();
 
-    // Knit stitches (segments 3-5) should have yarn length = π * loop_height + stitch_width
+    // Two-pass cast-on: 3 foundation + 3 return = 6 segments before knit row
+    // Knit stitches (segments 6-8) should have yarn length = π * loop_height + stitch_width
     float loop_height = gauge.loop_height(yarn.compressed_radius);
     float stitch_width = gauge.stitch_width(yarn.compressed_radius);
     float expected_knit_length = M_PI * loop_height + stitch_width;
 
-    for (size_t i = 3; i < 6; ++i) {
+    for (size_t i = 6; i < 9; ++i) {
         EXPECT_NEAR(segments[i].target_yarn_length, expected_knit_length, expected_knit_length * 0.01f)
             << "Knit segment " << i << " should have base yarn length";
     }
@@ -67,13 +68,14 @@ TEST(YarnPath, YarnLengthCalculatedForPurl) {
 
     const auto& segments = yarn_path.segments();
 
-    // Purl stitches (segments 3-5) should have yarn length = 0.88 * (π * loop_height + stitch_width)
+    // Two-pass cast-on: 3 foundation + 3 return = 6 segments before purl row
+    // Purl stitches (segments 6-8) should have yarn length = 0.88 * (π * loop_height + stitch_width)
     float loop_height = gauge.loop_height(yarn.compressed_radius);
     float stitch_width = gauge.stitch_width(yarn.compressed_radius);
     float base_length = M_PI * loop_height + stitch_width;
     float expected_purl_length = 0.88f * base_length;
 
-    for (size_t i = 3; i < 6; ++i) {
+    for (size_t i = 6; i < 9; ++i) {
         EXPECT_NEAR(segments[i].target_yarn_length, expected_purl_length, expected_purl_length * 0.01f)
             << "Purl segment " << i << " should have 88% of base yarn length";
     }
@@ -100,11 +102,12 @@ TEST(YarnPath, YarnLengthCalculatedForSlip) {
 
     const auto& segments = yarn_path.segments();
 
-    // Slip stitch (segment 4) should have yarn length = 0.5 * stitch_width
+    // Two-pass cast-on: 3 foundation + 3 return = 6 segments before user row
+    // Slip stitch (segment 7) should have yarn length = 0.5 * stitch_width
     float stitch_width = gauge.stitch_width(yarn.compressed_radius);
     float expected_slip_length = 0.5f * stitch_width;
 
-    EXPECT_NEAR(segments[4].target_yarn_length, expected_slip_length, expected_slip_length * 0.01f)
+    EXPECT_NEAR(segments[7].target_yarn_length, expected_slip_length, expected_slip_length * 0.01f)
         << "Slip stitch should have minimal yarn length (0.5 * stitch_width)";
 }
 
@@ -129,8 +132,9 @@ TEST(YarnPath, YarnLengthCalculatedForDecreases) {
 
     const auto& segments = yarn_path.segments();
 
-    // K2tog (segment 4) should have 0.82 * base length
-    // SSK (segment 5) should have 0.86 * base length
+    // Two-pass cast-on: 4 foundation + 4 return = 8 segments before user row
+    // K2tog (segment 8) should have 0.82 * base length
+    // SSK (segment 9) should have 0.86 * base length
     float loop_height = gauge.loop_height(yarn.compressed_radius);
     float stitch_width = gauge.stitch_width(yarn.compressed_radius);
     float base_length = M_PI * loop_height + stitch_width;
@@ -138,14 +142,14 @@ TEST(YarnPath, YarnLengthCalculatedForDecreases) {
     float expected_k2tog = 0.82f * base_length;
     float expected_ssk = 0.86f * base_length;
 
-    EXPECT_NEAR(segments[4].target_yarn_length, expected_k2tog, expected_k2tog * 0.01f)
+    EXPECT_NEAR(segments[8].target_yarn_length, expected_k2tog, expected_k2tog * 0.01f)
         << "K2tog should use 82% of base yarn length";
 
-    EXPECT_NEAR(segments[5].target_yarn_length, expected_ssk, expected_ssk * 0.01f)
+    EXPECT_NEAR(segments[9].target_yarn_length, expected_ssk, expected_ssk * 0.01f)
         << "SSK should use 86% of base yarn length";
 
     // SSK should use slightly more yarn than K2tog
-    EXPECT_GT(segments[5].target_yarn_length, segments[4].target_yarn_length)
+    EXPECT_GT(segments[9].target_yarn_length, segments[8].target_yarn_length)
         << "SSK should use more yarn than K2tog (looser decrease)";
 }
 
@@ -179,10 +183,10 @@ TEST(SurfaceYarnLength, KnitVsPurlMass) {
 
     SurfaceGraph surface = SurfaceBuilder::from_yarn_path(yarn_path, yarn, gauge);
 
-    // Knit segments: 2-3
-    // Purl segments: 4-5
-    float knit_mass_avg = (surface.node(2).mass + surface.node(3).mass) / 2.0f;
-    float purl_mass_avg = (surface.node(4).mass + surface.node(5).mass) / 2.0f;
+    // Two-pass cast-on: 2 foundation + 2 return = 4 segments
+    // Knit segments: 4-5, Purl segments: 6-7
+    float knit_mass_avg = (surface.node(4).mass + surface.node(5).mass) / 2.0f;
+    float purl_mass_avg = (surface.node(6).mass + surface.node(7).mass) / 2.0f;
 
     // RS Purl → Back orientation → 0.88 factor, should have ~88% of knit mass
     float mass_ratio = purl_mass_avg / knit_mass_avg;
@@ -211,9 +215,10 @@ TEST(SurfaceYarnLength, SlipStitchMinimalMass) {
 
     SurfaceGraph surface = SurfaceBuilder::from_yarn_path(yarn_path, yarn, gauge);
 
-    // Knit: segment 3, Slip: segment 4, Knit: segment 5
-    float knit_mass = surface.node(3).mass;
-    float slip_mass = surface.node(4).mass;
+    // Two-pass cast-on: 3 foundation + 3 return = 6 segments
+    // Knit: segment 6, Slip: segment 7, Knit: segment 8
+    float knit_mass = surface.node(6).mass;
+    float slip_mass = surface.node(7).mass;
 
     // Slip should have much less mass (0.5 * stitch_width vs full loop)
     EXPECT_LT(slip_mass, knit_mass * 0.2f)
@@ -241,9 +246,10 @@ TEST(SurfaceYarnLength, K2togVsSSKMass) {
 
     SurfaceGraph surface = SurfaceBuilder::from_yarn_path(yarn_path, yarn, gauge);
 
-    // K2tog: segment 4, SSK: segment 5
-    float k2tog_mass = surface.node(4).mass;
-    float ssk_mass = surface.node(5).mass;
+    // Two-pass cast-on: 4 foundation + 4 return = 8 segments
+    // K2tog: segment 8, SSK: segment 9
+    float k2tog_mass = surface.node(8).mass;
+    float ssk_mass = surface.node(9).mass;
 
     // SSK should have slightly more mass than K2tog (86% vs 82%)
     EXPECT_GT(ssk_mass, k2tog_mass)
@@ -275,9 +281,10 @@ TEST(SurfaceYarnLength, YarnOverHasLoopOnlyMass) {
 
     SurfaceGraph surface = SurfaceBuilder::from_yarn_path(yarn_path, yarn, gauge);
 
-    // Knit: segment 2, YO: segment 3, Knit: segment 4
-    float knit_mass = surface.node(2).mass;
-    float yo_mass = surface.node(3).mass;
+    // Two-pass cast-on: 2 foundation + 2 return = 4 segments
+    // Knit: segment 4, YO: segment 5, Knit: segment 6
+    float knit_mass = surface.node(4).mass;
+    float yo_mass = surface.node(5).mass;
 
     // YO should have less mass than knit (just loop, no passthrough)
     EXPECT_LT(yo_mass, knit_mass)
@@ -316,16 +323,16 @@ TEST(SurfaceYarnLength, StiffnessProportionalToYarnDensity) {
 
     SurfaceGraph surface = SurfaceBuilder::from_yarn_path(yarn_path, yarn, gauge);
 
-    // Find continuity edges in knit row (2->3) and purl row (4->5)
-    // Segments: 0-1=CastOn, 2-3=Knit, 4-5=RS Purl (Back orientation)
+    // Two-pass cast-on: 2 foundation + 2 return = 4 segments
+    // Find continuity edges in knit row (4->5) and purl row (6->7)
     float knit_continuity_stiffness = 0.0f;
     float purl_continuity_stiffness = 0.0f;
 
     for (const auto& edge : surface.edges()) {
         if (edge.type == EdgeType::YarnContinuity) {
-            if (edge.node_a == 2 && edge.node_b == 3) {
+            if (edge.node_a == 4 && edge.node_b == 5) {
                 knit_continuity_stiffness = edge.stiffness;
-            } else if (edge.node_a == 4 && edge.node_b == 5) {
+            } else if (edge.node_a == 6 && edge.node_b == 7) {
                 purl_continuity_stiffness = edge.stiffness;
             }
         }
@@ -364,10 +371,11 @@ TEST(SurfaceYarnLength, OrientationAffectsZPosition) {
 
     SurfaceGraph surface = SurfaceBuilder::from_yarn_path(yarn_path, yarn, gauge);
 
-    // RS Knit segments: 2-3 → Front orientation → positive Z
-    // RS Purl segments: 4-5 → Back orientation → negative Z
-    float knit_z_avg = (surface.node(2).position.z + surface.node(3).position.z) / 2.0f;
-    float purl_z_avg = (surface.node(4).position.z + surface.node(5).position.z) / 2.0f;
+    // Two-pass cast-on: 2 foundation + 2 return = 4 segments
+    // RS Knit segments: 4-5 → Front orientation → positive Z
+    // RS Purl segments: 6-7 → Back orientation → negative Z
+    float knit_z_avg = (surface.node(4).position.z + surface.node(5).position.z) / 2.0f;
+    float purl_z_avg = (surface.node(6).position.z + surface.node(7).position.z) / 2.0f;
 
     EXPECT_GT(knit_z_avg, 0.0f)
         << "Knit stitches should have positive Z (curl forward)";
@@ -396,15 +404,16 @@ TEST(SurfaceYarnLength, TransferredStitchLooserPassthrough) {
 
     SurfaceGraph surface = SurfaceBuilder::from_yarn_path(yarn_path, yarn, gauge);
 
-    // Find passthrough edges for knit (node 3) and slip (node 4)
+    // Two-pass cast-on: 3 foundation + 3 return = 6 segments
+    // Find passthrough edges for knit (node 6) and slip (node 7)
     float knit_passthrough_stiffness = 0.0f;
     float slip_passthrough_stiffness = 0.0f;
 
     for (const auto& edge : surface.edges()) {
         if (edge.type == EdgeType::PassThrough) {
-            if (edge.node_a == 3) {
+            if (edge.node_a == 6) {
                 knit_passthrough_stiffness = edge.stiffness;
-            } else if (edge.node_a == 4) {
+            } else if (edge.node_a == 7) {
                 slip_passthrough_stiffness = edge.stiffness;
             }
         }

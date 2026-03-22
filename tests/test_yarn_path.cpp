@@ -25,16 +25,22 @@ TEST(YarnPath, CastOnOnly) {
     auto graph = StitchGraph::from_instructions(pattern);
     auto yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
-    // Should have 3 segments that form loops (one per cast-on)
-    size_t loop_count = 0;
+    // Two-pass cast-on: 3 foundation + 3 return = 6 segments
+    size_t foundation_count = 0;
+    size_t return_count = 0;
     for (const auto& seg : yarn_path.segments()) {
         if (seg.forms_loop) {
-            loop_count++;
-            // Cast-on loops have no parents
-            EXPECT_TRUE(seg.through.empty());
+            if (seg.through.empty()) {
+                foundation_count++;
+            } else {
+                return_count++;
+                // Return segments each pass through one foundation
+                EXPECT_EQ(seg.through.size(), 1u);
+            }
         }
     }
-    EXPECT_EQ(loop_count, 3u);
+    EXPECT_EQ(foundation_count, 3u);
+    EXPECT_EQ(return_count, 3u);
 }
 
 TEST(YarnPath, SingleRowKnit) {
@@ -59,26 +65,26 @@ TEST(YarnPath, SingleRowKnit) {
 
     // Count loops and verify parent relationships
     size_t loop_count = 0;
-    size_t cast_on_count = 0;
+    size_t foundation_count = 0;
     size_t worked_count = 0;
 
     for (const auto& seg : yarn_path.segments()) {
         if (seg.forms_loop) {
             loop_count++;
             if (seg.through.empty()) {
-                cast_on_count++;
+                foundation_count++;
             } else {
                 worked_count++;
-                // Knit loops should have exactly one parent
+                // All worked loops (return + knit) have exactly one parent
                 EXPECT_EQ(seg.through.size(), 1u);
             }
         }
     }
 
-    // Should have 6 loops: 3 cast-on + 3 knit
-    EXPECT_EQ(loop_count, 6u);
-    EXPECT_EQ(cast_on_count, 3u);
-    EXPECT_EQ(worked_count, 3u);
+    // 3 foundation + 3 return + 3 knit = 9 loops
+    EXPECT_EQ(loop_count, 9u);
+    EXPECT_EQ(foundation_count, 3u);
+    EXPECT_EQ(worked_count, 6u);  // 3 return + 3 knit
 }
 
 TEST(YarnPath, PurlRow) {
@@ -109,8 +115,8 @@ TEST(YarnPath, PurlRow) {
         }
     }
 
-    // Should have 6 loops: 3 cast-on + 3 purl
-    EXPECT_EQ(loop_count, 6u);
+    // 3 foundation + 3 return + 3 purl = 9 loops
+    EXPECT_EQ(loop_count, 9u);
 }
 
 TEST(YarnPath, StockinetteMultipleRows) {
@@ -157,8 +163,8 @@ TEST(YarnPath, StockinetteMultipleRows) {
         }
     }
 
-    // Should have 12 loops: 3 cast-on + 3 knit + 3 purl + 3 knit
-    EXPECT_EQ(loop_count, 12u);
+    // 3 foundation + 3 return + 3 knit + 3 purl + 3 knit = 15 loops
+    EXPECT_EQ(loop_count, 15u);
 }
 
 TEST(YarnPath, ParentChildRelationships) {
@@ -189,22 +195,27 @@ TEST(YarnPath, ParentChildRelationships) {
         }
     }
 
-    ASSERT_EQ(loop_ids.size(), 4u);  // 2 cast-on + 2 knit
+    ASSERT_EQ(loop_ids.size(), 6u);  // 2 foundation + 2 return + 2 knit
 
-    // First two are cast-ons (no parents)
+    // First two are foundations (no parents)
     EXPECT_TRUE(yarn_path.segments()[loop_ids[0]].through.empty());
     EXPECT_TRUE(yarn_path.segments()[loop_ids[1]].through.empty());
 
-    // Last two are knits (each has one parent)
-    const auto& knit1 = yarn_path.segments()[loop_ids[2]];
-    const auto& knit2 = yarn_path.segments()[loop_ids[3]];
+    // Next two are return segments (each through one foundation)
+    const auto& ret1 = yarn_path.segments()[loop_ids[2]];
+    const auto& ret2 = yarn_path.segments()[loop_ids[3]];
+    EXPECT_EQ(ret1.through.size(), 1u);
+    EXPECT_EQ(ret2.through.size(), 1u);
 
+    // Last two are knits (each through one return segment)
+    const auto& knit1 = yarn_path.segments()[loop_ids[4]];
+    const auto& knit2 = yarn_path.segments()[loop_ids[5]];
     EXPECT_EQ(knit1.through.size(), 1u);
     EXPECT_EQ(knit2.through.size(), 1u);
 
-    // Parents should be cast-on loops
-    EXPECT_TRUE(knit1.through[0] == loop_ids[0] || knit1.through[0] == loop_ids[1]);
-    EXPECT_TRUE(knit2.through[0] == loop_ids[0] || knit2.through[0] == loop_ids[1]);
+    // Knit parents should be return segments, not foundations
+    EXPECT_TRUE(knit1.through[0] == loop_ids[2] || knit1.through[0] == loop_ids[3]);
+    EXPECT_TRUE(knit2.through[0] == loop_ids[2] || knit2.through[0] == loop_ids[3]);
 }
 
 TEST(YarnPath, BindOff) {
@@ -240,8 +251,8 @@ TEST(YarnPath, BindOff) {
         }
     }
 
-    // Should have 9 loops: 3 cast-on + 3 knit + 3 bind-off
-    EXPECT_EQ(loop_count, 9u);
+    // 3 foundation + 3 return + 3 knit + 3 bind-off = 12 loops
+    EXPECT_EQ(loop_count, 12u);
 }
 
 TEST(YarnPath, IsLoopHelper) {
@@ -342,7 +353,7 @@ TEST(YarnPath, K2togDecrease) {
     auto graph = StitchGraph::from_instructions(pattern);
     auto yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
-    // Find worked loop segments (non-cast-on)
+    // Find worked loop segments (non-foundation) — includes return + user-row
     std::vector<const YarnSegment*> worked;
     for (const auto& seg : yarn_path.segments()) {
         if (seg.forms_loop && !seg.through.empty()) {
@@ -350,12 +361,12 @@ TEST(YarnPath, K2togDecrease) {
         }
     }
 
-    ASSERT_EQ(worked.size(), 3u);  // K, K2tog, K
+    ASSERT_EQ(worked.size(), 7u);  // 4 return + K, K2tog, K
 
-    // K2tog should have 2 parents
-    EXPECT_EQ(worked[0]->through.size(), 1u);  // K
-    EXPECT_EQ(worked[1]->through.size(), 2u);  // K2tog
-    EXPECT_EQ(worked[2]->through.size(), 1u);  // K
+    // K2tog should have 2 parents (after the 4 return segments)
+    EXPECT_EQ(worked[4]->through.size(), 1u);  // K
+    EXPECT_EQ(worked[5]->through.size(), 2u);  // K2tog
+    EXPECT_EQ(worked[6]->through.size(), 1u);  // K
 }
 
 TEST(YarnPath, SSKDecrease) {
@@ -382,8 +393,8 @@ TEST(YarnPath, SSKDecrease) {
         }
     }
 
-    ASSERT_EQ(worked.size(), 3u);
-    EXPECT_EQ(worked[1]->through.size(), 2u);  // SSK has 2 parents
+    ASSERT_EQ(worked.size(), 7u);  // 4 return + K, SSK, K
+    EXPECT_EQ(worked[5]->through.size(), 2u);  // SSK has 2 parents
 }
 
 TEST(YarnPath, S2KPDecrease) {
@@ -410,8 +421,8 @@ TEST(YarnPath, S2KPDecrease) {
         }
     }
 
-    ASSERT_EQ(worked.size(), 3u);
-    EXPECT_EQ(worked[1]->through.size(), 3u);  // S2KP has 3 parents
+    ASSERT_EQ(worked.size(), 8u);  // 5 return + K, S2KP, K
+    EXPECT_EQ(worked[6]->through.size(), 3u);  // S2KP has 3 parents
 }
 
 // === Increase tests ===
@@ -446,12 +457,12 @@ TEST(YarnPath, YarnOverIncrease) {
     }
     EXPECT_TRUE(found_yo);
 
-    // Count total loops: 2 cast-on + 2 knit + 1 YO = 5
+    // Count total loops: 2 foundation + 2 return + 2 knit + 1 YO = 7
     size_t loop_count = 0;
     for (const auto& seg : yarn_path.segments()) {
         if (seg.forms_loop) loop_count++;
     }
-    EXPECT_EQ(loop_count, 5u);
+    EXPECT_EQ(loop_count, 7u);
 }
 
 TEST(YarnPath, KFBIncrease) {
@@ -471,7 +482,7 @@ TEST(YarnPath, KFBIncrease) {
     auto graph = StitchGraph::from_instructions(pattern);
     auto yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
-    // KFB consumes 1, produces 2 — should have 2 worked segments
+    // KFB consumes 1, produces 2 — worked segments include 1 return + 2 KFB
     std::vector<const YarnSegment*> worked;
     for (const auto& seg : yarn_path.segments()) {
         if (seg.forms_loop && seg.work_type != WorkType::Created) {
@@ -479,11 +490,11 @@ TEST(YarnPath, KFBIncrease) {
         }
     }
 
-    ASSERT_EQ(worked.size(), 2u);  // KFB produces 2 loops
-    // Both should reference the same parent (the cast-on loop)
-    EXPECT_EQ(worked[0]->through.size(), 1u);
+    ASSERT_EQ(worked.size(), 3u);  // 1 return + 2 KFB
+    // KFB segments both reference the same parent (the return segment)
     EXPECT_EQ(worked[1]->through.size(), 1u);
-    EXPECT_EQ(worked[0]->through[0], worked[1]->through[0]);
+    EXPECT_EQ(worked[2]->through.size(), 1u);
+    EXPECT_EQ(worked[1]->through[0], worked[2]->through[0]);
 }
 
 TEST(YarnPath, M1LIncrease) {
@@ -514,12 +525,12 @@ TEST(YarnPath, M1LIncrease) {
     }
     EXPECT_TRUE(found_m1l);
 
-    // Total loops: 2 cast-on + 2 knit + 1 M1L = 5
+    // Total loops: 2 foundation + 2 return + 2 knit + 1 M1L = 7
     size_t loop_count = 0;
     for (const auto& seg : yarn_path.segments()) {
         if (seg.forms_loop) loop_count++;
     }
-    EXPECT_EQ(loop_count, 5u);
+    EXPECT_EQ(loop_count, 7u);
 }
 
 TEST(YarnPath, M1RIncrease) {
@@ -570,7 +581,7 @@ TEST(YarnPath, CableLeftCrossing) {
     auto graph = StitchGraph::from_instructions(pattern);
     auto yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
-    // Should have 6 worked segments (1 K + 4 cable + 1 K)
+    // 6 return + 6 user-row worked = 12 segments with parents
     std::vector<const YarnSegment*> worked;
     for (const auto& seg : yarn_path.segments()) {
         if (seg.forms_loop && !seg.through.empty()) {
@@ -578,22 +589,17 @@ TEST(YarnPath, CableLeftCrossing) {
         }
     }
 
-    ASSERT_EQ(worked.size(), 6u);
+    ASSERT_EQ(worked.size(), 12u);  // 6 return + 1 K + 4 cable + 1 K
 
+    // User-row starts at index 6 (after return segments)
     // Each cable segment should have exactly 1 parent
-    for (size_t i = 1; i <= 4; ++i) {
+    for (size_t i = 7; i <= 10; ++i) {
         EXPECT_EQ(worked[i]->through.size(), 1u);
     }
 
-    // Cable segments should have reordered parents:
-    // CableLeft{2,2} on positions [1..4] of cast-on: holds [1,2], crosses [3,4]
-    // Output order: crossed first (3,4), then held (1,2)
-    // So worked[1] parent should be cast-on for position 3 or 4 (crossed first)
-    // and worked[3] parent should be cast-on for position 1 or 2 (held)
-    // The exact parent IDs depend on cast-on segment ordering
-    // Just verify they're all different parents from the cast-on row
+    // Cable segments should have reordered parents (all different return segments)
     std::vector<SegmentId> cable_parents;
-    for (size_t i = 1; i <= 4; ++i) {
+    for (size_t i = 7; i <= 10; ++i) {
         cable_parents.push_back(worked[i]->through[0]);
     }
     // All parents should be unique
@@ -620,9 +626,10 @@ TEST(YarnPath, RSKnitOrientation) {
     auto graph = StitchGraph::from_instructions(pattern);
     auto yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
-    // Find the knit segment
+    // Find the knit segment (skip return segments whose parent has empty through)
     for (const auto& seg : yarn_path.segments()) {
-        if (seg.forms_loop && !seg.through.empty()) {
+        if (seg.forms_loop && !seg.through.empty() &&
+            !yarn_path.segments()[seg.through[0]].through.empty()) {
             EXPECT_EQ(seg.orientation, LoopOrientation::Front);
         }
     }
@@ -646,7 +653,8 @@ TEST(YarnPath, WSPurlOrientation) {
     auto yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     for (const auto& seg : yarn_path.segments()) {
-        if (seg.forms_loop && !seg.through.empty()) {
+        if (seg.forms_loop && !seg.through.empty() &&
+            !yarn_path.segments()[seg.through[0]].through.empty()) {
             // Purl instruction = Back, WS flips Back→Front
             EXPECT_EQ(seg.orientation, LoopOrientation::Front);
         }
@@ -671,7 +679,8 @@ TEST(YarnPath, WSKnitOrientation) {
     auto yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
     for (const auto& seg : yarn_path.segments()) {
-        if (seg.forms_loop && !seg.through.empty()) {
+        if (seg.forms_loop && !seg.through.empty() &&
+            !yarn_path.segments()[seg.through[0]].through.empty()) {
             // Knit instruction = Front, WS flips Front→Back
             EXPECT_EQ(seg.orientation, LoopOrientation::Back);
         }
@@ -702,9 +711,9 @@ TEST(YarnPath, DecreaseWrapDirection) {
         }
     }
 
-    ASSERT_EQ(worked.size(), 2u);
-    EXPECT_EQ(worked[0]->wrap_direction, WrapDirection::Clockwise);       // K2tog
-    EXPECT_EQ(worked[1]->wrap_direction, WrapDirection::CounterClockwise); // SSK
+    ASSERT_EQ(worked.size(), 6u);  // 4 return + K2tog + SSK
+    EXPECT_EQ(worked[4]->wrap_direction, WrapDirection::Clockwise);       // K2tog
+    EXPECT_EQ(worked[5]->wrap_direction, WrapDirection::CounterClockwise); // SSK
 }
 
 TEST(YarnPath, SlipWorkType) {
@@ -724,8 +733,10 @@ TEST(YarnPath, SlipWorkType) {
     auto graph = StitchGraph::from_instructions(pattern);
     auto yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
+    // Check only user-row segments (skip return segments whose parent has empty through)
     for (const auto& seg : yarn_path.segments()) {
-        if (seg.forms_loop && !seg.through.empty()) {
+        if (seg.forms_loop && !seg.through.empty() &&
+            !yarn_path.segments()[seg.through[0]].through.empty()) {
             EXPECT_EQ(seg.work_type, WorkType::Transferred);
             EXPECT_EQ(seg.orientation, LoopOrientation::Neutral);
         }
@@ -751,17 +762,18 @@ TEST(YarnPath, KnitVsPurlYarnLength) {
     auto graph = StitchGraph::from_instructions(pattern);
     auto yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
-    float knit_len = 0, purl_len = 0;
-    std::vector<const YarnSegment*> worked;
+    // Skip return segments (parent has empty through)
+    std::vector<const YarnSegment*> user_worked;
     for (const auto& seg : yarn_path.segments()) {
-        if (seg.forms_loop && !seg.through.empty()) {
-            worked.push_back(&seg);
+        if (seg.forms_loop && !seg.through.empty() &&
+            !yarn_path.segments()[seg.through[0]].through.empty()) {
+            user_worked.push_back(&seg);
         }
     }
 
-    ASSERT_EQ(worked.size(), 2u);
-    knit_len = worked[0]->target_yarn_length;
-    purl_len = worked[1]->target_yarn_length;
+    ASSERT_EQ(user_worked.size(), 2u);
+    float knit_len = user_worked[0]->target_yarn_length;
+    float purl_len = user_worked[1]->target_yarn_length;
 
     EXPECT_GT(knit_len, 0.0f);
     EXPECT_GT(purl_len, 0.0f);
@@ -791,8 +803,10 @@ TEST(YarnPath, SlipYarnLength) {
 
     float expected = gauge.stitch_width(yarn.compressed_radius) * 0.5f;
 
+    // Check only user-row segments (skip return segments)
     for (const auto& seg : yarn_path.segments()) {
-        if (seg.forms_loop && !seg.through.empty()) {
+        if (seg.forms_loop && !seg.through.empty() &&
+            !yarn_path.segments()[seg.through[0]].through.empty()) {
             EXPECT_NEAR(seg.target_yarn_length, expected, 0.01f);
         }
     }
@@ -815,17 +829,18 @@ TEST(YarnPath, K2togYarnLength) {
     auto graph = StitchGraph::from_instructions(pattern);
     auto yarn_path = YarnPath::from_stitch_graph(graph, default_yarn(), default_gauge());
 
-    float knit_len = 0, k2tog_len = 0;
-    std::vector<const YarnSegment*> worked;
+    // Skip return segments (parent has empty through)
+    std::vector<const YarnSegment*> user_worked;
     for (const auto& seg : yarn_path.segments()) {
-        if (seg.forms_loop && !seg.through.empty()) {
-            worked.push_back(&seg);
+        if (seg.forms_loop && !seg.through.empty() &&
+            !yarn_path.segments()[seg.through[0]].through.empty()) {
+            user_worked.push_back(&seg);
         }
     }
 
-    ASSERT_EQ(worked.size(), 2u);
-    knit_len = worked[0]->target_yarn_length;
-    k2tog_len = worked[1]->target_yarn_length;
+    ASSERT_EQ(user_worked.size(), 2u);
+    float knit_len = user_worked[0]->target_yarn_length;
+    float k2tog_len = user_worked[1]->target_yarn_length;
 
     EXPECT_GT(k2tog_len, 0.0f);
     float ratio = k2tog_len / knit_len;
@@ -853,12 +868,14 @@ TEST(YarnPath, YarnOverYarnLength) {
 
     float expected = static_cast<float>(M_PI) * gauge.loop_height(yarn.compressed_radius);
 
-    // Find YO segment
-    for (const auto& seg : yarn_path.segments()) {
+    // Find YO segment — skip foundation segments (which are in the first 2*N positions
+    // and have a different yarn length formula)
+    size_t co_segments = 4;  // 2 foundation + 2 return for cast-on 2
+    for (size_t i = co_segments; i < yarn_path.segments().size(); ++i) {
+        const auto& seg = yarn_path.segments()[i];
         if (seg.work_type == WorkType::Created && seg.forms_loop &&
             seg.wrap_direction == WrapDirection::None) {
-            // Could be cast-on or YO; cast-on is in row 0, YO should have same length formula
-            // Both use pi * loop_height, so we just verify the value
+            // This is the YO segment
             EXPECT_NEAR(seg.target_yarn_length, expected, 0.01f);
         }
     }

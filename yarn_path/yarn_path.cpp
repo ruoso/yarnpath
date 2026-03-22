@@ -110,8 +110,19 @@ YarnPath YarnPathBuilder::build() {
         auto row_nodes = graph_.row(row_num);
         auto row = graph_.row_infos()[row_num];
         log->debug("YarnPath: processing row {} with {} stitch nodes", row_num, row_nodes.size());
-        for (const auto& node : row_nodes) {
-            process_stitch(node, row.side);
+
+        // Detect cast-on rows (all nodes are CastOn) for two-pass processing
+        bool is_cast_on_row = !row_nodes.empty() && std::all_of(
+            row_nodes.begin(), row_nodes.end(),
+            [](const StitchNode& n) { return std::holds_alternative<stitch::CastOn>(n.operation); });
+
+        if (is_cast_on_row) {
+            std::vector<StitchNode> nodes_vec(row_nodes.begin(), row_nodes.end());
+            process_cast_on_row(nodes_vec);
+        } else {
+            for (const auto& node : row_nodes) {
+                process_stitch(node, row.side);
+            }
         }
     }
 
@@ -191,6 +202,8 @@ void YarnPathBuilder::process_stitch(const StitchNode& node, RowSide side) {
         orientation = YarnSegment::LoopOrientation::Neutral;
         work_type = YarnSegment::WorkType::Created;
     } else if (std::holds_alternative<stitch::CastOn>(node.operation)) {
+        // Cast-on is handled by process_cast_on_row() at the row level.
+        // This branch should not be reached; if it is, fall through with defaults.
         orientation = YarnSegment::LoopOrientation::Neutral;
         work_type = YarnSegment::WorkType::Created;
     } else if (std::holds_alternative<stitch::BindOff>(node.operation)) {
@@ -218,6 +231,40 @@ void YarnPathBuilder::process_stitch(const StitchNode& node, RowSide side) {
     }
 
     log->trace("YarnPath: processed stitch {} -> segment {}", node.id, seg_id);
+}
+
+void YarnPathBuilder::process_cast_on_row(const std::vector<StitchNode>& nodes) {
+    auto log = yarnpath::logging::get_logger();
+
+    // Foundation pass: create short loops right-to-left (WS direction)
+    std::vector<SegmentId> foundation_segs(nodes.size());
+    for (size_t i = nodes.size(); i > 0; --i) {
+        size_t idx = i - 1;
+        SegmentId fid = add_segment({}, true, nodes[idx].id,
+            YarnSegment::LoopOrientation::Neutral,
+            YarnSegment::WrapDirection::None,
+            YarnSegment::WorkType::Created);
+
+        // Override yarn length for foundation: stitch_width + plain circle for 2 crossovers
+        float stitch_width = gauge_.stitch_width(yarn_.compressed_radius);
+        float circle = 4.0f * static_cast<float>(M_PI) * yarn_.compressed_radius;
+        segments_.back().target_yarn_length = stitch_width + circle;
+
+        foundation_segs[idx] = fid;
+        // Foundation loops are NOT added to live_loops_
+    }
+
+    // Return pass: work through foundations left-to-right (RS direction, canonical)
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        SegmentId rid = add_segment({foundation_segs[i]}, true, nodes[i].id,
+            YarnSegment::LoopOrientation::Neutral,
+            YarnSegment::WrapDirection::None,
+            YarnSegment::WorkType::Worked);
+        add_live_loop(rid);
+    }
+
+    log->debug("YarnPath: cast-on row with {} stitches -> {} foundation + {} return segments",
+               nodes.size(), foundation_segs.size(), nodes.size());
 }
 
 // === Helper implementations ===

@@ -107,6 +107,9 @@ private:
     // Process stitch, consuming from live_loops_ by position
     void process_stitch(const StitchNode& node, RowSide side);
 
+    // Two-pass cast-on: foundation loops forward, then return pass in reverse
+    void process_cast_on_row(const std::vector<StitchNode>& nodes);
+
     // Helpers
     SegmentId add_segment(std::vector<SegmentId> through, bool forms_loop, StitchId stitch_id,
                           YarnSegment::LoopOrientation orientation = YarnSegment::LoopOrientation::Neutral,

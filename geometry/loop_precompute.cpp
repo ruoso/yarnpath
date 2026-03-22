@@ -84,35 +84,48 @@ std::map<SegmentId, PrecomputedLoopGeometry> precompute_loop_geometry(
         Vec3 wale = frames[i].wale_axis;
 
         geom.oriented_wale = wale;
-        geom.stitch_axis = frames[i].stitch_axis;
-
         bool is_parentless = seg.through.empty();
+        // Parentless loops wrap against the stitch axis (crossed loop)
+        geom.stitch_axis = is_parentless
+            ? frames[i].stitch_axis * -1.0f
+            : frames[i].stitch_axis;
 
         if (is_parentless) {
             // Parentless segments (cast-on foundation, YO, M1L/M1R):
-            // flat crossed loop — minimal wale displacement, with the
-            // dip points offset along stitch_axis to create a crossing.
-            float flat_height = yarn_compressed_radius;
-            geom.apex = curr_pos + wale * flat_height;
-
-            // Entry/exit at base positions, same as regular loops.
-            // Project next_pos onto the same wale plane as curr_pos so
-            // the loop stays flat even when next_pos is in a different row.
-            geom.apex_entry = curr_pos;
-            Vec3 to_next = next_pos - curr_pos;
-            float wale_comp = to_next.dot(wale);
-            geom.apex_exit = next_pos - wale * wale_comp;
-
-            // Dip below base (opposite to apex)
-            float dip_depth = yarn_compressed_diameter;
-            Vec3 dip_dir = wale * -1.0f;
+            // crossed loop centered at the child base when children exist.
+            // The entire loop (dip, entry/exit, wrap) lives at the child
+            // level. Without children, use a flat loop at the segment base.
             Vec3 stitch = frames[i].stitch_axis;
             float cross_offset = yarn_compressed_radius * 2.0f;
+            float dip_depth = yarn_compressed_diameter;
 
-            // Crossed dip: entry dip on far side (+stitch_axis),
-            // exit dip on near side (-stitch_axis)
-            geom.entry_through = geom.apex_entry + stitch * cross_offset + dip_dir * dip_depth;
-            geom.exit_through = geom.apex_exit - stitch * cross_offset + dip_dir * dip_depth;
+            if (!child_positions.empty()) {
+                Vec3 child_center = calculate_apex_position(
+                    curr_pos, child_positions,
+                    effective_loop_height, yarn_compressed_diameter, wale);
+
+                geom.apex = child_center;
+
+                // Approach/depart at the dip level (below child center) so
+                // the yarn arches DOWN as it goes across between wraps.
+                Vec3 dip_dir = wale * -1.0f;
+                Vec3 dip_level = child_center + dip_dir * dip_depth;
+                geom.apex_entry = dip_level;
+                geom.apex_exit = dip_level;
+
+                // Crossed dip with stitch-axis offset
+                geom.entry_through = dip_level + stitch * cross_offset;
+                geom.exit_through = dip_level - stitch * cross_offset;
+            } else {
+                float flat_height = yarn_compressed_radius;
+                geom.apex = curr_pos + wale * flat_height;
+                geom.apex_entry = curr_pos;
+                geom.apex_exit = next_pos;
+
+                Vec3 dip_dir = wale * -1.0f;
+                geom.entry_through = curr_pos + stitch * cross_offset + dip_dir * dip_depth;
+                geom.exit_through = next_pos - stitch * cross_offset + dip_dir * dip_depth;
+            }
         } else {
             geom.apex = calculate_apex_position(curr_pos, child_positions,
                                                 effective_loop_height, yarn_compressed_diameter,
@@ -190,10 +203,21 @@ std::map<SegmentId, PrecomputedLoopGeometry> precompute_loop_geometry(
             total_slots += segments[child_id].forms_loop ? 2 : 1;
         }
 
-        // Distribute slots at the parent loop's APEX, where the loop is
-        // most flexible and has the widest opening.  The parent loop path
-        // passes through these positions, and children cross here on their
-        // rising / falling legs.
+        // For parentless segments, place crossover slots at the base of
+        // the child nodes (where children actually sit). For regular loops,
+        // slots go at the parent's apex.
+        Vec3 slot_center = geom.apex;
+        if (seg.through.empty()) {
+            auto child_pos_it = loop_child_positions.find(seg_id);
+            if (child_pos_it != loop_child_positions.end() && !child_pos_it->second.empty()) {
+                slot_center = Vec3(0, 0, 0);
+                for (const auto& cp : child_pos_it->second) {
+                    slot_center = slot_center + cp;
+                }
+                slot_center = slot_center * (1.0f / static_cast<float>(child_pos_it->second.size()));
+            }
+        }
+
         Vec3 fabric_normal = frames[i].fabric_normal;
 
         for (int s = 0; s < total_slots; ++s) {
@@ -201,7 +225,7 @@ std::map<SegmentId, PrecomputedLoopGeometry> precompute_loop_geometry(
                          * yarn_compressed_diameter;
 
             CrossoverSlot slot;
-            slot.position = geom.apex + parent_travel * offset;
+            slot.position = slot_center + parent_travel * offset;
             slot.tangent = parent_travel;
             slot.crossing_normal = fabric_normal;
 

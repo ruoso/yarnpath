@@ -97,9 +97,12 @@ TEST(LoopPrecomputeTest, ApexAboveBase) {
 
     int loops_checked = 0;
     for (const auto& [seg_id, geom] : data.loops) {
+        // Skip parentless segments — their loop is centered at child level,
+        // not the segment's own base.
+        const auto& seg = data.yarn_path.segments()[seg_id];
+        if (seg.through.empty()) continue;
+
         // The apex must be displaced from the base along the wale axis.
-        // The frame's wale_axis encodes the surface orientation; the apex
-        // should have a nonzero wale projection with consistent sign.
         Vec3 curr_pos = data.frames[seg_id].position;
         Vec3 wale = data.frames[seg_id].wale_axis;
         float apex_wale_proj = (geom.apex - curr_pos).dot(wale);

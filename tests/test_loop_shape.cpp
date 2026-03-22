@@ -627,10 +627,25 @@ TEST(LoopShapeTest, CastOnFoundation_FlatAndCrossed) {
 
         NodeId node_id = data.surface.node_for_segment(seg_id);
         const auto& node = data.surface.node(node_id);
-        Vec3 base_pos = node.position;
-        base_pos.x -= data.geometry.x_center_offset();
         Vec3 wale = node.wale_axis;
         Vec3 stitch_axis = node.stitch_axis;
+
+        // Reference point: for parentless segments with children, the loop
+        // is centered at the child base, not the segment's own position.
+        Vec3 ref_pos = node.position;
+        ref_pos.x -= data.geometry.x_center_offset();
+        for (size_t ci = 0; ci < data.yarn_path.segments().size(); ++ci) {
+            for (SegmentId pid : data.yarn_path.segments()[ci].through) {
+                if (pid == seg_id && data.surface.has_segment(static_cast<SegmentId>(ci))) {
+                    NodeId cn = data.surface.node_for_segment(static_cast<SegmentId>(ci));
+                    Vec3 cp = data.surface.node(cn).position;
+                    cp.x -= data.geometry.x_center_offset();
+                    ref_pos = cp;
+                    goto found_child;
+                }
+            }
+        }
+        found_child:
 
         const auto* seg_geom = data.geometry.get_segment(seg_id);
         ASSERT_NE(seg_geom, nullptr) << "Missing geometry for foundation segment " << seg_id;
@@ -639,9 +654,10 @@ TEST(LoopShapeTest, CastOnFoundation_FlatAndCrossed) {
         ASSERT_FALSE(points.empty());
 
         // 1. Wale-axis bound: all points within ±4× compressed_radius
+        //    of the reference point (child base for parentless-with-children)
         float max_wale = 0.0f;
         for (const auto& p : points) {
-            float wale_proj = std::abs((p - base_pos).dot(wale));
+            float wale_proj = std::abs((p - ref_pos).dot(wale));
             max_wale = std::max(max_wale, wale_proj);
         }
         float wale_limit = 4.0f * yarn.compressed_radius;
@@ -658,7 +674,7 @@ TEST(LoopShapeTest, CastOnFoundation_FlatAndCrossed) {
         float max_stitch = -std::numeric_limits<float>::max();
         float min_stitch = std::numeric_limits<float>::max();
         for (const auto& p : points) {
-            float stitch_proj = (p - base_pos).dot(stitch_axis);
+            float stitch_proj = (p - ref_pos).dot(stitch_axis);
             max_stitch = std::max(max_stitch, stitch_proj);
             min_stitch = std::min(min_stitch, stitch_proj);
         }

@@ -385,6 +385,20 @@ void SurfaceSolver::compute_fabric_normals(SurfaceGraph& graph) {
                 queue.push(neighbor);
             }
         }
+
+        // Ensure global orientation: fabric_normal should point toward +Z
+        // (the viewer side) in the default flat layout.  The BFS made all
+        // normals consistent, but they may all point the wrong way.
+        // Use the average normal to decide — if it points -Z, flip all.
+        Vec3 avg_normal = Vec3::zero();
+        for (size_t i = 0; i < num_nodes; ++i) {
+            avg_normal += nodes[i].fabric_normal;
+        }
+        if (avg_normal.z < 0.0f) {
+            for (size_t i = 0; i < num_nodes; ++i) {
+                nodes[i].fabric_normal = nodes[i].fabric_normal * -1.0f;
+            }
+        }
     }
 }
 

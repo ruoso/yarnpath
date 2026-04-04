@@ -129,19 +129,6 @@ std::pair<CubicBezier, CubicBezier> CubicBezier::split(float t) const {
     return {left, right};
 }
 
-std::vector<CubicBezier> CubicBezier::subdivide_for_curvature(float max_k, int max_depth) const {
-    if (max_depth <= 0 || max_curvature() <= max_k) {
-        return {*this};
-    }
-
-    auto [left, right] = split(0.5f);
-    auto left_result = left.subdivide_for_curvature(max_k, max_depth - 1);
-    auto right_result = right.subdivide_for_curvature(max_k, max_depth - 1);
-
-    left_result.insert(left_result.end(), right_result.begin(), right_result.end());
-    return left_result;
-}
-
 CubicBezier CubicBezier::from_hermite(const Vec3& p0, const Vec3& tangent0,
                                        const Vec3& p1, const Vec3& tangent1) {
     // Convert Hermite to Bezier
@@ -228,15 +215,6 @@ void BezierSpline::enforce_c1_continuity() {
         segments_[i - 1].control2() = segments_[i - 1].end() - avg_tangent;
         segments_[i].control1() = segments_[i].start() + avg_tangent;
     }
-}
-
-void BezierSpline::clamp_curvature(float max_k) {
-    std::vector<CubicBezier> new_segments;
-    for (const auto& seg : segments_) {
-        auto subdivided = seg.subdivide_for_curvature(max_k);
-        new_segments.insert(new_segments.end(), subdivided.begin(), subdivided.end());
-    }
-    segments_ = std::move(new_segments);
 }
 
 std::vector<Vec3> BezierSpline::to_polyline(float segment_length) const {

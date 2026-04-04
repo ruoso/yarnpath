@@ -449,3 +449,70 @@ TEST_F(SurfaceForcesTest, BendingForceZeroWhenStraight) {
     EXPECT_FLOAT_EQ(graph.node(1).force.y, 0.0f);
     EXPECT_FLOAT_EQ(graph.node(2).force.y, 0.0f);
 }
+
+// --- Loop curvature cross-row tests ---
+
+TEST_F(SurfaceForcesTest, LoopCurvatureSkippedForCrossRowNeighbor) {
+    // 3 nodes: node 0 (parent row) → node 1 (row transition) → node 2 (same row as 1)
+    // Node 0 and node 1 are connected by PassThrough AND Continuity (cross-row).
+    // The curvature on node 1 should be skipped because prev is cross-row.
+    SurfaceNode n0, n1, n2;
+    n0.segment_id = 0; n0.position = Vec3(5.0f, 0.0f, 0.0f);
+    n1.segment_id = 1; n1.position = Vec3(5.0f, 3.0f, 0.0f); n1.forms_loop = true;
+    n2.segment_id = 2; n2.position = Vec3(3.0f, 3.0f, 0.0f); n2.forms_loop = true;
+
+    graph.add_node(n0);
+    graph.add_node(n1);
+    graph.add_node(n2);
+
+    // Continuity: 0→1→2
+    SurfaceEdge c01, c12;
+    c01.node_a = 0; c01.node_b = 1; c01.type = EdgeType::YarnContinuity;
+    c01.rest_length = 3.0f; c01.stiffness = 1.0f;
+    c12.node_a = 1; c12.node_b = 2; c12.type = EdgeType::YarnContinuity;
+    c12.rest_length = 2.0f; c12.stiffness = 1.0f;
+    graph.add_edge(c01);
+    graph.add_edge(c12);
+
+    // PassThrough: node 1 passes through node 0 (cross-row)
+    SurfaceEdge pt;
+    pt.node_a = 1; pt.node_b = 0; pt.type = EdgeType::PassThrough;
+    pt.rest_length = 3.0f; pt.stiffness = 0.5f;
+    graph.add_edge(pt);
+
+    compute_loop_curvature_forces(graph, yarn, gauge, 1.0f);
+
+    // Node 1's prev neighbor (node 0) is cross-row → curvature skipped
+    EXPECT_FLOAT_EQ(graph.node(1).force.x, 0.0f);
+    EXPECT_FLOAT_EQ(graph.node(1).force.y, 0.0f);
+
+    // Node 2 only has one valid neighbor (node 1) — no prev → also skipped
+    EXPECT_FLOAT_EQ(graph.node(2).force.x, 0.0f);
+    EXPECT_FLOAT_EQ(graph.node(2).force.y, 0.0f);
+}
+
+TEST_F(SurfaceForcesTest, LoopCurvatureAppliedForSameRowNeighbors) {
+    // 3 nodes all in same row — no PassThrough edges between them
+    SurfaceNode n0, n1, n2;
+    n0.segment_id = 0; n0.position = Vec3(0.0f, 0.0f, 0.0f);
+    n1.segment_id = 1; n1.position = Vec3(2.0f, 0.0f, 0.0f); n1.forms_loop = true;
+    n2.segment_id = 2; n2.position = Vec3(4.0f, 0.0f, 0.0f);
+
+    graph.add_node(n0);
+    graph.add_node(n1);
+    graph.add_node(n2);
+
+    SurfaceEdge c01, c12;
+    c01.node_a = 0; c01.node_b = 1; c01.type = EdgeType::YarnContinuity;
+    c01.rest_length = 2.0f; c01.stiffness = 1.0f;
+    c12.node_a = 1; c12.node_b = 2; c12.type = EdgeType::YarnContinuity;
+    c12.rest_length = 2.0f; c12.stiffness = 1.0f;
+    graph.add_edge(c01);
+    graph.add_edge(c12);
+
+    // No PassThrough edges → all neighbors are same-row → curvature applies
+    compute_loop_curvature_forces(graph, yarn, gauge, 1.0f);
+
+    // Node 1 should have positive Y force (pushed up perpendicular to chord)
+    EXPECT_GT(graph.node(1).force.y, 0.0f);
+}

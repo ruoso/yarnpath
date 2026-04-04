@@ -137,4 +137,21 @@ std::pair<NodeId, NodeId> SurfaceGraph::get_continuity_neighbors(NodeId node) co
     return continuity_neighbors_[node];
 }
 
+void SurfaceGraph::build_passthrough_pairs() {
+    passthrough_pairs_.clear();
+    for (const auto& edge : edges_) {
+        if (edge.type != EdgeType::PassThrough) continue;
+        passthrough_pairs_.insert({edge.node_a, edge.node_b});
+        passthrough_pairs_.insert({edge.node_b, edge.node_a});
+    }
+    passthrough_pairs_built_ = true;
+}
+
+bool SurfaceGraph::is_cross_row_neighbor(NodeId a, NodeId b) const {
+    if (!passthrough_pairs_built_) {
+        throw std::runtime_error("Passthrough pairs not built. Call build_passthrough_pairs() first.");
+    }
+    return passthrough_pairs_.count({a, b}) > 0;
+}
+
 }  // namespace yarnpath

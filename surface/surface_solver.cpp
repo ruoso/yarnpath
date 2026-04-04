@@ -5,7 +5,6 @@
 #include <algorithm>
 #include <chrono>
 #include <queue>
-#include <set>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -205,9 +204,12 @@ void SurfaceSolver::integrate_gradient_step(SurfaceGraph& graph, float dt,
 }
 
 void SurfaceSolver::compute_fabric_normals(SurfaceGraph& graph) {
-    // Build adjacency index if not already built (needed for neighbor lookup)
+    // Build indices if not already built
     if (!graph.has_adjacency_index()) {
         graph.build_adjacency_index();
+    }
+    if (!graph.has_passthrough_pairs()) {
+        graph.build_passthrough_pairs();
     }
 
     auto& nodes = graph.nodes();
@@ -225,20 +227,6 @@ void SurfaceSolver::compute_fabric_normals(SurfaceGraph& graph) {
         node_parents[edge.node_a].push_back(edge.node_b);
     }
 
-    // Build a set of PassThrough parent-child pairs for detecting row transitions.
-    // If a continuity neighbor is also a parent or child (via PassThrough), the
-    // continuity edge crosses a row boundary and should not be used for stitch_axis.
-    std::set<std::pair<NodeId, NodeId>> passthrough_pairs;
-    for (const auto& edge : edges) {
-        if (edge.type != EdgeType::PassThrough) continue;
-        passthrough_pairs.insert({edge.node_a, edge.node_b});
-        passthrough_pairs.insert({edge.node_b, edge.node_a});
-    }
-
-    auto is_cross_row = [&](NodeId a, NodeId b) {
-        return passthrough_pairs.count({a, b}) > 0;
-    };
-
     // First pass: compute stitch_axis from continuity neighbors,
     // then correct it using passthrough topology.
     for (size_t i = 0; i < num_nodes; ++i) {
@@ -249,9 +237,9 @@ void SurfaceSolver::compute_fabric_normals(SurfaceGraph& graph) {
         // PassThrough edges between them) since they give a diagonal direction.
         auto [prev_id, next_id] = graph.get_continuity_neighbors(node.id);
         bool prev_valid = prev_id != static_cast<NodeId>(-1) &&
-                          !is_cross_row(node.id, prev_id);
+                          !graph.is_cross_row_neighbor(node.id, prev_id);
         bool next_valid = next_id != static_cast<NodeId>(-1) &&
-                          !is_cross_row(node.id, next_id);
+                          !graph.is_cross_row_neighbor(node.id, next_id);
 
         if (prev_valid && next_valid) {
             Vec3 dir = nodes[next_id].position - nodes[prev_id].position;

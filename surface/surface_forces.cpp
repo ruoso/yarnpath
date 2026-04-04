@@ -220,18 +220,16 @@ void compute_loop_curvature_forces(SurfaceGraph& graph,
         return;  // Skip if strength is negligible
     }
 
-    // Build adjacency index once if not already built (thread-safe)
-    // This eliminates O(N×E) nested loop by providing O(1) neighbor lookup
-    #pragma omp single
-    {
-        if (!graph.has_adjacency_index()) {
-            graph.build_adjacency_index();
-        }
+    // Build indices once if not already built
+    if (!graph.has_adjacency_index()) {
+        graph.build_adjacency_index();
+    }
+    if (!graph.has_passthrough_pairs()) {
+        graph.build_passthrough_pairs();
     }
 
     auto& nodes = graph.nodes();
 
-    // NOW PARALLELIZABLE - no nested edge search!
     // Each loop node independently looks up its neighbors in O(1)
     #pragma omp parallel for schedule(static) if(nodes.size() > 50)
     for (size_t i = 0; i < nodes.size(); ++i) {
@@ -240,11 +238,18 @@ void compute_loop_curvature_forces(SurfaceGraph& graph,
             continue;
         }
 
-        // Fast O(1) neighbor lookup instead of O(E) edge search
+        // Fast O(1) neighbor lookup
         auto [prev_id, next_id] = graph.get_continuity_neighbors(node.id);
 
-        // If we have both neighbors, apply curvature force
-        if (prev_id != static_cast<NodeId>(-1) && next_id != static_cast<NodeId>(-1)) {
+        // Skip cross-row neighbors — they give diagonal chords that produce
+        // sideways forces, especially problematic for terminal (bind-off) rows.
+        bool prev_valid = prev_id != static_cast<NodeId>(-1) &&
+                          !graph.is_cross_row_neighbor(node.id, prev_id);
+        bool next_valid = next_id != static_cast<NodeId>(-1) &&
+                          !graph.is_cross_row_neighbor(node.id, next_id);
+
+        // Need both same-row neighbors for a proper chord
+        if (prev_valid && next_valid) {
             const auto& prev_node = graph.node(prev_id);
             const auto& next_node = graph.node(next_id);
 

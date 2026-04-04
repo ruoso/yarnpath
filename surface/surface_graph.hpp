@@ -4,6 +4,7 @@
 #include "surface_node.hpp"
 #include "surface_edge.hpp"
 #include <vector>
+#include <set>
 #include <unordered_map>
 
 namespace yarnpath {
@@ -53,6 +54,13 @@ public:
     // Returns {prev_node_id, next_node_id}, where -1 indicates no neighbor
     std::pair<NodeId, NodeId> get_continuity_neighbors(NodeId node) const;
 
+    // Build passthrough pairs set for cross-row detection
+    // Two continuity-connected nodes that are also PassThrough-connected
+    // are in different rows (the continuity edge crosses a row boundary).
+    void build_passthrough_pairs();
+    bool has_passthrough_pairs() const { return passthrough_pairs_built_; }
+    bool is_cross_row_neighbor(NodeId a, NodeId b) const;
+
     // Get filtered edge collections by type (for efficient iteration)
     const std::vector<EdgeId>& continuity_edge_ids() const { return continuity_edge_ids_; }
     const std::vector<EdgeId>& passthrough_edge_ids() const { return passthrough_edge_ids_; }
@@ -67,6 +75,11 @@ private:
     // -1 indicates no neighbor in that direction
     std::vector<std::pair<NodeId, NodeId>> continuity_neighbors_;
     bool adjacency_built_ = false;
+
+    // PassThrough pairs: set of (a, b) where a and b are PassThrough-connected
+    // Used to detect cross-row continuity neighbors
+    std::set<std::pair<NodeId, NodeId>> passthrough_pairs_;
+    bool passthrough_pairs_built_ = false;
 
     // Filtered edge collections by type (for efficient iteration)
     std::vector<EdgeId> continuity_edge_ids_;   // YarnContinuity edges

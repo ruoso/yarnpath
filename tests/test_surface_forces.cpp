@@ -106,33 +106,113 @@ TEST_F(SurfaceForcesTest, DampingReducesForce) {
 }
 
 TEST_F(SurfaceForcesTest, PassthroughTension) {
-    SurfaceNode node1, node2;
-    node1.segment_id = 0;
-    node1.position = Vec3(0.0f, 0.0f, 0.0f);
-    node2.segment_id = 1;
-    node2.position = Vec3(2.0f, 0.0f, 0.0f);
+    // 4-node chain: 0 ← 1 ← 2 ← 3 (passthrough convention: node_a=child, node_b=parent)
+    // Nodes 1 and 2 are interior (have both parents and children)
+    // Edge 2→1 is interior and should get tension applied
+    SurfaceNode n0, n1, n2, n3;
+    n0.segment_id = 0; n0.position = Vec3(0.0f, 0.0f, 0.0f);
+    n1.segment_id = 1; n1.position = Vec3(2.0f, 0.0f, 0.0f);
+    n2.segment_id = 2; n2.position = Vec3(4.0f, 0.0f, 0.0f);
+    n3.segment_id = 3; n3.position = Vec3(6.0f, 0.0f, 0.0f);
 
-    graph.add_node(node1);
-    graph.add_node(node2);
+    graph.add_node(n0);
+    graph.add_node(n1);
+    graph.add_node(n2);
+    graph.add_node(n3);
 
-    SurfaceEdge edge;
-    edge.node_a = 0;
-    edge.node_b = 1;
-    edge.type = EdgeType::PassThrough;
-    edge.rest_length = 1.0f;
-    edge.stiffness = 1.0f;
+    // PassThrough edges: 1→0, 2→1, 3→2
+    SurfaceEdge e10, e21, e32;
+    e10.node_a = 1; e10.node_b = 0; e10.type = EdgeType::PassThrough; e10.rest_length = 1.0f; e10.stiffness = 1.0f;
+    e21.node_a = 2; e21.node_b = 1; e21.type = EdgeType::PassThrough; e21.rest_length = 1.0f; e21.stiffness = 1.0f;
+    e32.node_a = 3; e32.node_b = 2; e32.type = EdgeType::PassThrough; e32.rest_length = 1.0f; e32.stiffness = 1.0f;
 
-    graph.add_edge(edge);
+    graph.add_edge(e10);
+    graph.add_edge(e21);
+    graph.add_edge(e32);
 
-    // Set yarn tension
     yarn.tension = 0.5f;
 
     compute_passthrough_tension(graph, yarn, gauge, 2.0f);
 
-    // Node 0 should be pulled toward node 1
-    // Force = tension * tension_factor = 0.5 * 2.0 = 1.0
-    EXPECT_FLOAT_EQ(graph.node(0).force.x, 1.0f);
-    EXPECT_FLOAT_EQ(graph.node(1).force.x, -1.0f);
+    // Interior edge 2→1: tension_strength = 0.5 * 2.0 = 1.0
+    // Direction from node 2 (4,0,0) to node 1 (2,0,0) = (-1,0,0) normalized
+    // Node 2 gets force (-1,0,0), Node 1 gets force (1,0,0)
+    EXPECT_FLOAT_EQ(graph.node(2).force.x, -1.0f);
+    EXPECT_FLOAT_EQ(graph.node(1).force.x, 1.0f);
+
+    // Terminal edges 1→0 and 3→2 are skipped, so nodes 0 and 3 get zero force
+    EXPECT_FLOAT_EQ(graph.node(0).force.x, 0.0f);
+    EXPECT_FLOAT_EQ(graph.node(3).force.x, 0.0f);
+}
+
+TEST_F(SurfaceForcesTest, PassthroughTensionSkippedForTerminalChild) {
+    // 3-node chain: 0 ← 1 ← 2 (node 2 is terminal child, no children of its own)
+    SurfaceNode n0, n1, n2;
+    n0.segment_id = 0; n0.position = Vec3(0.0f, 0.0f, 0.0f);
+    n1.segment_id = 1; n1.position = Vec3(0.0f, 2.0f, 0.0f);
+    n2.segment_id = 2; n2.position = Vec3(0.0f, 4.0f, 0.0f);
+
+    graph.add_node(n0);
+    graph.add_node(n1);
+    graph.add_node(n2);
+
+    SurfaceEdge e10, e21;
+    e10.node_a = 1; e10.node_b = 0; e10.type = EdgeType::PassThrough; e10.rest_length = 2.0f; e10.stiffness = 1.0f;
+    e21.node_a = 2; e21.node_b = 1; e21.type = EdgeType::PassThrough; e21.rest_length = 2.0f; e21.stiffness = 1.0f;
+
+    graph.add_edge(e10);
+    graph.add_edge(e21);
+
+    yarn.tension = 0.5f;
+    compute_passthrough_tension(graph, yarn, gauge, 2.0f);
+
+    // Node 2 is terminal (has parents but no children) — edge 2→1 should be skipped
+    EXPECT_FLOAT_EQ(graph.node(2).force.x, 0.0f);
+    EXPECT_FLOAT_EQ(graph.node(2).force.y, 0.0f);
+
+    // Node 0 is terminal parent (has children but no parents) — edge 1→0 should be skipped
+    EXPECT_FLOAT_EQ(graph.node(0).force.x, 0.0f);
+    EXPECT_FLOAT_EQ(graph.node(0).force.y, 0.0f);
+
+    // Node 1 gets zero force too since both its edges are terminal
+    EXPECT_FLOAT_EQ(graph.node(1).force.x, 0.0f);
+    EXPECT_FLOAT_EQ(graph.node(1).force.y, 0.0f);
+}
+
+TEST_F(SurfaceForcesTest, PassthroughTensionAppliedForInteriorEdges) {
+    // 4-node chain: 0 ← 1 ← 2 ← 3
+    // Only edge 2→1 is interior (both endpoints have parents and children)
+    SurfaceNode n0, n1, n2, n3;
+    n0.segment_id = 0; n0.position = Vec3(0.0f, 0.0f, 0.0f);
+    n1.segment_id = 1; n1.position = Vec3(0.0f, 2.0f, 0.0f);
+    n2.segment_id = 2; n2.position = Vec3(0.0f, 4.0f, 0.0f);
+    n3.segment_id = 3; n3.position = Vec3(0.0f, 6.0f, 0.0f);
+
+    graph.add_node(n0);
+    graph.add_node(n1);
+    graph.add_node(n2);
+    graph.add_node(n3);
+
+    SurfaceEdge e10, e21, e32;
+    e10.node_a = 1; e10.node_b = 0; e10.type = EdgeType::PassThrough; e10.rest_length = 2.0f; e10.stiffness = 1.0f;
+    e21.node_a = 2; e21.node_b = 1; e21.type = EdgeType::PassThrough; e21.rest_length = 2.0f; e21.stiffness = 1.0f;
+    e32.node_a = 3; e32.node_b = 2; e32.type = EdgeType::PassThrough; e32.rest_length = 2.0f; e32.stiffness = 1.0f;
+
+    graph.add_edge(e10);
+    graph.add_edge(e21);
+    graph.add_edge(e32);
+
+    yarn.tension = 0.5f;
+    compute_passthrough_tension(graph, yarn, gauge, 2.0f);
+
+    // Interior edge 2→1: tension applied
+    // Node 2 pulled toward node 1 (negative Y), node 1 pulled toward node 2 (positive Y)
+    EXPECT_LT(graph.node(2).force.y, 0.0f);
+    EXPECT_GT(graph.node(1).force.y, 0.0f);
+
+    // Terminal edges skipped: nodes 0 and 3 get zero force
+    EXPECT_FLOAT_EQ(graph.node(0).force.y, 0.0f);
+    EXPECT_FLOAT_EQ(graph.node(3).force.y, 0.0f);
 }
 
 TEST_F(SurfaceForcesTest, ComputeForcesIntegration) {

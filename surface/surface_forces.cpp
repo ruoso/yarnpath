@@ -150,6 +150,18 @@ void compute_passthrough_tension(SurfaceGraph& graph,
         return;
     }
 
+    // Build per-node topology flags for terminal edge detection.
+    // PassThrough convention: node_a = child, node_b = parent.
+    // has_children[X] = true if X appears as node_b (parent) in any PassThrough edge
+    // has_parents[X]  = true if X appears as node_a (child) in any PassThrough edge
+    std::vector<bool> has_children(num_nodes, false);
+    std::vector<bool> has_parents(num_nodes, false);
+    for (size_t i = 0; i < passthrough_ids.size(); ++i) {
+        const auto& edge = edges[passthrough_ids[i]];
+        has_children[edge.node_b] = true;  // parent has children
+        has_parents[edge.node_a] = true;   // child has parents
+    }
+
     // Thread-local force accumulation - eliminates atomic operations
     #pragma omp parallel if(passthrough_ids.size() > 50)
     {
@@ -159,6 +171,13 @@ void compute_passthrough_tension(SurfaceGraph& graph,
         #pragma omp for schedule(static)
         for (size_t i = 0; i < passthrough_ids.size(); ++i) {
             const auto& edge = edges[passthrough_ids[i]];
+
+            // Skip tension for terminal edges where force would be unbalanced:
+            // - child (node_a) is terminal if it has no children of its own
+            // - parent (node_b) is terminal if it has no parents of its own
+            if (!has_children[edge.node_a] || !has_parents[edge.node_b]) {
+                continue;
+            }
 
             // Read positions (const access, thread-safe)
             const Vec3& pos_a = nodes[edge.node_a].position;

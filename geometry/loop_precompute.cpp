@@ -95,9 +95,14 @@ std::map<SegmentId, PrecomputedLoopGeometry> precompute_loop_geometry(
             // crossed loop centered at the child base when children exist.
             // The entire loop (dip, entry/exit, wrap) lives at the child
             // level. Without children, use a flat loop at the segment base.
+            //
+            // Offsets are generous (3× radius, 2× diameter) to prevent
+            // tube self-overlap: the loop doubles back on itself, so
+            // entry and exit sides need ample separation in stitch,
+            // wale, and fabric-normal directions.
             Vec3 stitch = frames[i].stitch_axis;
-            float cross_offset = yarn_compressed_radius * 2.0f;
-            float dip_depth = yarn_compressed_diameter;
+            float cross_offset = yarn_compressed_radius * 3.0f;
+            float dip_depth = yarn_compressed_diameter * 3.0f;
 
             if (!child_positions.empty()) {
                 Vec3 child_center = calculate_apex_position(
@@ -106,21 +111,25 @@ std::map<SegmentId, PrecomputedLoopGeometry> precompute_loop_geometry(
 
                 geom.apex = child_center;
 
-                // Approach/depart at the dip level (below child center) so
-                // the yarn arches DOWN as it goes across between wraps.
-                // Entry is offset to the back (anti-bulge) to avoid
-                // overlapping with the exit which comes to the front.
                 Vec3 dip_dir = wale * -1.0f;
-                Vec3 dip_level = child_center + dip_dir * dip_depth;
                 Vec3 fnormal = frames[i].fabric_normal;
-                float back_offset = yarn_compressed_diameter;
+                float back_offset = yarn_compressed_diameter * 1.5f;
                 float bulge_sign = (geom.shape.z_bulge >= 0.0f) ? -1.0f : 1.0f;
-                geom.apex_entry = dip_level + fnormal * (back_offset * bulge_sign);
-                geom.apex_exit = dip_level;
 
-                // Crossed dip with stitch-axis offset
-                geom.entry_through = dip_level + stitch * cross_offset;
-                geom.exit_through = dip_level - stitch * cross_offset;
+                // The entry dips deep in the wale direction before the
+                // leg rise, while the exit departs at a shallower level.
+                // This vertical separation ensures the transit between
+                // adjacent foundation loops (at the shallow level) passes
+                // above the loop body (at the deep level).
+                Vec3 shallow_dip = child_center + dip_dir * dip_depth;
+                Vec3 deep_dip = child_center + dip_dir * (dip_depth + yarn_compressed_diameter);
+
+                geom.apex_entry = deep_dip + fnormal * (back_offset * bulge_sign);
+                geom.apex_exit = shallow_dip + fnormal * (yarn_compressed_diameter * bulge_sign);
+
+                // Crossed dip points at the deep level
+                geom.entry_through = deep_dip + stitch * cross_offset;
+                geom.exit_through = deep_dip - stitch * cross_offset;
             } else {
                 float flat_height = yarn_compressed_radius;
                 geom.apex = curr_pos + wale * flat_height;
@@ -497,9 +506,12 @@ void build_full_loop_chain(
     // fabric-normal direction.  The wrap goes on the ANTI-bulge side:
     // knit loops have legs toward +fabric_normal, wrap toward -.
     // For loops without children, use the needle wrap radius for clearance.
+    // Enforce a minimum of 1.5× yarn diameter so small child bundles
+    // (e.g., single-child foundation loops) still have enough wrap room.
     float wrap_clearance;
     if (has_children) {
-        wrap_clearance = bundle_radius + state.yarn_compressed_radius;
+        wrap_clearance = std::max(bundle_radius + state.yarn_compressed_radius,
+                                  state.yarn_compressed_diameter * 1.5f);
     } else {
         wrap_clearance = loop_geom.wrap_radius;
     }
@@ -537,37 +549,27 @@ void build_full_loop_chain(
 
     bool is_parentless = entry_crossovers.empty() && exit_crossovers.empty();
 
-    // RISING LEG
-    // For parentless: no z_bulge on entry leg — goes straight from below
-    // to the wrap (back side) without crossing to the front first.
+    // RISING LEG — both parented and parentless loops cross to the bulge
+    // side before wrapping, creating a symmetric U-shape.
     {
-        Vec3 entry_bulge = is_parentless ? Vec3(0, 0, 0) : leg_bulge;
-        Vec3 leg_mid = (entry_leg_base + entry_wrap_target) * 0.5f + entry_bulge;
+        Vec3 leg_mid = (entry_leg_base + entry_wrap_target) * 0.5f + leg_bulge;
         push_waypoint(leg_mid, "loop_entry_leg");
     }
 
-    // Wrap approach/depart: on the bulge side of the fabric at the same
-    // wale/stitch_axis position as wrap entry/exit.  The wrap itself is on
-    // the anti-bulge side (wrap_offset).  Mirroring to -wrap_offset puts
-    // the approach on the bulge side, so the yarn crosses through the
-    // fabric plane in a controlled location rather than curving freely.
-    // For parentless: skip wrap_approach so entry goes straight to the
-    // wrap without a front-to-back crossing.
-    // Place approach/depart at the fabric plane level (1× wrap_offset
-    // from wrap_entry/exit) rather than 2× — the wider wrap_width gives
-    // enough arc length that we don't need the full S-curve depth.
-    if (!is_parentless) {
+    // Wrap approach/depart at the fabric plane level (1× wrap_offset from
+    // wrap_entry/exit).  The wrap itself is on the anti-bulge side; the
+    // approach/depart guide the yarn through the fabric-plane crossing.
+    // Same logic for both parented and parentless — the wrap geometry is
+    // the same, only the passthrough differs.
+    {
         Vec3 wrap_approach = entry_wrap_target - wrap_offset;
         push_waypoint(wrap_approach, "loop_wrap_approach");
     }
     push_waypoint(entry_wrap_target, "loop_wrap_entry");
     push_waypoint(loop_geom.apex + wrap_offset, "loop_apex");
     push_waypoint(exit_wrap_target, "loop_wrap_exit");
-    if (!is_parentless) {
+    {
         Vec3 wrap_depart = exit_wrap_target - wrap_offset;
-        push_waypoint(wrap_depart, "loop_wrap_depart");
-    } else {
-        Vec3 wrap_depart = exit_wrap_target - 2.0f * wrap_offset;
         push_waypoint(wrap_depart, "loop_wrap_depart");
     }
 
@@ -601,8 +603,9 @@ void build_full_loop_chain(
         }
         push_waypoint(depart, "loop_depart");
     } else {
-        // No parent to cross through — dip and exit to mirror the entry
-        push_waypoint(loop_geom.exit_through, "loop_exit_dip");
+        // No parent to cross through — go straight from exit leg to the
+        // depart level.  The exit_through dip is skipped; the exit leg
+        // already brings the yarn down from the wrap.
         push_waypoint(loop_geom.apex_exit, "loop_exit");
     }
 

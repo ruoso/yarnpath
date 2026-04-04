@@ -553,15 +553,23 @@ void build_full_loop_chain(
     // fabric plane in a controlled location rather than curving freely.
     // For parentless: skip wrap_approach so entry goes straight to the
     // wrap without a front-to-back crossing.
+    // Place approach/depart at the fabric plane level (1× wrap_offset
+    // from wrap_entry/exit) rather than 2× — the wider wrap_width gives
+    // enough arc length that we don't need the full S-curve depth.
     if (!is_parentless) {
-        Vec3 wrap_approach = entry_wrap_target - 2.0f * wrap_offset;
+        Vec3 wrap_approach = entry_wrap_target - wrap_offset;
         push_waypoint(wrap_approach, "loop_wrap_approach");
     }
     push_waypoint(entry_wrap_target, "loop_wrap_entry");
     push_waypoint(loop_geom.apex + wrap_offset, "loop_apex");
     push_waypoint(exit_wrap_target, "loop_wrap_exit");
-    Vec3 wrap_depart = exit_wrap_target - 2.0f * wrap_offset;
-    push_waypoint(wrap_depart, "loop_wrap_depart");
+    if (!is_parentless) {
+        Vec3 wrap_depart = exit_wrap_target - wrap_offset;
+        push_waypoint(wrap_depart, "loop_wrap_depart");
+    } else {
+        Vec3 wrap_depart = exit_wrap_target - 2.0f * wrap_offset;
+        push_waypoint(wrap_depart, "loop_wrap_depart");
+    }
 
     // FALLING LEG
     // For parentless: exit leg keeps z_bulge so the yarn comes to the

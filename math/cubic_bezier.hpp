@@ -42,9 +42,6 @@ struct CubicBezier {
     // Split curve at parameter t into two curves
     std::pair<CubicBezier, CubicBezier> split(float t) const;
 
-    // Subdivide curve to ensure max curvature constraint
-    std::vector<CubicBezier> subdivide_for_curvature(float max_curvature, int max_depth = 5) const;
-
     // Create from Hermite interpolation (positions and tangents at endpoints)
     static CubicBezier from_hermite(const Vec3& p0, const Vec3& tangent0,
                                      const Vec3& p1, const Vec3& tangent1);
@@ -96,9 +93,6 @@ public:
 
     // Enforce C1 continuity (position and tangent) between segments
     void enforce_c1_continuity();
-
-    // Clamp curvature by adjusting control points
-    void clamp_curvature(float max_curvature);
 
     // Convert to polyline with approximate segment length
     std::vector<Vec3> to_polyline(float segment_length) const;

@@ -172,10 +172,10 @@ void compute_passthrough_tension(SurfaceGraph& graph,
         for (size_t i = 0; i < passthrough_ids.size(); ++i) {
             const auto& edge = edges[passthrough_ids[i]];
 
-            // Skip tension for terminal edges where force would be unbalanced:
-            // - child (node_a) is terminal if it has no children of its own
-            // - parent (node_b) is terminal if it has no parents of its own
-            if (!has_children[edge.node_a] || !has_parents[edge.node_b]) {
+            // Skip tension for terminal child edges where force would be unbalanced:
+            // bind-off nodes have no children, so the downward tension toward
+            // parents has no counterbalance from above.
+            if (!has_children[edge.node_a]) {
                 continue;
             }
 
@@ -250,26 +250,7 @@ void compute_loop_curvature_forces(SurfaceGraph& graph,
 
         // Need both same-row neighbors for a proper chord
         if (prev_valid && next_valid) {
-            const auto& prev_node = graph.node(prev_id);
-            const auto& next_node = graph.node(next_id);
-
-            // Vector from prev through current to next
-            Vec3 to_prev = prev_node.position - node.position;
-            Vec3 to_next = next_node.position - node.position;
-
-            float len_prev = to_prev.length();
-            float len_next = to_next.length();
-
-            if (len_prev < 1e-6f || len_next < 1e-6f) {
-                continue;
-            }
-
-            // The "natural" direction is influenced by loop aspect ratio
-            // Higher aspect ratio = more vertical loops
-            // We apply a force perpendicular to the chord (prev to next)
-            // pushing the loop node "outward" to create the loop shape
-
-            Vec3 chord = next_node.position - prev_node.position;
+            Vec3 chord = graph.node(next_id).position - graph.node(prev_id).position;
             float chord_len = chord.length();
 
             if (chord_len < 1e-6f) {
@@ -295,11 +276,10 @@ void compute_loop_curvature_forces(SurfaceGraph& graph,
                 perp = perp / perp_len;
 
                 // Force magnitude based on desired loop height
-                // aspect_ratio = height / width, where width ~ chord_len
                 float desired_height = gauge.loop_height(yarn.compressed_radius);
 
                 // Current height of the loop node above the chord midpoint
-                Vec3 chord_mid = (prev_node.position + next_node.position) * 0.5f;
+                Vec3 chord_mid = (graph.node(prev_id).position + graph.node(next_id).position) * 0.5f;
                 Vec3 to_mid = node.position - chord_mid;
                 float current_height = to_mid.dot(perp);
 

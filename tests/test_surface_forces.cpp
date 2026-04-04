@@ -107,8 +107,9 @@ TEST_F(SurfaceForcesTest, DampingReducesForce) {
 
 TEST_F(SurfaceForcesTest, PassthroughTension) {
     // 4-node chain: 0 ← 1 ← 2 ← 3 (passthrough convention: node_a=child, node_b=parent)
-    // Nodes 1 and 2 are interior (have both parents and children)
-    // Edge 2→1 is interior and should get tension applied
+    // Edge 3→2 is terminal (node 3 has no children) → skipped
+    // Edge 1→0 has a terminal parent (node 0 has no parents) but tension still applies
+    // Edge 2→1 is interior → tension applied
     SurfaceNode n0, n1, n2, n3;
     n0.segment_id = 0; n0.position = Vec3(0.0f, 0.0f, 0.0f);
     n1.segment_id = 1; n1.position = Vec3(2.0f, 0.0f, 0.0f);
@@ -134,14 +135,25 @@ TEST_F(SurfaceForcesTest, PassthroughTension) {
 
     compute_passthrough_tension(graph, yarn, gauge, 2.0f);
 
-    // Interior edge 2→1: tension_strength = 0.5 * 2.0 = 1.0
-    // Direction from node 2 (4,0,0) to node 1 (2,0,0) = (-1,0,0) normalized
-    // Node 2 gets force (-1,0,0), Node 1 gets force (1,0,0)
-    EXPECT_FLOAT_EQ(graph.node(2).force.x, -1.0f);
-    EXPECT_FLOAT_EQ(graph.node(1).force.x, 1.0f);
+    // tension_strength = 0.5 * 2.0 = 1.0
 
-    // Terminal edges 1→0 and 3→2 are skipped, so nodes 0 and 3 get zero force
-    EXPECT_FLOAT_EQ(graph.node(0).force.x, 0.0f);
+    // Edge 1→0: applied (node 0 is terminal parent, but we only skip terminal children)
+    // Direction from node 1 (2,0,0) to node 0 (0,0,0) = (-1,0,0)
+    // Node 1 gets force (-1, 0, 0), node 0 gets force (1, 0, 0)
+
+    // Edge 2→1: applied (interior)
+    // Direction from node 2 (4,0,0) to node 1 (2,0,0) = (-1,0,0)
+    // Node 2 gets force (-1, 0, 0), node 1 gets force (1, 0, 0)
+
+    // Edge 3→2: SKIPPED (node 3 has no children)
+
+    // Node 0: +1.0 from edge 1→0
+    EXPECT_FLOAT_EQ(graph.node(0).force.x, 1.0f);
+    // Node 1: -1.0 from edge 1→0, +1.0 from edge 2→1 = 0.0
+    EXPECT_FLOAT_EQ(graph.node(1).force.x, 0.0f);
+    // Node 2: -1.0 from edge 2→1 (edge 3→2 skipped)
+    EXPECT_FLOAT_EQ(graph.node(2).force.x, -1.0f);
+    // Node 3: 0.0 (edge 3→2 skipped)
     EXPECT_FLOAT_EQ(graph.node(3).force.x, 0.0f);
 }
 
@@ -166,17 +178,14 @@ TEST_F(SurfaceForcesTest, PassthroughTensionSkippedForTerminalChild) {
     yarn.tension = 0.5f;
     compute_passthrough_tension(graph, yarn, gauge, 2.0f);
 
-    // Node 2 is terminal (has parents but no children) — edge 2→1 should be skipped
-    EXPECT_FLOAT_EQ(graph.node(2).force.x, 0.0f);
+    // Edge 2→1: SKIPPED (node 2 has no children)
     EXPECT_FLOAT_EQ(graph.node(2).force.y, 0.0f);
 
-    // Node 0 is terminal parent (has children but no parents) — edge 1→0 should be skipped
-    EXPECT_FLOAT_EQ(graph.node(0).force.x, 0.0f);
-    EXPECT_FLOAT_EQ(graph.node(0).force.y, 0.0f);
-
-    // Node 1 gets zero force too since both its edges are terminal
-    EXPECT_FLOAT_EQ(graph.node(1).force.x, 0.0f);
-    EXPECT_FLOAT_EQ(graph.node(1).force.y, 0.0f);
+    // Edge 1→0: APPLIED (node 0 is terminal parent but we only skip terminal children)
+    // Direction from node 1 (0,2,0) to node 0 (0,0,0) = (0,-1,0), tension=1.0
+    // Node 1 gets (0, -1, 0), node 0 gets (0, 1, 0)
+    EXPECT_FLOAT_EQ(graph.node(0).force.y, 1.0f);
+    EXPECT_FLOAT_EQ(graph.node(1).force.y, -1.0f);
 }
 
 TEST_F(SurfaceForcesTest, PassthroughTensionAppliedForInteriorEdges) {
@@ -205,13 +214,16 @@ TEST_F(SurfaceForcesTest, PassthroughTensionAppliedForInteriorEdges) {
     yarn.tension = 0.5f;
     compute_passthrough_tension(graph, yarn, gauge, 2.0f);
 
-    // Interior edge 2→1: tension applied
-    // Node 2 pulled toward node 1 (negative Y), node 1 pulled toward node 2 (positive Y)
+    // Edge 2→1 (interior) and edge 1→0 (terminal parent, still applied): tension applied
+    // Node 2 pulled toward node 1 (negative Y)
     EXPECT_LT(graph.node(2).force.y, 0.0f);
-    EXPECT_GT(graph.node(1).force.y, 0.0f);
+    // Node 1 pulled toward node 2 (+Y) from edge 2→1, and toward node 0 (-Y) from edge 1→0
+    // These cancel: net ≈ 0
+    EXPECT_NEAR(graph.node(1).force.y, 0.0f, 1e-5f);
 
-    // Terminal edges skipped: nodes 0 and 3 get zero force
-    EXPECT_FLOAT_EQ(graph.node(0).force.y, 0.0f);
+    // Node 0 gets tension from edge 1→0 (terminal parent edge is NOT skipped)
+    EXPECT_GT(graph.node(0).force.y, 0.0f);
+    // Node 3 edge 3→2 is skipped (terminal child)
     EXPECT_FLOAT_EQ(graph.node(3).force.y, 0.0f);
 }
 

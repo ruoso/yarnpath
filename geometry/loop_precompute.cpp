@@ -467,8 +467,11 @@ void build_full_loop_chain(
             }
             push_waypoint(approach, "loop_approach");
             for (const auto& xover : entry_crossovers) {
-                push_waypoint(xover.entry, "crossover_entry_in");
-                push_waypoint(xover.exit, "crossover_entry_out");
+                // Use the crossover midpoint instead of separate entry/exit
+                // to avoid two consecutive short chords that cause the C2
+                // spline to amplify curvature through junction coupling.
+                Vec3 mid = (xover.entry + xover.exit) * 0.5f;
+                push_waypoint(mid, "crossover_entry");
             }
         } else {
             // Start is too close to crossover entry — skip approach and entry_in
@@ -483,9 +486,6 @@ void build_full_loop_chain(
         push_waypoint(loop_geom.apex_entry, "loop_approach");
         push_waypoint(loop_geom.entry_through, "loop_entry_dip");
     }
-
-    // z_bulge offset for leg waypoints
-    Vec3 leg_bulge = loop_geom.fabric_normal * loop_geom.shape.z_bulge;
 
     // Compute the convex wrapping clearance for child yarns.
     // Children passing through form a bundle of cylinders.  Rather than
@@ -508,12 +508,14 @@ void build_full_loop_chain(
     // For loops without children, use the needle wrap radius for clearance.
     // Enforce a minimum of 1.5× yarn diameter so small child bundles
     // (e.g., single-child foundation loops) still have enough wrap room.
+    float min_wrap = 1.5f / state.max_curvature;  // 1.5× min_bend_radius
     float wrap_clearance;
     if (has_children) {
-        wrap_clearance = std::max(bundle_radius + state.yarn_compressed_radius,
-                                  state.yarn_compressed_diameter * 1.5f);
+        wrap_clearance = std::max({bundle_radius + state.yarn_compressed_radius,
+                                   state.yarn_compressed_diameter * 1.5f,
+                                   min_wrap});
     } else {
-        wrap_clearance = loop_geom.wrap_radius;
+        wrap_clearance = std::max(loop_geom.wrap_radius, min_wrap);
     }
     float bulge_sign = (loop_geom.shape.z_bulge >= 0.0f) ? -1.0f : 1.0f;
     Vec3 wrap_offset = loop_geom.fabric_normal * (wrap_clearance * bulge_sign);
@@ -523,83 +525,80 @@ void build_full_loop_chain(
     Vec3 entry_leg_base;
     Vec3 exit_leg_base;
     if (!entry_crossovers.empty() || !exit_crossovers.empty()) {
-        // Has parent: leg starts/ends at crossover openings
         entry_leg_base = entry_crossovers.back().exit;
         exit_leg_base = exit_crossovers.front().entry;
     } else {
-        // No parent: leg starts/ends at dip points
         entry_leg_base = loop_geom.entry_through;
         exit_leg_base = loop_geom.exit_through;
     }
 
-    // Compute wrap/apex targets first so legs can interpolate toward them.
-    // Both cases (with/without children) use the same structure: the wrap
-    // targets are offset from the apex along the travel direction and the
-    // fabric normal. For children, clearance is based on the child bundle;
-    // for no-children, it's based on the needle wrap radius.
+    // Wrap targets: offset from apex along travel direction.
     Vec3 bundle_entry = loop_geom.apex - travel * wrap_clearance;
     Vec3 bundle_exit = loop_geom.apex + travel * wrap_clearance;
-    Vec3 entry_wrap_target = bundle_entry + wrap_offset;
-    Vec3 exit_wrap_target = bundle_exit + wrap_offset;
 
-    // Legs rise from the crossover base toward the wrap target.
-    // Position = 3D midpoint between crossover base and wrap target + z_bulge.
-    // This makes legs fan out laterally (along stitch_axis) from the narrow
-    // crossover toward the wider wrap, matching the physical loop shape.
+    // z_bulge offset for leg waypoints.  Compute the available span
+    // from the leg base to the wrap approach, and scale z_bulge to fit
+    // the physical curvature limit.  For a midpoint offset h over span d,
+    // κ ≈ 8h/d².  Solve for maximum h given κ_limit = 1/compressed_radius.
+    float z_abs = std::abs(loop_geom.shape.z_bulge);
+    float phys_k = 1.0f / state.yarn_compressed_radius;
+    float bulge_sign_leg = (loop_geom.shape.z_bulge >= 0.0f) ? 1.0f : -1.0f;
+
+    auto compute_leg_bulge = [&](const Vec3& leg_base, const Vec3& wrap_pt) -> Vec3 {
+        float span = (wrap_pt - leg_base).length();
+        // Maximum offset: κ ≈ 8h/d² ≤ phys_k → h ≤ phys_k * d² / 8
+        // where d = span/2 (half-chord from base to midpoint)
+        float half_span = span * 0.5f;
+        float max_h = phys_k * half_span * half_span * 0.125f;
+        float h = std::min(z_abs, max_h);
+        return loop_geom.fabric_normal * (h * bulge_sign_leg);
+    };
 
     bool is_parentless = entry_crossovers.empty() && exit_crossovers.empty();
 
-    // RISING LEG — both parented and parentless loops cross to the bulge
-    // side before wrapping, creating a symmetric U-shape.
+    // RISING LEG
     {
-        Vec3 leg_mid = (entry_leg_base + entry_wrap_target) * 0.5f + leg_bulge;
+        Vec3 entry_leg_bulge = compute_leg_bulge(entry_leg_base, bundle_entry);
+        Vec3 leg_mid = (entry_leg_base + bundle_entry) * 0.5f + entry_leg_bulge;
         push_waypoint(leg_mid, "loop_entry_leg");
     }
 
-    // Wrap approach/depart at the fabric plane level (1× wrap_offset from
-    // wrap_entry/exit).  The wrap itself is on the anti-bulge side; the
-    // approach/depart guide the yarn through the fabric-plane crossing.
-    // Same logic for both parented and parentless — the wrap geometry is
-    // the same, only the passthrough differs.
-    {
-        Vec3 wrap_approach = entry_wrap_target - wrap_offset;
-        push_waypoint(wrap_approach, "loop_wrap_approach");
-    }
-    push_waypoint(entry_wrap_target, "loop_wrap_entry");
+    // Wrap: smooth 3-point arc from fabric-plane entry through anti-bulge
+    // apex to fabric-plane exit.
+    push_waypoint(bundle_entry, "loop_wrap_approach");
     push_waypoint(loop_geom.apex + wrap_offset, "loop_apex");
-    push_waypoint(exit_wrap_target, "loop_wrap_exit");
-    {
-        Vec3 wrap_depart = exit_wrap_target - wrap_offset;
-        push_waypoint(wrap_depart, "loop_wrap_depart");
-    }
+    push_waypoint(bundle_exit, "loop_wrap_depart");
 
     // FALLING LEG
-    // For parentless: exit leg keeps z_bulge so the yarn comes to the
-    // front after the wrap before going back down.
     {
-        Vec3 leg_mid = (exit_leg_base + exit_wrap_target) * 0.5f + leg_bulge;
+        Vec3 exit_leg_bulge = compute_leg_bulge(exit_leg_base, bundle_exit);
+        Vec3 leg_mid = (exit_leg_base + bundle_exit) * 0.5f + exit_leg_bulge;
         push_waypoint(leg_mid, "loop_exit_leg");
     }
 
-    // Exit crossover: thread back through parent loop opening
+    // Exit crossover: thread back through parent loop opening.
+    // Skip crossover_exit_in when it's too close to the previous
+    // waypoint — short chords at the chain's end propagate large
+    // tangent magnitudes backward through the C2 solver.
     if (!exit_crossovers.empty()) {
         for (const auto& xover : exit_crossovers) {
-            push_waypoint(xover.entry, "crossover_exit_in");
-            push_waypoint(xover.exit, "crossover_exit_out");
+            Vec3 mid = (xover.entry + xover.exit) * 0.5f;
+            push_waypoint(mid, "crossover_exit");
         }
         Vec3 exit_in = exit_crossovers.back().entry;
         Vec3 exit_out = exit_crossovers.back().exit;
         Vec3 crossing_dir = safe_normalized(exit_in - exit_out, loop_geom.oriented_wale);
-        // Offset forward along stitch_axis AND down along crossing direction
+        // Offset forward along stitch_axis AND down along crossing direction.
+        // Use compressed_diameter to keep depart far enough from the
+        // crossover exit that the next segment's C2 chain entry has room.
         Vec3 depart = exit_out
-            + loop_geom.stitch_axis * state.yarn_compressed_radius
-            - crossing_dir * state.yarn_compressed_radius;
+            + loop_geom.stitch_axis * state.yarn_compressed_diameter
+            - crossing_dir * state.yarn_compressed_diameter;
 
         // Verify depart doesn't reverse direction relative to exit_out
         Vec3 depart_offset = depart - exit_out;
         if (depart_offset.dot(loop_geom.stitch_axis) < 0.0f) {
-            // Depart would reverse; place it slightly forward of exit_out
-            depart = exit_out + loop_geom.stitch_axis * state.yarn_compressed_radius;
+            depart = exit_out + loop_geom.stitch_axis * state.yarn_compressed_diameter;
         }
         push_waypoint(depart, "loop_depart");
     } else {
@@ -627,11 +626,10 @@ void build_full_loop_chain(
         }
     }
 
-    // Entry tangent: direction from running spline, magnitude = first chord
-    Vec3 dir = safe_normalized(
-        state.running_spline.segments().back().derivative(1.0f));
-    float first_chord = (waypoints[1] - waypoints[0]).length();
-    Vec3 entry_tangent = dir * first_chord;
+    // Entry tangent: use chord direction to the first waypoint.
+    // This prevents C2 coupling in the natural spline from amplifying
+    // entry curvature when the running spline direction is misaligned.
+    Vec3 entry_tangent = waypoints[1] - waypoints[0];
 
     auto curves = build_curvature_safe_hermite_chain(
         waypoints, entry_tangent, state.max_curvature);

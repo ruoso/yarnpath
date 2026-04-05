@@ -31,9 +31,9 @@ StitchShapeParams compute_stitch_shape(
     // --- WrapDirection-based lean (gauge-proportional) ---
     float effective_stitch_width = dims.loop_width;  // Already includes loop_size_factor via opening_diameter
     if (wrap_direction == WrapDirection::Clockwise) {
-        params.apex_lean_x = effective_stitch_width * 0.4f;   // Right lean (K2tog, M1R)
+        params.apex_lean_x = effective_stitch_width * 0.8f;   // Right lean (K2tog, M1R)
     } else if (wrap_direction == WrapDirection::CounterClockwise) {
-        params.apex_lean_x = -effective_stitch_width * 0.4f;  // Left lean (SSK, S2KP, M1L)
+        params.apex_lean_x = -effective_stitch_width * 0.8f;  // Left lean (SSK, S2KP, M1L)
     }
 
     // --- WorkType-based shape ---

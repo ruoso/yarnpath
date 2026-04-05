@@ -5,6 +5,7 @@
 #ifdef YARNPATH_HAS_VISUALIZATION
 
 #include <GLFW/glfw3.h>
+#include <algorithm>
 #include <cmath>
 #include <vector>
 #include <thread>
@@ -36,20 +37,29 @@ struct CurveFrame {
     Vec3 binormal;
 };
 
-// Camera state
+// Camera state — eye+target model for composable pan/zoom/rotate
 struct Camera {
-    float distance = 20.0f;
-    float yaw = 0.0f;      // Rotation around Y axis
-    float pitch = 0.3f;    // Rotation around X axis
-    float target_x = 0.0f;
-    float target_y = 0.0f;
-    float target_z = 0.0f;
+    Vec3 eye = {0.0f, 0.0f, 20.0f};
+    Vec3 target = {0.0f, 0.0f, 0.0f};
+    Vec3 world_up = {0.0f, 1.0f, 0.0f};
+
+    float distance() const { return (eye - target).length(); }
+    Vec3 forward() const { return (target - eye).normalized(); }
+    Vec3 right() const { return forward().cross(world_up).normalized(); }
+    Vec3 cam_up() const { return right().cross(forward()).normalized(); }
 
     void apply() const {
-        glTranslatef(0, 0, -distance);
-        glRotatef(pitch * 180.0f / 3.14159f, 1, 0, 0);
-        glRotatef(yaw * 180.0f / 3.14159f, 0, 1, 0);
-        glTranslatef(-target_x, -target_y, -target_z);
+        Vec3 f = forward();
+        Vec3 s = right();
+        Vec3 u = cam_up();
+        // Column-major look-at matrix
+        float m[16] = {
+             s.x,    u.x,   -f.x,   0.0f,
+             s.y,    u.y,   -f.y,   0.0f,
+             s.z,    u.z,   -f.z,   0.0f,
+            -s.dot(eye), -u.dot(eye), f.dot(eye), 1.0f
+        };
+        glMultMatrixf(m);
     }
 };
 
@@ -80,6 +90,11 @@ static int g_current_geometry_snapshot = -1;  // -1 means show full geometry
 static bool g_viewing_geometry_history = false;
 static int g_last_logged_geometry_snapshot = -2;  // Track for logging
 
+// Geometry auto-play
+static bool g_geometry_autoplay = false;
+static float g_geometry_autoplay_speed = 30.0f;  // steps per second
+static double g_last_autoplay_time = 0.0;
+
 static void mouse_button_callback(GLFWwindow* window, int button, int action, int mods) {
     (void)window;
     if (button == GLFW_MOUSE_BUTTON_LEFT) {
@@ -95,39 +110,30 @@ static void cursor_position_callback(GLFWwindow* window, double xpos, double ypo
         float dy = static_cast<float>(ypos - g_last_mouse_y);
         
         if (g_mouse_panning) {
-            // Pan: move camera target in screen-aligned directions
-            // Calculate right and up vectors based on current camera orientation
-            float cos_yaw = std::cos(g_camera.yaw);
-            float sin_yaw = std::sin(g_camera.yaw);
-            float cos_pitch = std::cos(g_camera.pitch);
-            float sin_pitch = std::sin(g_camera.pitch);
-            
-            // Right vector (perpendicular to view direction, always horizontal)
-            float right_x = cos_yaw;
-            float right_z = -sin_yaw;
-            
-            // Up vector (perpendicular to both view and right, accounts for pitch)
-            // When pitch=0, up is (0,1,0). As pitch increases, up tilts.
-            float up_x = -sin_yaw * sin_pitch;
-            float up_y = cos_pitch;
-            float up_z = -cos_yaw * sin_pitch;
-            
-            // Scale pan by distance for consistent feel
-            float pan_scale = g_camera.distance * g_pan_speed;
-            
-            // Move target: right for +dx, up for -dy
-            g_camera.target_x -= dx * right_x * pan_scale;
-            g_camera.target_z -= dx * right_z * pan_scale;
-            g_camera.target_x += dy * up_x * pan_scale;
-            g_camera.target_y += dy * up_y * pan_scale;
-            g_camera.target_z += dy * up_z * pan_scale;
+            // Pan: move both eye and target in screen-aligned directions
+            Vec3 r = g_camera.right();
+            Vec3 u = g_camera.cam_up();
+            float pan_scale = g_camera.distance() * g_pan_speed;
+            Vec3 pan_offset = r * (-dx * pan_scale) + u * (dy * pan_scale);
+            g_camera.eye += pan_offset;
+            g_camera.target += pan_offset;
         } else {
-            // Rotate
-            g_camera.yaw += dx * g_rotation_speed * 0.01f;
-            g_camera.pitch += dy * g_rotation_speed * 0.01f;
-            // Clamp pitch
-            if (g_camera.pitch > 1.5f) g_camera.pitch = 1.5f;
-            if (g_camera.pitch < -1.5f) g_camera.pitch = -1.5f;
+            // Rotate: orbit eye around target using spherical coordinates
+            Vec3 offset = g_camera.eye - g_camera.target;
+            float dist = offset.length();
+            if (dist < 1e-6f) dist = 1e-6f;
+            float theta = std::atan2(offset.x, offset.z);
+            float phi = std::asin(std::clamp(offset.y / dist, -1.0f, 1.0f));
+
+            theta -= dx * g_rotation_speed * 0.01f;
+            phi -= dy * g_rotation_speed * 0.01f;
+            phi = std::clamp(phi, -1.5f, 1.5f);
+
+            g_camera.eye = g_camera.target + Vec3(
+                dist * std::cos(phi) * std::sin(theta),
+                dist * std::sin(phi),
+                dist * std::cos(phi) * std::cos(theta)
+            );
         }
     }
     g_last_mouse_x = xpos;
@@ -137,11 +143,15 @@ static void cursor_position_callback(GLFWwindow* window, double xpos, double ypo
 static void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
     (void)window;
     (void)xoffset;
+    Vec3 fwd = g_camera.forward();
+    float dist = g_camera.distance();
     if (yoffset > 0) {
-        g_camera.distance /= g_zoom_speed;
+        dist /= g_zoom_speed;
     } else if (yoffset < 0) {
-        g_camera.distance *= g_zoom_speed;
+        dist *= g_zoom_speed;
     }
+    if (dist < 0.1f) dist = 0.1f;
+    g_camera.eye = g_camera.target - fwd * dist;
 }
 
 static void navigate_history(int delta) {
@@ -202,8 +212,8 @@ static void key_callback(GLFWwindow* window, int key, int scancode, int action, 
             g_paused = !g_paused;
         } else if (key == GLFW_KEY_R) {
             // Reset camera (orientation and request fit)
-            g_camera.yaw = 0.0f;
-            g_camera.pitch = 0.3f;
+            float dist = g_camera.distance();
+            g_camera.eye = g_camera.target + Vec3(0.0f, dist * std::sin(0.3f), dist * std::cos(0.3f));
             g_request_fit_camera = true;
         } else if (key == GLFW_KEY_N) {
             // Toggle node display
@@ -218,11 +228,19 @@ static void key_callback(GLFWwindow* window, int key, int scancode, int action, 
             // Next frame
             navigate_history(1);
         } else if (key == GLFW_KEY_PAGE_UP) {
-            // Back 30 frames
-            navigate_history(-30);
+            if (g_viewing_geometry_history) {
+                g_geometry_autoplay = false;
+                navigate_geometry_history(-30);
+            } else {
+                navigate_history(-30);
+            }
         } else if (key == GLFW_KEY_PAGE_DOWN) {
-            // Forward 30 frames
-            navigate_history(30);
+            if (g_viewing_geometry_history) {
+                g_geometry_autoplay = false;
+                navigate_geometry_history(30);
+            } else {
+                navigate_history(30);
+            }
         } else if (key == GLFW_KEY_HOME) {
             // Go to first snapshot
             if (!g_snapshots.empty()) {
@@ -236,14 +254,35 @@ static void key_callback(GLFWwindow* window, int key, int scancode, int action, 
             g_current_snapshot = -1;
         } else if (key == GLFW_KEY_B) {
             // Step back in geometry build history
+            g_geometry_autoplay = false;
             navigate_geometry_history(-1);
         } else if (key == GLFW_KEY_F) {
             // Step forward in geometry build history
+            g_geometry_autoplay = false;
             navigate_geometry_history(1);
         } else if (key == GLFW_KEY_0) {
             // Reset geometry view to full geometry
+            g_geometry_autoplay = false;
             g_viewing_geometry_history = false;
             g_current_geometry_snapshot = -1;
+        } else if (key == GLFW_KEY_P) {
+            // Toggle geometry auto-play
+            if (!g_geometry_snapshots.empty()) {
+                g_geometry_autoplay = !g_geometry_autoplay;
+                if (g_geometry_autoplay) {
+                    if (!g_viewing_geometry_history) {
+                        g_viewing_geometry_history = true;
+                        g_current_geometry_snapshot = 0;
+                    }
+                    g_last_autoplay_time = glfwGetTime();
+                }
+            }
+        } else if (key == GLFW_KEY_EQUAL || key == GLFW_KEY_KP_ADD) {
+            // Increase auto-play speed
+            g_geometry_autoplay_speed = std::min(g_geometry_autoplay_speed * 2.0f, 1000.0f);
+        } else if (key == GLFW_KEY_MINUS || key == GLFW_KEY_KP_SUBTRACT) {
+            // Decrease auto-play speed
+            g_geometry_autoplay_speed = std::max(g_geometry_autoplay_speed * 0.5f, 1.0f);
         }
     }
 }
@@ -271,10 +310,21 @@ static void apply_snapshot(SurfaceGraph& graph, const Snapshot& snap) {
     }
 }
 
+static void fit_camera_to_bounds(Vec3 min_pt, Vec3 max_pt, Camera& camera, float margin = 1.2f) {
+    Vec3 center = (min_pt + max_pt) * 0.5f;
+    float max_size = std::max({max_pt.x - min_pt.x, max_pt.y - min_pt.y, max_pt.z - min_pt.z});
+    float dist = max_size * margin;
+    if (dist < 1.0f) dist = 1.0f;
+
+    camera.target = center;
+    Vec3 dir = (camera.eye - camera.target).normalized();
+    if (dir.length_squared() < 1e-6f) dir = Vec3(0.0f, 0.0f, 1.0f);
+    camera.eye = camera.target + dir * dist;
+}
+
 static void fit_camera_to_graph(const SurfaceGraph& graph, Camera& camera, float margin = 1.2f) {
     if (graph.node_count() == 0) return;
 
-    // Compute bounding box
     Vec3 min_pt = graph.node(0).position;
     Vec3 max_pt = graph.node(0).position;
 
@@ -287,20 +337,7 @@ static void fit_camera_to_graph(const SurfaceGraph& graph, Camera& camera, float
         max_pt.z = std::max(max_pt.z, node.position.z);
     }
 
-    // Center camera on bounding box center
-    camera.target_x = (min_pt.x + max_pt.x) * 0.5f;
-    camera.target_y = (min_pt.y + max_pt.y) * 0.5f;
-    camera.target_z = (min_pt.z + max_pt.z) * 0.5f;
-
-    // Set distance to fit entire bounding box
-    float size_x = max_pt.x - min_pt.x;
-    float size_y = max_pt.y - min_pt.y;
-    float size_z = max_pt.z - min_pt.z;
-    float max_size = std::max({size_x, size_y, size_z});
-
-    // Distance needed to fit object in view (assuming ~45 degree FOV)
-    camera.distance = max_size * margin;
-    if (camera.distance < 1.0f) camera.distance = 1.0f;
+    fit_camera_to_bounds(min_pt, max_pt, camera, margin);
 }
 
 static void draw_sphere(float x, float y, float z, float compressed_radius, int segments = 8) {
@@ -363,8 +400,18 @@ static void render_axis_gizmo(int window_width, int window_height, const Camera&
     // Apply only the rotation part of the camera (no translation or zoom)
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
-    glRotatef(camera.pitch * 180.0f / 3.14159f, 1, 0, 0);
-    glRotatef(camera.yaw * 180.0f / 3.14159f, 0, 1, 0);
+    {
+        Vec3 f = (camera.target - camera.eye).normalized();
+        Vec3 s = f.cross(camera.world_up).normalized();
+        Vec3 u = s.cross(f);
+        float m[16] = {
+             s.x,  u.x, -f.x, 0.0f,
+             s.y,  u.y, -f.y, 0.0f,
+             s.z,  u.z, -f.z, 0.0f,
+            0.0f, 0.0f, 0.0f, 1.0f
+        };
+        glMultMatrixf(m);
+    }
     
     // Clear depth buffer for this region so gizmo is always visible
     glClear(GL_DEPTH_BUFFER_BIT);
@@ -757,7 +804,11 @@ VisualizerResult visualize_relaxation(
     glfwSetKeyCallback(window, key_callback);
 
     // Initialize camera
-    g_camera.distance = viz_config.camera_distance;
+    {
+        float d = viz_config.camera_distance;
+        g_camera.target = Vec3::zero();
+        g_camera.eye = Vec3(0.0f, d * std::sin(0.3f), d * std::cos(0.3f));
+    }
     g_rotation_speed = viz_config.rotation_speed;
     g_zoom_speed = viz_config.zoom_speed;
     g_paused = !viz_config.auto_run;
@@ -930,6 +981,7 @@ VisualizerResult visualize_relaxation(
     g_snapshots.clear();
     g_current_snapshot = -1;
     g_viewing_history = false;
+    g_geometry_autoplay = false;
 
     glfwDestroyWindow(window);
     glfwTerminate();
@@ -995,7 +1047,11 @@ VisualizerResult visualize_with_geometry(
     config.yarn_compressed_radius = yarn.compressed_radius;
 
     // Initialize camera
-    g_camera.distance = config.camera_distance;
+    {
+        float d = config.camera_distance;
+        g_camera.target = Vec3::zero();
+        g_camera.eye = Vec3(0.0f, d * std::sin(0.3f), d * std::cos(0.3f));
+    }
     g_rotation_speed = config.rotation_speed;
     g_zoom_speed = config.zoom_speed;
     g_paused = !config.auto_run;
@@ -1032,6 +1088,7 @@ VisualizerResult visualize_with_geometry(
     log->info("  left/right=frame by frame, pgup/pgdn=30 frames");
     log->info("  home=first frame, end=live view");
     log->info("  b/f=step geometry build, 0=show full geometry");
+    log->info("  p=auto-play geometry, +/-=adjust speed, pgup/pgdn=jump 30 steps");
 
     // Main loop
     while (!glfwWindowShouldClose(window)) {
@@ -1053,7 +1110,12 @@ VisualizerResult visualize_with_geometry(
 
         // Fit camera when requested (R key)
         if (g_request_fit_camera) {
-            fit_camera_to_graph(graph, g_camera);
+            if (geometry_built) {
+                auto [geo_min, geo_max] = geometry.bounding_box();
+                fit_camera_to_bounds(geo_min, geo_max, g_camera);
+            } else {
+                fit_camera_to_graph(graph, g_camera);
+            }
             g_request_fit_camera = false;
         }
 
@@ -1086,6 +1148,23 @@ VisualizerResult visualize_with_geometry(
                 });
 
             geometry_built = true;
+
+            // Apply X-center offset to geometry snapshots so they match the centered geometry
+            float x_offset = geometry.x_center_offset();
+            if (std::abs(x_offset) > 1e-6f) {
+                for (auto& gsnap : g_geometry_snapshots) {
+                    for (auto& bez : gsnap.spline.segments()) {
+                        for (auto& cp : bez.control_points) {
+                            cp.x -= x_offset;
+                        }
+                    }
+                }
+            }
+
+            // Re-fit camera to geometry bounds
+            auto [geo_min, geo_max] = geometry.bounding_box();
+            fit_camera_to_bounds(geo_min, geo_max, g_camera);
+
             log->info("Geometry built with {} segments, {} curve steps recorded",
                      geometry.segments().size(), g_geometry_snapshots.size());
             log->info("  Press B/F to step through geometry build, 0 to show full geometry");
@@ -1103,6 +1182,22 @@ VisualizerResult visualize_with_geometry(
                          g_current_snapshot + 1, g_snapshots.size(),
                          snap.iteration, snap.energy);
                 last_logged_snapshot = g_current_snapshot;
+            }
+        }
+
+        // Auto-play geometry steps
+        if (g_geometry_autoplay && g_viewing_geometry_history && !g_geometry_snapshots.empty()) {
+            double now = glfwGetTime();
+            double interval = 1.0 / static_cast<double>(g_geometry_autoplay_speed);
+            while (now - g_last_autoplay_time >= interval) {
+                g_last_autoplay_time += interval;
+                g_current_geometry_snapshot++;
+                if (g_current_geometry_snapshot >= static_cast<int>(g_geometry_snapshots.size())) {
+                    g_geometry_autoplay = false;
+                    g_viewing_geometry_history = false;
+                    g_current_geometry_snapshot = -1;
+                    break;
+                }
             }
         }
 
@@ -1127,9 +1222,16 @@ VisualizerResult visualize_with_geometry(
         }
 
         // Render
-        render_graph(graph, config);
         if (geometry_built) {
+            // Graph nodes are in surface coords; geometry is X-centered.
+            // Translate graph nodes into geometry coordinate space.
+            glPushMatrix();
+            glTranslatef(-geometry.x_center_offset(), 0.0f, 0.0f);
+            render_graph(graph, config);
+            glPopMatrix();
             render_geometry(geometry, config);
+        } else {
+            render_graph(graph, config);
         }
 
         // Render XYZ orientation gizmo
@@ -1157,6 +1259,7 @@ VisualizerResult visualize_with_geometry(
     g_current_geometry_snapshot = -1;
     g_viewing_geometry_history = false;
     g_last_logged_geometry_snapshot = -2;
+    g_geometry_autoplay = false;
 
     glfwDestroyWindow(window);
     glfwTerminate();

@@ -92,7 +92,7 @@ struct NamedWaypoint {
 
 // Result from building a chain for a segment, including crossover data
 struct ChainBuildResult {
-    BezierSpline spline;
+    CatmullRomSpline spline;
     std::vector<CrossoverData> entry_crossovers;
     std::vector<CrossoverData> exit_crossovers;
     std::vector<NamedWaypoint> waypoints;
@@ -109,9 +109,7 @@ static ChainBuildResult build_chain_for_segment(
     // Initialize the running spline if empty
     if (state.running_spline.empty()) {
         Vec3 start = data.frames[0].position;
-        Vec3 target = (data.frames.size() > 1) ? data.frames[1].position : start + Vec3(1, 0, 0);
-        BezierSpline init_spline;
-        initialize_running_spline(state, start, target, init_spline, nullptr);
+        state.running_spline.add_waypoint(start);
     }
 
     // Do NOT add a connector to the child's position here. In the real
@@ -145,7 +143,7 @@ static ChainBuildResult build_chain_for_segment(
         }
     }
 
-    BezierSpline segment_spline;
+    CatmullRomSpline segment_spline;
     std::vector<NamedWaypoint> named_waypoints;
     WaypointAddedCallback wp_cb = [&](const std::string& name, const Vec3& pos) {
         named_waypoints.push_back({name, pos});
@@ -188,10 +186,9 @@ TEST(LoopChainGeometryTest, ApexRegionIsSmoothlyCurved) {
 
         // Sample the wale projection densely
         std::vector<float> wale_samples;
-        for (const auto& seg : spline.segments()) {
-            for (float t = 0.0f; t <= 1.0f; t += 0.02f) {
-                wale_samples.push_back((seg.evaluate(t) - base).dot(wale));
-            }
+        auto polyline = spline.to_polyline_fixed(50);
+        for (const auto& pt : polyline) {
+            wale_samples.push_back((pt - base).dot(wale));
         }
         ASSERT_GE(wale_samples.size(), 10u) << "Segment " << seg_id;
 
@@ -338,14 +335,12 @@ TEST(LoopChainGeometryTest, WrapOppositeToChildBulge) {
         // should be higher than the wrap.
         float max_wale = -1e10f;
         Vec3 wrap_point = base;
-        for (const auto& seg : spline.segments()) {
-            for (float t = 0.0f; t <= 1.0f; t += 0.02f) {
-                Vec3 pt = seg.evaluate(t);
-                float w = (pt - base).dot(wale);
-                if (w > max_wale) {
-                    max_wale = w;
-                    wrap_point = pt;
-                }
+        auto wrap_polyline = spline.to_polyline_fixed(50);
+        for (const auto& pt : wrap_polyline) {
+            float w = (pt - base).dot(wale);
+            if (w > max_wale) {
+                max_wale = w;
+                wrap_point = pt;
             }
         }
 
@@ -368,42 +363,7 @@ TEST(LoopChainGeometryTest, WrapOppositeToChildBulge) {
 }
 
 // ---------------------------------------------------------------------------
-// Test 5: Output spline is C0-continuous (no gaps between segments)
-// ---------------------------------------------------------------------------
-TEST(LoopChainGeometryTest, OutputIsContinuous) {
-    auto data = build_chain_data({"CCC", "KKK"});
-
-    SegmentId target_id = 0;
-    bool found = false;
-    for (size_t i = 0; i < data.yarn_path.segments().size(); ++i) {
-        if (data.yarn_path.segments()[i].forms_loop && !data.yarn_path.segments()[i].through.empty()) {
-            target_id = static_cast<SegmentId>(i);
-            found = true;
-            break;
-        }
-    }
-    if (!found) {
-        GTEST_SKIP() << "No loop-forming segment with parents found";
-    }
-
-    auto result = build_chain_for_segment(data, target_id);
-    const auto& spline = result.spline;
-    if (spline.segments().size() < 2) {
-        GTEST_SKIP() << "Need at least 2 curve segments to check continuity";
-    }
-
-    const auto& segs = spline.segments();
-    for (size_t i = 1; i < segs.size(); ++i) {
-        Vec3 prev_end = segs[i-1].end();
-        Vec3 curr_start = segs[i].start();
-        float gap = (curr_start - prev_end).length();
-        EXPECT_LT(gap, 1e-4f)
-            << "Gap between segment " << (i-1) << " end and segment " << i << " start: " << gap;
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Test 6: Yarn crosses through parent loop opening
+// Test 5: Yarn crosses through parent loop opening
 //
 // Physical invariant: a child stitch's yarn must enter the parent loop from
 // one side of the fabric, form its own loop, and exit back through the parent
@@ -442,11 +402,9 @@ TEST(LoopChainGeometryTest, YarnCrossesThroughParentLoop) {
 
         // Sample the spline and compute fabric_normal projection relative to crossover center
         std::vector<float> fn_projections;
-        for (const auto& seg : result.spline.segments()) {
-            for (float t = 0.0f; t <= 1.0f; t += 0.02f) {
-                Vec3 pt = seg.evaluate(t);
-                fn_projections.push_back((pt - xover_center).dot(fnormal));
-            }
+        auto fn_polyline = result.spline.to_polyline_fixed(50);
+        for (const auto& pt : fn_polyline) {
+            fn_projections.push_back((pt - xover_center).dot(fnormal));
         }
 
         // Count sign changes in the fabric_normal projection

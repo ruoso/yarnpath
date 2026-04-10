@@ -57,15 +57,8 @@ static float min_nonlocal_polyline_distance(const std::vector<Vec3>& polyline,
 }
 
 static std::vector<Vec3> sample_segment_polyline(const SegmentGeometry& segment,
-                                                 int samples_per_bezier = 20) {
-    std::vector<Vec3> points;
-    for (const auto& bezier : segment.curve.segments()) {
-        for (int i = 0; i <= samples_per_bezier; ++i) {
-            const float t = static_cast<float>(i) / static_cast<float>(samples_per_bezier);
-            points.push_back(bezier.evaluate(t));
-        }
-    }
-    return points;
+                                                 int samples_per_segment = 20) {
+    return segment.curve.to_polyline_fixed(samples_per_segment);
 }
 
 static float min_nonlocal_distance_over_segment_polylines(const GeometryPath& geometry,

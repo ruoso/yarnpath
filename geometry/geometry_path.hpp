@@ -2,7 +2,7 @@
 #define YARNPATH_GEOMETRY_PATH_HPP
 
 #include <math/vec3.hpp>
-#include <math/cubic_bezier.hpp>
+#include <math/catmull_rom_spline.hpp>
 #include "yarn_path.hpp"
 #include <vector>
 #include <string>
@@ -13,12 +13,11 @@ namespace yarnpath {
 // Forward declarations
 class SurfaceGraph;
 
-// Geometry for a yarn segment (Bezier spline)
+// Geometry for a yarn segment (Catmull-Rom spline through waypoints)
 struct SegmentGeometry {
     SegmentId segment_id;
-    BezierSpline curve;
+    CatmullRomSpline curve;
     float arc_length;
-    float max_curvature;
 };
 
 // Validation result for geometry constraints
@@ -64,7 +63,7 @@ public:
     // Convert entire path to polyline
     std::vector<Vec3> to_polyline(float segment_length) const;
 
-    // Convert to polyline with fixed samples per Bezier segment
+    // Convert to polyline with fixed samples per spline segment
     std::vector<Vec3> to_polyline_fixed(int samples_per_segment) const;
 
     // Validate against yarn properties
@@ -93,7 +92,7 @@ private:
         const SurfaceGraph& surface,
         const YarnProperties& yarn,
         const Gauge& gauge,
-        const std::function<void(SegmentId, const std::string&, const BezierSpline&)>& callback);
+        const std::function<void(SegmentId, const std::string&, const CatmullRomSpline&)>& callback);
 
     std::vector<SegmentGeometry> segments_;
     float x_center_offset_ = 0.0f;

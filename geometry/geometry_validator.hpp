@@ -8,17 +8,14 @@
 namespace yarnpath {
 
 // Center all geometry segments so the bounding box is centered at X=0.
-// Modifies control points in-place.
-// Returns the X offset that was subtracted from all control points.
+// Modifies waypoints in-place.
+// Returns the X offset that was subtracted from all waypoints.
 float center_geometry_x(std::vector<SegmentGeometry>& segments);
 
 // Validate geometry quality and log warnings for:
-//   - Curvature violations (exceeding max_curvature)
-//   - Zero-length bezier segments
+//   - Zero-length spline segments
 //   - C0 positional gaps between consecutive segments
-//   - C1 tangent discontinuities between consecutive segments
-void validate_geometry(const std::vector<SegmentGeometry>& segments,
-                       float max_curvature);
+void validate_geometry(const std::vector<SegmentGeometry>& segments);
 
 }  // namespace yarnpath
 

@@ -7,7 +7,7 @@
 #include <math/vec3.hpp>
 #include <yarn/yarn_properties.hpp>
 #include <yarn/gauge.hpp>
-#include <math/cubic_bezier.hpp>
+#include <math/catmull_rom_spline.hpp>
 #include "physical_loop.hpp"
 #include "geometry_path.hpp"
 #include "geometry_builder.hpp"

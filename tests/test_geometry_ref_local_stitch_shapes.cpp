@@ -106,15 +106,8 @@ static GeometryPath build_geometry_from_compact_pattern(const std::vector<std::s
     return GeometryPath::from_yarn_path(yarn_path, surface, yarn, gauge);
 }
 
-static std::vector<Vec3> sample_segment_points(const SegmentGeometry& seg, int samples_per_bezier = 30) {
-    std::vector<Vec3> points;
-    for (const auto& bez : seg.curve.segments()) {
-        for (int i = 0; i <= samples_per_bezier; ++i) {
-            const float t = static_cast<float>(i) / static_cast<float>(samples_per_bezier);
-            points.push_back(bez.evaluate(t));
-        }
-    }
-    return points;
+static std::vector<Vec3> sample_segment_points(const SegmentGeometry& seg, int samples_per_segment = 30) {
+    return seg.curve.to_polyline_fixed(samples_per_segment);
 }
 
 static float segment_mean_z(const SegmentGeometry& seg) {

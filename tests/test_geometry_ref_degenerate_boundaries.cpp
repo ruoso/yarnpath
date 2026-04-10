@@ -51,14 +51,9 @@ static void expect_geometry_finite(const GeometryPath& geometry) {
     for (const auto& seg : geometry.segments()) {
         EXPECT_TRUE(std::isfinite(seg.arc_length))
             << "segment " << seg.segment_id << " arc_length is non-finite";
-        EXPECT_TRUE(std::isfinite(seg.max_curvature))
-            << "segment " << seg.segment_id << " max_curvature is non-finite";
 
-        for (const auto& bezier : seg.curve.segments()) {
-            expect_finite_vec3(bezier.start(), "control point p0");
-            expect_finite_vec3(bezier.control1(), "control point p1");
-            expect_finite_vec3(bezier.control2(), "control point p2");
-            expect_finite_vec3(bezier.end(), "control point p3");
+        for (const auto& wp : seg.curve.waypoints()) {
+            expect_finite_vec3(wp, "waypoint");
         }
     }
 
@@ -72,16 +67,15 @@ static void expect_geometry_finite(const GeometryPath& geometry) {
     expect_finite_vec3(bb_max, "bounding box max");
 }
 
-static size_t count_zero_length_beziers(const GeometryPath& geometry, float eps = 1e-6f) {
+static size_t count_zero_length_segments(const GeometryPath& geometry, float eps = 1e-6f) {
     size_t degenerate = 0;
 
     for (const auto& seg : geometry.segments()) {
-        for (const auto& bezier : seg.curve.segments()) {
-            const float arc = bezier.arc_length(24);
-            const float chord = (bezier.end() - bezier.start()).length();
-            if (arc <= eps && chord <= eps) {
-                ++degenerate;
-            }
+        if (seg.curve.empty()) continue;
+        const float arc = seg.arc_length;
+        const float chord = (seg.curve.end() - seg.curve.start()).length();
+        if (arc <= eps && chord <= eps) {
+            ++degenerate;
         }
     }
 
@@ -95,24 +89,24 @@ static void expect_boundary_continuity(const GeometryPath& geometry) {
 
     const auto& first = geometry.segments().front();
     const auto& last = geometry.segments().back();
-    ASSERT_FALSE(first.curve.segments().empty());
-    ASSERT_FALSE(last.curve.segments().empty());
+    ASSERT_FALSE(first.curve.empty());
+    ASSERT_FALSE(last.curve.empty());
 
-    const Vec3 first_start = first.curve.segments().front().start();
-    const Vec3 last_end = last.curve.segments().back().end();
+    const Vec3 first_start = first.curve.start();
+    const Vec3 last_end = last.curve.end();
     expect_finite_vec3(first_start, "first segment start");
     expect_finite_vec3(last_end, "last segment end");
 
     if (geometry.segments().size() >= 2) {
         const auto& second = geometry.segments()[1];
         const auto& penultimate = geometry.segments()[geometry.segments().size() - 2];
-        ASSERT_FALSE(second.curve.segments().empty());
-        ASSERT_FALSE(penultimate.curve.segments().empty());
+        ASSERT_FALSE(second.curve.empty());
+        ASSERT_FALSE(penultimate.curve.empty());
 
-        const Vec3 first_boundary_end = first.curve.segments().back().end();
-        const Vec3 second_boundary_start = second.curve.segments().front().start();
-        const Vec3 penultimate_boundary_end = penultimate.curve.segments().back().end();
-        const Vec3 last_boundary_start = last.curve.segments().front().start();
+        const Vec3 first_boundary_end = first.curve.end();
+        const Vec3 second_boundary_start = second.curve.start();
+        const Vec3 penultimate_boundary_end = penultimate.curve.end();
+        const Vec3 last_boundary_start = last.curve.start();
 
         EXPECT_LT((first_boundary_end - second_boundary_start).length(), 1e-3f)
             << "first boundary is not C0 continuous";
@@ -134,7 +128,7 @@ TEST(GeometryRefDegenerateBoundaries, EmptyPatternShouldNotCrashAndRemainFinite)
 
     EXPECT_TRUE(geometry.segments().empty());
     expect_geometry_finite(geometry);
-    EXPECT_EQ(count_zero_length_beziers(geometry), 0u);
+    EXPECT_EQ(count_zero_length_segments(geometry), 0u);
 }
 
 TEST(GeometryRefDegenerateBoundaries, CastOnOnlyShouldProduceFiniteNonDegenerateGeometry) {
@@ -149,7 +143,7 @@ TEST(GeometryRefDegenerateBoundaries, CastOnOnlyShouldProduceFiniteNonDegenerate
     ASSERT_FALSE(geometry.segments().empty());
     expect_geometry_finite(geometry);
     expect_boundary_continuity(geometry);
-    EXPECT_EQ(count_zero_length_beziers(geometry), 0u);
+    EXPECT_EQ(count_zero_length_segments(geometry), 0u);
 }
 
 TEST(GeometryRefDegenerateBoundaries, SingleStitchPatternShouldStayFiniteAndContinuousAtBoundaries) {
@@ -164,7 +158,7 @@ TEST(GeometryRefDegenerateBoundaries, SingleStitchPatternShouldStayFiniteAndCont
     ASSERT_GE(geometry.segments().size(), 2u);
     expect_geometry_finite(geometry);
     expect_boundary_continuity(geometry);
-    EXPECT_EQ(count_zero_length_beziers(geometry), 0u);
+    EXPECT_EQ(count_zero_length_segments(geometry), 0u);
 }
 
 TEST(GeometryRefDegenerateBoundaries, SingleRowTransitionsShouldKeepFirstAndLastBoundariesContinuous) {
@@ -179,7 +173,7 @@ TEST(GeometryRefDegenerateBoundaries, SingleRowTransitionsShouldKeepFirstAndLast
     ASSERT_FALSE(geometry.segments().empty());
     expect_geometry_finite(geometry);
     expect_boundary_continuity(geometry);
-    EXPECT_EQ(count_zero_length_beziers(geometry), 0u);
+    EXPECT_EQ(count_zero_length_segments(geometry), 0u);
 }
 
 TEST(GeometryRefDegenerateBoundaries, RepetitiveSingleColumnPatternShouldAvoidZeroLengthBezierCreation) {
@@ -195,6 +189,6 @@ TEST(GeometryRefDegenerateBoundaries, RepetitiveSingleColumnPatternShouldAvoidZe
     expect_geometry_finite(geometry);
     expect_boundary_continuity(geometry);
 
-    const size_t degenerate_beziers = count_zero_length_beziers(geometry);
-    EXPECT_EQ(degenerate_beziers, 0u) << "Expected no zero-length Bezier segments";
+    const size_t degenerate_segs = count_zero_length_segments(geometry);
+    EXPECT_EQ(degenerate_segs, 0u) << "Expected no zero-length segments";
 }

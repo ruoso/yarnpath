@@ -1,7 +1,7 @@
 #ifndef YARNPATH_GEOMETRY_BUILD_STATE_HPP
 #define YARNPATH_GEOMETRY_BUILD_STATE_HPP
 
-#include <math/cubic_bezier.hpp>
+#include <math/catmull_rom_spline.hpp>
 #include <yarn/yarn_properties.hpp>
 #include <yarn/gauge.hpp>
 #include <stitch_shape/loop_dimensions.hpp>
@@ -12,8 +12,7 @@ namespace yarnpath {
 
 // Helper struct to track state during geometry building
 struct GeometryBuildState {
-    BezierSpline running_spline;
-    float max_curvature;
+    CatmullRomSpline running_spline;
     float yarn_compressed_radius;       // Radius of the yarn
     float yarn_compressed_diameter;     // Diameter = 2 * compressed_radius, minimum distance between yarn centers
 

@@ -2,7 +2,7 @@
 #define YARNPATH_GEOMETRY_PHYSICAL_LOOP_HPP
 
 #include <math/vec3.hpp>
-#include <math/cubic_bezier.hpp>
+#include <math/catmull_rom_spline.hpp>
 #include <yarn/yarn_properties.hpp>
 #include <yarn/gauge.hpp>
 #include <stitch_shape/loop_dimensions.hpp>
@@ -23,9 +23,8 @@ struct PhysicalLoop {
     Vec3 center;              // Center of the loop
     Vec3 normal;              // Normal to the loop plane (direction the opening faces)
 
-    // The loop shape as a closed Bezier spline
-    // This represents the path of the yarn forming this loop
-    BezierSpline shape;
+    // The loop shape as a Catmull-Rom spline
+    CatmullRomSpline shape;
 
     // Key points on the loop (for yarn connectivity)
     Vec3 entry_point;         // Where yarn enters this loop
@@ -36,7 +35,6 @@ struct PhysicalLoop {
     Vec3 base_point;          // Bottom of the loop (where it interlocks with parent)
 
     // The interior surface of the loop (for intersection testing)
-    // Modeled as a disk at the loop center with opening_diameter
     Vec3 opening_center;      // Center of the opening
     float opening_radius() const { return opening_diameter / 2.0f; }
 
@@ -51,13 +49,9 @@ struct PhysicalLoop {
     // Check if a line segment passes through the loop opening
     bool segment_passes_through(const Vec3& p1, const Vec3& p2) const;
 
-    // Generate the Bezier spline shape of this loop
-    // The shape is derived from wrapping around the needle cylinder
+    // Generate the Catmull-Rom spline shape of this loop
     void generate_shape(const Gauge& gauge);
 };
-
-// LoopDimensions is now defined in stitch_shape/loop_dimensions.hpp
-// and re-exported here via the #include above for backward compatibility.
 
 }  // namespace yarnpath
 

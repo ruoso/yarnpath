@@ -26,7 +26,7 @@ struct Snapshot {
 struct GeometrySnapshot {
     SegmentId segment_id;
     std::string description;
-    BezierSpline spline;  // Accumulated spline at this point
+    CatmullRomSpline spline;  // Accumulated spline at this point
 };
 
 // Local coordinate frame at a point along a curve
@@ -497,7 +497,7 @@ static Vec3 find_perpendicular(const Vec3& v) {
 // Compute parallel transport frames along a spline
 // This avoids the singularities of the Frenet frame at inflection points
 static std::vector<CurveFrame> compute_parallel_transport_frames(
-    const BezierSpline& spline, int samples_per_segment) {
+    const CatmullRomSpline& spline, int samples_per_segment) {
 
     std::vector<CurveFrame> frames;
     if (spline.empty()) {
@@ -654,7 +654,7 @@ static void render_graph(const SurfaceGraph& graph, const VisualizerConfig& conf
     }
 }
 
-static void render_spline(const BezierSpline& spline, const VisualizerConfig& config,
+static void render_spline(const CatmullRomSpline& spline, const VisualizerConfig& config,
                            bool use_tube = true) {
     if (spline.empty()) return;
 
@@ -691,30 +691,13 @@ static void render_geometry(const GeometryPath& geometry, const VisualizerConfig
         glColor3f(0.9f, 0.8f, 0.2f);  // Yellow/gold for yarn
         render_spline(snap.spline, config, true);
 
-        // Also highlight the most recently added segment in a different color
+        // Also highlight the endpoint
         if (!snap.spline.empty()) {
-            glColor3f(1.0f, 0.2f, 0.2f);  // Red for the latest curve
-            glLineWidth(config.spline_line_width + 2.0f);
-            const auto& segments = snap.spline.segments();
-            if (!segments.empty()) {
-                BezierSpline last_segment;
-                last_segment.add_segment(segments.back());
-                // Render latest segment with slightly larger compressed_radius for visibility
-                VisualizerConfig highlight_config = config;
-                highlight_config.yarn_compressed_radius = config.yarn_compressed_radius * 1.1f;
-                render_spline(last_segment, highlight_config, true);
-
-                // Draw a green sphere at the endpoint of the spline
-                glEnable(GL_LIGHTING);
-                glColor3f(0.2f, 1.0f, 0.2f);  // Bright green for endpoint
-                Vec3 endpoint = segments.back().end();
-                draw_sphere(endpoint.x, endpoint.y, endpoint.z, config.node_size * 1.5f);
-
-                // Draw a cyan sphere at the start point of the latest segment
-                glColor3f(0.2f, 1.0f, 1.0f);  // Cyan for start of latest segment
-                Vec3 startpoint = segments.back().start();
-                draw_sphere(startpoint.x, startpoint.y, startpoint.z, config.node_size * 1.2f);
-            }
+            // Draw a green sphere at the endpoint of the spline
+            glEnable(GL_LIGHTING);
+            glColor3f(0.2f, 1.0f, 0.2f);  // Bright green for endpoint
+            Vec3 endpoint = snap.spline.end();
+            draw_sphere(endpoint.x, endpoint.y, endpoint.z, config.node_size * 1.5f);
         }
         return;
     }
@@ -723,10 +706,10 @@ static void render_geometry(const GeometryPath& geometry, const VisualizerConfig
     if (geometry.segments().empty()) return;
 
     // Build a combined spline from all segments for continuous rendering
-    BezierSpline combined_spline;
+    CatmullRomSpline combined_spline;
     for (const auto& seg : geometry.segments()) {
-        for (const auto& bez : seg.curve.segments()) {
-            combined_spline.add_segment(bez);
+        for (const auto& wp : seg.curve.waypoints()) {
+            combined_spline.add_waypoint(wp);
         }
     }
 
@@ -1138,7 +1121,7 @@ VisualizerResult visualize_with_geometry(
 
             // Build geometry with callback to capture snapshots
             geometry = build_geometry_with_callback(yarn_path, graph, yarn, gauge,
-                [&log](SegmentId seg_id, const std::string& desc, const BezierSpline& spline) {
+                [&log](SegmentId seg_id, const std::string& desc, const CatmullRomSpline& spline) {
                     GeometrySnapshot snap;
                     snap.segment_id = seg_id;
                     snap.description = desc;
@@ -1153,10 +1136,8 @@ VisualizerResult visualize_with_geometry(
             float x_offset = geometry.x_center_offset();
             if (std::abs(x_offset) > 1e-6f) {
                 for (auto& gsnap : g_geometry_snapshots) {
-                    for (auto& bez : gsnap.spline.segments()) {
-                        for (auto& cp : bez.control_points) {
-                            cp.x -= x_offset;
-                        }
+                    for (auto& wp : gsnap.spline.waypoints()) {
+                        wp.x -= x_offset;
                     }
                 }
             }
@@ -1208,7 +1189,7 @@ VisualizerResult visualize_with_geometry(
                 const auto& gsnap = g_geometry_snapshots[g_current_geometry_snapshot];
                 Vec3 endpoint = Vec3::zero();
                 if (!gsnap.spline.empty()) {
-                    endpoint = gsnap.spline.segments().back().end();
+                    endpoint = gsnap.spline.end();
                 }
                 log->info("Geometry step {}/{}: seg {} - {} | endpoint: ({:.2f}, {:.2f}, {:.2f})",
                          g_current_geometry_snapshot + 1, g_geometry_snapshots.size(),

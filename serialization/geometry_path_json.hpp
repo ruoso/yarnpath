@@ -3,35 +3,26 @@
 
 #include <nlohmann/json.hpp>
 #include <geometry/geometry_path.hpp>
-#include <math/cubic_bezier.hpp>
+#include <math/catmull_rom_spline.hpp>
 #include "config_json.hpp"
 
 namespace yarnpath {
 
-// CubicBezier serialization
-inline void to_json(nlohmann::json& j, const CubicBezier& bezier) {
-    j = nlohmann::json::array();
-    for (const auto& cp : bezier.control_points) {
-        j.push_back(cp);
+// CatmullRomSpline serialization
+inline void to_json(nlohmann::json& j, const CatmullRomSpline& spline) {
+    j["waypoints"] = nlohmann::json::array();
+    for (const auto& wp : spline.waypoints()) {
+        j["waypoints"].push_back(wp);
     }
 }
 
-inline void from_json(const nlohmann::json& j, CubicBezier& bezier) {
-    if (j.size() != 4) {
-        throw std::runtime_error("CubicBezier must have exactly 4 control points");
+inline void from_json(const nlohmann::json& j, CatmullRomSpline& spline) {
+    spline = CatmullRomSpline();
+    if (j.contains("waypoints")) {
+        for (const auto& wp_json : j["waypoints"]) {
+            spline.add_waypoint(wp_json.get<Vec3>());
+        }
     }
-    for (size_t i = 0; i < 4; ++i) {
-        bezier.control_points[i] = j[i].get<Vec3>();
-    }
-}
-
-// BezierSpline serialization
-inline void to_json(nlohmann::json& j, const BezierSpline& spline) {
-    j["segments"] = spline.segments();
-}
-
-inline void from_json(const nlohmann::json& j, BezierSpline& spline) {
-    spline = BezierSpline(j["segments"].get<std::vector<CubicBezier>>());
 }
 
 // SegmentGeometry serialization
@@ -39,14 +30,12 @@ inline void to_json(nlohmann::json& j, const SegmentGeometry& geom) {
     j["segment_id"] = geom.segment_id;
     j["curve"] = geom.curve;
     j["arc_length"] = geom.arc_length;
-    j["max_curvature"] = geom.max_curvature;
 }
 
 inline void from_json(const nlohmann::json& j, SegmentGeometry& geom) {
     geom.segment_id = j["segment_id"].get<SegmentId>();
-    geom.curve = j["curve"].get<BezierSpline>();
+    geom.curve = j["curve"].get<CatmullRomSpline>();
     geom.arc_length = j["arc_length"].get<float>();
-    geom.max_curvature = j["max_curvature"].get<float>();
 }
 
 // GeometryPath serialization

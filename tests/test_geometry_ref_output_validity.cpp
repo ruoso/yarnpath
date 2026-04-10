@@ -52,17 +52,18 @@ static void expect_no_duplicate_consecutive_polyline_points(const GeometryPath& 
     }
 }
 
-static void expect_no_zero_length_bezier_segments(const GeometryPath& geometry,
-                                                  float eps = 1e-6f) {
+static void expect_no_zero_length_segments(const GeometryPath& geometry,
+                                           float eps = 1e-6f) {
     ASSERT_FALSE(geometry.segments().empty());
 
     for (const auto& seg : geometry.segments()) {
-        for (const auto& bezier : seg.curve.segments()) {
-            const float arc = bezier.arc_length(24);
-            const float chord = (bezier.end() - bezier.start()).length();
-            EXPECT_GT(arc, eps) << "segment " << seg.segment_id << " has zero-length Bezier arc";
-            EXPECT_GT(chord, eps) << "segment " << seg.segment_id << " has zero-length Bezier chord";
-        }
+        EXPECT_FALSE(seg.curve.empty())
+            << "segment " << seg.segment_id << " has empty curve";
+        EXPECT_GT(seg.arc_length, eps)
+            << "segment " << seg.segment_id << " has zero arc_length";
+        const float chord = (seg.curve.end() - seg.curve.start()).length();
+        EXPECT_GT(chord, eps)
+            << "segment " << seg.segment_id << " has zero-length chord";
     }
 }
 
@@ -120,7 +121,7 @@ static void expect_valid_obj_export(const GeometryPath& geometry) {
 
 static void expect_geometry_output_validity(const GeometryPath& geometry) {
     expect_no_duplicate_consecutive_polyline_points(geometry);
-    expect_no_zero_length_bezier_segments(geometry);
+    expect_no_zero_length_segments(geometry);
     expect_valid_obj_export(geometry);
 }
 

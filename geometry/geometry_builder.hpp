@@ -7,19 +7,19 @@
 #include <yarn/gauge.hpp>
 #include <surface/surface_graph.hpp>
 #include <math/vec3.hpp>
-#include <math/cubic_bezier.hpp>
+#include <math/catmull_rom_spline.hpp>
 #include <vector>
 #include <map>
 #include <functional>
 
 namespace yarnpath {
 
-// Callback invoked after each curve segment is added during geometry building
+// Callback invoked after each waypoint batch is added during geometry building
 // Parameters: segment_id, description of curve, current spline being built
 using GeometryBuildCallback = std::function<void(
     SegmentId segment_id,
     const std::string& curve_description,
-    const BezierSpline& current_spline)>;
+    const CatmullRomSpline& current_spline)>;
 
 // Build complete geometry from yarn path using relaxed surface positions
 // The surface graph provides the actual positions from physics simulation
@@ -29,7 +29,7 @@ GeometryPath build_geometry(const YarnPath& yarn_path,
                             const Gauge& gauge);
 
 // Build geometry with callback for visualization/debugging
-// The callback is invoked after each curve segment is added
+// The callback is invoked after each waypoint batch is added
 GeometryPath build_geometry_with_callback(
     const YarnPath& yarn_path,
     const SurfaceGraph& surface,

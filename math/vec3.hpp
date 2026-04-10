@@ -132,6 +132,11 @@ constexpr Vec3 lerp(const Vec3& a, const Vec3& b, float t) {
     return a * (1.0f - t) + b * t;
 }
 
+// Safe normalization that returns fallback instead of zero vector
+inline Vec3 safe_normalized(const Vec3& v, const Vec3& fallback = Vec3(1,0,0)) {
+    float len = v.length();
+    return (len > 1e-8f) ? v * (1.0f / len) : fallback;
+}
 
 }  // namespace yarnpath
 

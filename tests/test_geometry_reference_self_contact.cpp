@@ -97,14 +97,11 @@ TEST(GeometrySelfContactReference, YarnOverGeometryShouldNotContainNaN) {
 
     for (const auto& seg : geometry.segments()) {
         EXPECT_TRUE(std::isfinite(seg.arc_length));
-        EXPECT_TRUE(std::isfinite(seg.max_curvature));
 
-        for (const auto& bezier : seg.curve.segments()) {
-            for (const auto& cp : bezier.control_points) {
-                EXPECT_TRUE(std::isfinite(cp.x));
-                EXPECT_TRUE(std::isfinite(cp.y));
-                EXPECT_TRUE(std::isfinite(cp.z));
-            }
+        for (const auto& wp : seg.curve.waypoints()) {
+            EXPECT_TRUE(std::isfinite(wp.x));
+            EXPECT_TRUE(std::isfinite(wp.y));
+            EXPECT_TRUE(std::isfinite(wp.z));
         }
     }
 }

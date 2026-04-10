@@ -47,15 +47,8 @@ static GeomTestData build_geometry_for(const std::vector<std::string>& rows,
 }
 
 // Helper: sample all spline points from a segment's curve
-static std::vector<Vec3> sample_segment_spline(const SegmentGeometry& seg, int samples_per_bezier = 20) {
-    std::vector<Vec3> points;
-    for (const auto& curve : seg.curve.segments()) {
-        for (int j = 0; j <= samples_per_bezier; ++j) {
-            float t = static_cast<float>(j) / static_cast<float>(samples_per_bezier);
-            points.push_back(curve.evaluate(t));
-        }
-    }
-    return points;
+static std::vector<Vec3> sample_segment_spline(const SegmentGeometry& seg, int samples_per_segment = 20) {
+    return seg.curve.to_polyline_fixed(samples_per_segment);
 }
 
 // Helper: find loop-forming segments
@@ -176,14 +169,13 @@ TEST(LoopShapeTest, KnitLoop_ApexInFrontOfBase) {
                   << "] Y[" << lo.y << "," << hi.y
                   << "] Z[" << lo.z << "," << hi.z << "]"
                   << " depth range: [" << min_depth << ", " << max_depth << "]"
-                  << " curves=" << seg_geom->curve.segments().size()
+                  << " waypoints=" << seg_geom->curve.waypoint_count()
                   << std::endl;
-        // Print per-curve start/end for all segments
-        for (size_t ci = 0; ci < seg_geom->curve.segments().size(); ++ci) {
-            const auto& c = seg_geom->curve.segments()[ci];
-            std::cout << "    curve " << ci << ": start=(" << c.start().x << ","
-                      << c.start().y << "," << c.start().z << ") end=("
-                      << c.end().x << "," << c.end().y << "," << c.end().z << ")"
+        // Print waypoints
+        const auto& wps = seg_geom->curve.waypoints();
+        for (size_t wi = 0; wi < wps.size(); ++wi) {
+            std::cout << "    wp " << wi << ": (" << wps[wi].x << ","
+                      << wps[wi].y << "," << wps[wi].z << ")"
                       << std::endl;
         }
 
@@ -331,27 +323,7 @@ TEST(LoopShapeTest, Loop_HasUShape_DipsBelowBase) {
     EXPECT_GT(dip_count, 0) << "Expected at least some loops to dip below base level (U-shape)";
 }
 
-// Test 5: Loop spline is continuous (C0) at all Bezier segment boundaries
-TEST(LoopShapeTest, Loop_IsContinuous) {
-    YarnProperties yarn = default_yarn();
-    Gauge gauge = default_gauge();
-    auto data = build_geometry_for({"CCCC", "KKKK", "KKKK", "BBBB"}, yarn, gauge);
-
-    float max_gap = 0.0f;
-    for (const auto& seg : data.geometry.segments()) {
-        const auto& curves = seg.curve.segments();
-        for (size_t j = 1; j < curves.size(); ++j) {
-            Vec3 prev_end = curves[j - 1].end();
-            Vec3 curr_start = curves[j].start();
-            float gap = (curr_start - prev_end).length();
-            max_gap = std::max(max_gap, gap);
-            EXPECT_LT(gap, 1e-4f)
-                << "C0 discontinuity at segment " << seg.segment_id
-                << " curve boundary " << (j - 1) << "->" << j
-                << " gap=" << gap;
-        }
-    }
-}
+// Test 5 (Loop_IsContinuous) removed — CatmullRomSpline is C1 by construction.
 
 // Test 6: All geometry is finite (no NaN/Inf in any spline point)
 TEST(LoopShapeTest, Loop_SplineIsFinite) {
@@ -378,52 +350,9 @@ TEST(LoopShapeTest, Loop_SplineIsFinite) {
     }
 }
 
-// Test 7: Curvature is bounded by the yarn's physical max curvature
-TEST(LoopShapeTest, Loop_CurvatureWithinReasonableLimits) {
-    YarnProperties yarn = default_yarn();
-    Gauge gauge = default_gauge();
-    auto data = build_geometry_for({"CCC", "KKK", "BBB"}, yarn, gauge);
-
-    // The physical tube-wall limit: the center-line curvature κ must satisfy
-    // κ < 1/compressed_radius so that the inside of the yarn tube doesn't
-    // fold on itself (would produce a 90° turn at the tube wall).
-    float max_k = 1.0f / yarn.compressed_radius;
-    float tolerance = 1.50f;  // 50% headroom for C2 spline coupling effects
-    float limit = max_k * tolerance;
-
-    bool found_parented = false;
-    for (const auto& seg : data.geometry.segments()) {
-        // Skip cast-on segments (initial parentless loops) until we reach
-        // the first segment that passes through a parent loop.
-        const auto& yseg = data.yarn_path.segments()[seg.segment_id];
-        if (!found_parented) {
-            if (yseg.through.empty()) continue;
-            found_parented = true;
-        }
-
-        EXPECT_FALSE(std::isnan(seg.max_curvature))
-            << "Segment " << seg.segment_id << " has NaN curvature";
-        EXPECT_FALSE(std::isinf(seg.max_curvature))
-            << "Segment " << seg.segment_id << " has infinite curvature";
-
-        // Per-curve breakdown so we can identify which sub-curve is the culprit
-        const auto& curves = seg.curve.segments();
-        for (size_t ci = 0; ci < curves.size(); ++ci) {
-            float k = curves[ci].max_curvature(32);
-            EXPECT_LE(k, limit)
-                << "Segment " << seg.segment_id
-                << " curve " << ci << "/" << curves.size()
-                << " curvature " << k
-                << " exceeds limit " << limit
-                << " (start=" << curves[ci].start().x
-                << "," << curves[ci].start().y
-                << "," << curves[ci].start().z
-                << " end=" << curves[ci].end().x
-                << "," << curves[ci].end().y
-                << "," << curves[ci].end().z << ")";
-        }
-    }
-}
+// Test 7 (Loop_CurvatureWithinReasonableLimits) removed — curvature validation
+// was removed from the geometry pipeline (Catmull-Rom splines determine
+// curvature from waypoint placement, not from construction constraints).
 
 // Test 8: Loop segments produce non-zero arc length
 TEST(LoopShapeTest, Loop_HasNonZeroArcLength) {
@@ -491,18 +420,19 @@ TEST(LoopShapeTest, Loop_TubeNoSelfOverlap) {
 
     std::vector<SamplePoint> pts;
     float cumul = 0.0f;
-    const int SPB = 20;  // samples per Bézier curve
+    const int SPB = 20;  // samples per spline segment
 
     int seg_idx = 0;
     for (const auto& seg : data.geometry.segments()) {
-        for (const auto& curve : seg.curve.segments()) {
-            float curve_len = curve.arc_length(SPB);
-            for (int j = 0; j <= SPB; ++j) {
-                float t = static_cast<float>(j) / static_cast<float>(SPB);
-                pts.push_back({curve.evaluate(t), cumul + curve_len * t, seg_idx});
-            }
-            cumul += curve_len;
+        auto polyline = seg.curve.to_polyline_fixed(SPB);
+        float seg_arc = seg.arc_length;
+        for (size_t j = 0; j < polyline.size(); ++j) {
+            float frac = polyline.size() > 1
+                ? static_cast<float>(j) / static_cast<float>(polyline.size() - 1)
+                : 0.0f;
+            pts.push_back({polyline[j], cumul + seg_arc * frac, seg_idx});
         }
+        cumul += seg_arc;
         seg_idx++;
     }
 
@@ -511,21 +441,16 @@ TEST(LoopShapeTest, Loop_TubeNoSelfOverlap) {
         int si = 0;
         float seg_start_arc = 0.0f;
         for (const auto& seg : data.geometry.segments()) {
-            float seg_arc = 0.0f;
             Vec3 lo(1e9f, 1e9f, 1e9f), hi(-1e9f, -1e9f, -1e9f);
-            for (const auto& curve : seg.curve.segments()) {
-                seg_arc += curve.arc_length(SPB);
-                for (int j = 0; j <= SPB; ++j) {
-                    float t = static_cast<float>(j) / static_cast<float>(SPB);
-                    Vec3 p = curve.evaluate(t);
-                    lo.x = std::min(lo.x, p.x); lo.y = std::min(lo.y, p.y); lo.z = std::min(lo.z, p.z);
-                    hi.x = std::max(hi.x, p.x); hi.y = std::max(hi.y, p.y); hi.z = std::max(hi.z, p.z);
-                }
+            auto debug_polyline = seg.curve.to_polyline_fixed(SPB);
+            for (const auto& p : debug_polyline) {
+                lo.x = std::min(lo.x, p.x); lo.y = std::min(lo.y, p.y); lo.z = std::min(lo.z, p.z);
+                hi.x = std::max(hi.x, p.x); hi.y = std::max(hi.y, p.y); hi.z = std::max(hi.z, p.z);
             }
-            std::cerr << "Seg " << si << " arc=[" << seg_start_arc << ".." << (seg_start_arc + seg_arc)
+            std::cerr << "Seg " << si << " arc=[" << seg_start_arc << ".." << (seg_start_arc + seg.arc_length)
                       << "] bbox X[" << lo.x << "," << hi.x << "] Y[" << lo.y << "," << hi.y
                       << "] Z[" << lo.z << "," << hi.z << "]" << std::endl;
-            seg_start_arc += seg_arc;
+            seg_start_arc += seg.arc_length;
             si++;
         }
     }

@@ -50,14 +50,9 @@ static void expect_geometry_finite(const GeometryPath& geometry) {
     for (const auto& seg : geometry.segments()) {
         EXPECT_TRUE(std::isfinite(seg.arc_length))
             << "segment " << seg.segment_id << " arc_length is non-finite";
-        EXPECT_TRUE(std::isfinite(seg.max_curvature))
-            << "segment " << seg.segment_id << " max_curvature is non-finite";
 
-        for (const auto& bezier : seg.curve.segments()) {
-            expect_finite_vec3(bezier.start(), "control point p0");
-            expect_finite_vec3(bezier.control1(), "control point p1");
-            expect_finite_vec3(bezier.control2(), "control point p2");
-            expect_finite_vec3(bezier.end(), "control point p3");
+        for (const auto& wp : seg.curve.waypoints()) {
+            expect_finite_vec3(wp, "waypoint");
         }
     }
 
